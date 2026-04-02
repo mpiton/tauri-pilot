@@ -41,7 +41,11 @@ async fn handle_eval_method(
         data: None,
     })?;
 
-    let script = build_bridge_call(method, params);
+    let script = build_bridge_call(method, params).map_err(|msg| RpcError {
+        code: -32602,
+        message: msg,
+        data: None,
+    })?;
     let (id, rx) = engine.register();
     let wrapped = EvalEngine::wrap_script(id, &script);
 
@@ -66,7 +70,8 @@ async fn handle_eval_method(
 }
 
 /// Build a `window.__PILOT__.<method>(params)` JS call string.
-fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> String {
+/// Returns `Err` with a message for invalid params (e.g. missing ipc command).
+fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> Result<String, String> {
     let args = match params {
         Some(v) if !v.is_null() => v.to_string(),
         _ => "{}".to_owned(),
@@ -78,15 +83,18 @@ fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> String
         let command = params
             .and_then(|p| p.get("command"))
             .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "ipc requires a non-empty \"command\" string param".to_owned())?;
         let command_js = serde_json::to_string(command).unwrap_or_else(|_| "\"\"".to_owned());
         let ipc_args = params
             .and_then(|p| p.get("args"))
             .map_or("{}".to_owned(), ToString::to_string);
-        return format!("window.__TAURI__.core.invoke({command_js}, {ipc_args})");
+        return Ok(format!(
+            "window.__TAURI__.core.invoke({command_js}, {ipc_args})"
+        ));
     }
 
-    format!("window.__PILOT__.{method}({args})")
+    Ok(format!("window.__PILOT__.{method}({args})"))
 }
 
 /// Process the IPC callback from the JS bridge (ADR-001).
@@ -153,15 +161,22 @@ mod tests {
     #[test]
     fn test_build_bridge_call_snapshot() {
         let params = json!({"interactive": true, "selector": null, "depth": 3});
-        let script = build_bridge_call("snapshot", Some(&params));
+        let script = build_bridge_call("snapshot", Some(&params)).unwrap();
         assert!(script.starts_with("window.__PILOT__.snapshot("));
         assert!(script.contains("\"interactive\":true"));
     }
 
     #[test]
     fn test_build_bridge_call_no_params() {
-        let script = build_bridge_call("snapshot", None);
+        let script = build_bridge_call("snapshot", None).unwrap();
         assert_eq!(script, "window.__PILOT__.snapshot({})");
+    }
+
+    #[test]
+    fn test_build_bridge_call_ipc_missing_command() {
+        let result = build_bridge_call("ipc", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("command"));
     }
 
     #[tokio::test]

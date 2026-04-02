@@ -10,19 +10,37 @@ use tokio::net::{UnixListener, UnixStream};
 /// A function that evaluates JS in the webview. `None` if no webview is available.
 pub(crate) type EvalFn = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
 
+/// RAII guard that removes the socket file on drop (normal shutdown or panic).
+pub(crate) struct SocketGuard(std::path::PathBuf);
+
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        if self.0.exists() {
+            let _ = std::fs::remove_file(&self.0);
+            tracing::info!(path = %self.0.display(), "socket removed");
+        }
+    }
+}
+
 /// Bind the socket, removing any stale file from a previous run.
-/// Called from plugin setup so bind failures propagate immediately.
-pub(crate) fn bind(socket_path: &std::path::Path) -> Result<UnixListener, Error> {
+/// Returns the listener and a [`SocketGuard`] that cleans up on drop.
+pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, SocketGuard), Error> {
     if socket_path.exists() {
         let _ = std::fs::remove_file(socket_path);
     }
     let listener = UnixListener::bind(socket_path)?;
     tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
-    Ok(listener)
+    Ok((listener, SocketGuard(socket_path.to_path_buf())))
 }
 
 /// Run the accept loop on a pre-bound listener. Logs errors internally.
-pub(crate) async fn run(listener: UnixListener, engine: EvalEngine, eval_fn: Option<EvalFn>) {
+/// The `_guard` is held for its `Drop` cleanup.
+pub(crate) async fn run(
+    listener: UnixListener,
+    _guard: SocketGuard,
+    engine: EvalEngine,
+    eval_fn: Option<EvalFn>,
+) {
     if let Err(e) = accept_loop(listener, engine, eval_fn).await {
         tracing::error!("socket server error: {e}");
     }
@@ -111,9 +129,9 @@ mod tests {
     use std::time::Duration;
 
     async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
-        let listener = bind(path).expect("bind test socket");
+        let (listener, guard) = bind(path).expect("bind test socket");
         let engine = EvalEngine::new();
-        let handle = tokio::spawn(async move { run(listener, engine, None).await });
+        let handle = tokio::spawn(async move { run(listener, guard, engine, None).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
     }

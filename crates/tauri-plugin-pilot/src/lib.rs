@@ -3,52 +3,68 @@ mod error;
 pub(crate) mod eval;
 mod handler;
 pub(crate) mod protocol;
+#[cfg(unix)]
 pub(crate) mod server;
 
 pub use error::Error;
 
+#[cfg(unix)]
 use eval::EvalEngine;
+#[cfg(unix)]
 use server::EvalFn;
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use tauri::Manager;
 
+#[cfg(unix)]
 const BRIDGE_JS: &str = include_str!("../js/bridge.js");
 
 /// Initialize the tauri-pilot plugin.
 ///
-/// Injects the JS bridge, stores an `EvalEngine` in app state,
+/// On non-Unix platforms or in release builds, returns a no-op plugin.
+/// In debug builds on Unix, injects the JS bridge, stores an `EvalEngine`,
 /// and starts a Unix socket server at `/tmp/tauri-pilot-{identifier}.sock`.
 #[must_use]
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::new("pilot")
-        .js_init_script(BRIDGE_JS.to_owned())
-        .setup(|app, _api| {
-            let engine = EvalEngine::new();
-            app.manage(engine.clone());
+    #[cfg(not(all(unix, debug_assertions)))]
+    {
+        return tauri::plugin::Builder::new("pilot").build();
+    }
 
-            let identifier = app.config().identifier.clone();
-            let socket_path =
-                std::path::PathBuf::from(format!("/tmp/tauri-pilot-{identifier}.sock"));
+    #[cfg(all(unix, debug_assertions))]
+    {
+        tauri::plugin::Builder::new("pilot")
+            .js_init_script(BRIDGE_JS.to_owned())
+            .setup(|app, _api| {
+                let engine = EvalEngine::new();
+                app.manage(engine.clone());
 
-            let eval_fn = make_eval_fn(app);
+                let identifier = app.config().identifier.clone();
+                let socket_path =
+                    std::path::PathBuf::from(format!("/tmp/tauri-pilot-{identifier}.sock"));
 
-            let listener = server::bind(&socket_path).map_err(|e| {
-                tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
-                e
-            })?;
+                let eval_fn = make_eval_fn(app);
 
-            tauri::async_runtime::spawn(server::run(listener, engine, Some(eval_fn)));
+                let (listener, guard) = server::bind(&socket_path).map_err(|e| {
+                    tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
+                    e
+                })?;
 
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![handler::__callback])
-        .build()
+                tauri::async_runtime::spawn(server::run(listener, guard, engine, Some(eval_fn)));
+
+                Ok(())
+            })
+            .invoke_handler(tauri::generate_handler![handler::__callback])
+            .build()
+    }
 }
 
 /// Create an eval function from the app handle that evaluates JS in a webview.
 ///
 /// Tries the "main" window label first for deterministic targeting,
 /// falls back to the first available window if "main" doesn't exist.
+#[cfg(all(unix, debug_assertions))]
 fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
     let handle = app.clone();
     Arc::new(move |script| {
