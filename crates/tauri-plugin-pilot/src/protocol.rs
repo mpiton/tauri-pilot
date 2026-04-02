@@ -33,7 +33,6 @@ pub(crate) struct RpcError {
 impl Response {
     /// Create a success response.
     #[must_use]
-    #[allow(dead_code)]
     pub(crate) fn success(id: u64, result: serde_json::Value) -> Self {
         Self {
             jsonrpc: "2.0".to_owned(),

@@ -1,4 +1,5 @@
 mod error;
+mod handler;
 pub(crate) mod protocol;
 mod server;
 

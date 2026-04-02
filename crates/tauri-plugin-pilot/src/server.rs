@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::handler;
 use crate::protocol::{Request, Response};
 
 use std::path::PathBuf;
@@ -58,11 +59,15 @@ async fn handle_connection(stream: UnixStream) -> Result<(), Error> {
 }
 
 fn dispatch(req: &Request) -> Response {
-    Response::error(
-        req.id,
-        -32601,
-        format!("Method not found: {}", req.method),
-    )
+    match handler::dispatch(&req.method, req.params.as_ref()) {
+        Ok(result) => Response::success(req.id, result),
+        Err(rpc_err) => Response {
+            jsonrpc: "2.0".to_owned(),
+            id: req.id,
+            result: None,
+            error: Some(rpc_err),
+        },
+    }
 }
 
 #[cfg(test)]
@@ -79,8 +84,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_server_responds_method_not_found() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t03a.sock");
+    async fn test_server_responds_ping_ok() {
+        let socket = PathBuf::from("/tmp/tauri-pilot-test-t04a.sock");
         let handle = start_test_server(&socket).await;
 
         let stream = UnixStream::connect(&socket).await.unwrap();
@@ -98,9 +103,8 @@ mod tests {
         let resp: Response = serde_json::from_str(&line).unwrap();
 
         assert_eq!(resp.id, 1);
-        let err = resp.error.unwrap();
-        assert_eq!(err.code, -32601);
-        assert!(err.message.contains("ping"));
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);
