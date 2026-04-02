@@ -1,0 +1,25 @@
+[package]
+name = "tauri-plugin-pilot"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+links = "tauri-plugin-pilot"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "sync", "time", "io-util"] }
+tracing.workspace = true
+thiserror = "2"
+tauri = { version = "2", features = ["unstable"] }
+libc = "0.2.184"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2.5.4", features = ["build"] }
