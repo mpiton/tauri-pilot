@@ -1,0 +1,31 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Node (for bridge build step)
+node_modules/
+package-lock.json
+
+# Project Managment
+ARCHI.md
+PRD.md
+SPEC.md
+
+# ECC
+.insaits_audit*

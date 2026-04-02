@@ -1,0 +1,75 @@
+name: Bug Report
+description: Report a bug in tauri-pilot
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the sections below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what the bug is.
+      placeholder: When I run `tauri-pilot snapshot -i`, the output is empty...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce the issue?
+      value: |
+        1. Start a Tauri app with the plugin enabled
+        2. Run `tauri-pilot ...`
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include error messages or logs.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: e.g., Ubuntu 24.04, Fedora 41, Arch Linux
+    validations:
+      required: true
+
+  - type: input
+    id: tauri-version
+    attributes:
+      label: Tauri Version
+      description: Output of `cargo tauri --version`
+    validations:
+      required: true
+
+  - type: input
+    id: pilot-version
+    attributes:
+      label: tauri-pilot Version
+      description: Output of `tauri-pilot --version`
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or logs.
