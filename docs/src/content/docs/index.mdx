@@ -1,0 +1,57 @@
+---
+title: tauri-pilot
+description: Interactive testing CLI for Tauri v2 apps — lets AI agents and developers inspect, interact with, and debug Tauri applications in real-time.
+template: splash
+hero:
+  tagline: Interactive testing CLI for Tauri v2 apps — lets AI agents (Claude Code) and developers inspect, interact with, and debug Tauri applications in real-time.
+  image:
+    file: ../../assets/logo.jpeg
+  actions:
+    - text: Getting Started
+      link: /tauri-pilot/getting-started/
+      icon: right-arrow
+    - text: CLI Reference
+      link: /tauri-pilot/reference/cli/
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What is tauri-pilot?
+
+There's no tool for AI agents to interact with Tauri app UIs. Playwright doesn't work (Tauri uses WebKitGTK, not Chromium). tauri-pilot bridges this gap with a lightweight plugin + CLI that speaks a protocol optimized for LLM consumption.
+
+```
+$ tauri-pilot snapshot -i
+- heading "PR Dashboard" [ref=e1]
+- textbox "Search PRs" [ref=e2] value=""
+- button "Refresh" [ref=e3]
+- list "PR List" [ref=e4]
+  - listitem "fix: resolve memory leak #142" [ref=e5]
+  - listitem "feat: add workspace support #138" [ref=e6]
+- button "Load More" [ref=e7]
+
+$ tauri-pilot click @e3
+ok
+
+$ tauri-pilot fill @e2 "workspace"
+ok
+```
+
+## Explore
+
+<CardGrid stagger>
+	<Card title="Getting Started" icon="rocket">
+		Install the plugin and CLI, then start inspecting your Tauri app in minutes.
+	</Card>
+	<Card title="Plugin Setup" icon="setting">
+		Add tauri-plugin-pilot to your Tauri v2 app with just two lines of code.
+	</Card>
+	<Card title="Architecture" icon="open-book">
+		Understand how the CLI, plugin, and JS bridge communicate.
+	</Card>
+	<Card title="AI Agent Integration" icon="seti:robot">
+		Learn how Claude Code and other AI agents use tauri-pilot for automated testing.
+	</Card>
+</CardGrid>
