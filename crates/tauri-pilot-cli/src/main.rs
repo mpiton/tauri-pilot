@@ -1,13 +1,15 @@
 mod cli;
 mod client;
+mod output;
 #[allow(dead_code)]
 mod protocol;
 
 use anyhow::Result;
 use clap::Parser;
+use serde_json::json;
 use std::path::PathBuf;
 
-use cli::{Cli, Command};
+use cli::{Cli, Command, Target, parse_target};
 use client::Client;
 
 #[tokio::main]
@@ -23,18 +25,124 @@ async fn main() -> Result<()> {
     let socket = resolve_socket(args.socket)?;
     let mut client = Client::connect(&socket).await?;
 
-    match args.command {
-        Command::Ping => {
-            let result = client.call("ping", None).await?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&result)?);
-            } else {
-                println!("ok");
-            }
-        }
+    let result = run_command(&mut client, args.command).await?;
+
+    if args.json {
+        output::format_json(&result)?;
+    } else {
+        output::format_text(&result);
     }
 
     Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_command(client: &mut Client, command: Command) -> Result<serde_json::Value> {
+    match command {
+        Command::Ping => client.call("ping", None).await,
+        Command::State => client.call("state", None).await,
+        Command::Snapshot {
+            interactive,
+            selector,
+            depth,
+        } => {
+            client
+                .call(
+                    "snapshot",
+                    Some(json!({
+                        "interactive": interactive,
+                        "selector": selector,
+                        "depth": depth,
+                    })),
+                )
+                .await
+        }
+        Command::Click { target } => client.call("click", Some(target_params(&target))).await,
+        Command::Fill { target, value } => {
+            let mut p = target_params(&target);
+            p["value"] = json!(value);
+            client.call("fill", Some(p)).await
+        }
+        Command::Type { target, text } => {
+            let mut p = target_params(&target);
+            p["text"] = json!(text);
+            client.call("type", Some(p)).await
+        }
+        Command::Press { key } => client.call("press", Some(json!({"key": key}))).await,
+        Command::Select { target, value } => {
+            let mut p = target_params(&target);
+            p["value"] = json!(value);
+            client.call("select", Some(p)).await
+        }
+        Command::Check { target } => client.call("check", Some(target_params(&target))).await,
+        Command::Scroll {
+            direction,
+            amount,
+            r#ref,
+        } => {
+            client
+                .call(
+                    "scroll",
+                    Some(json!({"direction": direction, "amount": amount, "ref": r#ref})),
+                )
+                .await
+        }
+        Command::Text { target } => client.call("text", Some(target_params(&target))).await,
+        Command::Html { target } => {
+            let params = target.map(|t| target_params(&t));
+            client.call("html", params).await
+        }
+        Command::Value { target } => client.call("value", Some(target_params(&target))).await,
+        Command::Attrs { target } => client.call("attrs", Some(target_params(&target))).await,
+        Command::Eval { script } => client.call("eval", Some(json!({"script": script}))).await,
+        Command::Ipc { command, args } => {
+            let parsed_args: Option<serde_json::Value> =
+                args.as_deref().map(serde_json::from_str).transpose()?;
+            client
+                .call(
+                    "ipc",
+                    Some(json!({"command": command, "args": parsed_args})),
+                )
+                .await
+        }
+        Command::Screenshot { path, selector } => {
+            client
+                .call(
+                    "screenshot",
+                    Some(json!({"path": path, "selector": selector})),
+                )
+                .await
+        }
+        Command::Navigate { url } => client.call("navigate", Some(json!({"url": url}))).await,
+        Command::Url => client.call("url", None).await,
+        Command::Title => client.call("title", None).await,
+        Command::Wait {
+            target,
+            selector,
+            gone,
+            timeout,
+        } => {
+            client
+                .call(
+                    "wait",
+                    Some(json!({
+                        "target": target,
+                        "selector": selector,
+                        "gone": gone,
+                        "timeout": timeout,
+                    })),
+                )
+                .await
+        }
+    }
+}
+
+fn target_params(raw: &str) -> serde_json::Value {
+    match parse_target(raw) {
+        Target::Ref(r) => json!({"ref": r}),
+        Target::Selector(s) => json!({"selector": s}),
+        Target::Coords(x, y) => json!({"x": x, "y": y}),
+    }
 }
 
 /// Resolve the socket path from explicit arg, env var, or auto-detection.
