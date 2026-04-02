@@ -242,6 +242,59 @@
     return { ok: true };
   }
 
+  function text(ref) {
+    return requireEl(ref).textContent || "";
+  }
+
+  function html(options) {
+    const ref = options && options.ref;
+    const el = ref ? requireEl(ref) : document.documentElement;
+    return el.innerHTML;
+  }
+
+  function value(ref) {
+    return requireEl(ref).value || "";
+  }
+
+  function attrs(ref) {
+    const el = requireEl(ref);
+    const result = {};
+    for (const attr of el.attributes) {
+      result[attr.name] = attr.value;
+    }
+    return result;
+  }
+
+  function navigate(options) {
+    const url = options && options.url;
+    if (url) window.location.href = url;
+    return { ok: true };
+  }
+
+  function url() {
+    return window.location.href;
+  }
+
+  function title() {
+    return document.title;
+  }
+
+  function state() {
+    return {
+      url: window.location.href,
+      title: document.title,
+      readyState: document.readyState,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      scroll: { x: window.scrollX, y: window.scrollY },
+    };
+  }
+
+  function evalScript(options) {
+    var script = options && options.script;
+    if (!script) throw new Error("No script provided");
+    return new Function("return (" + script + ")")();
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
@@ -252,5 +305,14 @@
     select: select,
     check: check,
     scroll: scroll,
+    text: text,
+    html: html,
+    value: value,
+    attrs: attrs,
+    navigate: navigate,
+    url: url,
+    title: title,
+    state: state,
+    eval: evalScript,
   };
 })();

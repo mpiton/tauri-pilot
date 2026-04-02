@@ -15,9 +15,9 @@ pub(crate) async fn dispatch(
 ) -> Result<serde_json::Value, RpcError> {
     match method {
         "ping" => Ok(serde_json::json!({"status": "ok"})),
-        "snapshot" | "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" => {
-            handle_eval_method(method, params, engine, eval_fn).await
-        }
+        "snapshot" | "click" | "fill" | "type" | "press" | "select" | "check" | "scroll"
+        | "text" | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title"
+        | "state" => handle_eval_method(method, params, engine, eval_fn).await,
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -65,6 +65,19 @@ fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> String
         Some(v) if !v.is_null() => v.to_string(),
         _ => "{}".to_owned(),
     };
+
+    if method == "ipc" {
+        // ipc calls Tauri's backend invoke directly
+        let command = params
+            .and_then(|p| p.get("command"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let ipc_args = params
+            .and_then(|p| p.get("args"))
+            .map_or("{}".to_owned(), ToString::to_string);
+        return format!("window.__TAURI__.core.invoke('{command}', {ipc_args})");
+    }
+
     format!("window.__PILOT__.{method}({args})")
 }
 
