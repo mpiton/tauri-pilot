@@ -5,6 +5,7 @@ mod output;
 mod protocol;
 
 use anyhow::Result;
+use base64::Engine;
 use clap::Parser;
 use serde_json::json;
 use std::path::PathBuf;
@@ -26,7 +27,19 @@ async fn main() -> Result<()> {
     let mut client = Client::connect(&socket).await?;
 
     let is_snapshot = matches!(args.command, Command::Snapshot { .. });
+    let screenshot_path = if let Command::Screenshot { ref path, .. } = args.command {
+        path.clone()
+    } else {
+        None
+    };
     let result = run_command(&mut client, args.command).await?;
+
+    // Screenshot save-to-file: decode base64 data URL and write PNG
+    if let Some(path) = screenshot_path {
+        save_screenshot(&result, &path)?;
+        println!("Saved to {}", path.display());
+        return Ok(());
+    }
 
     if args.json {
         output::format_json(&result)?;
@@ -146,6 +159,24 @@ fn target_params(raw: &str) -> serde_json::Value {
         Target::Selector(s) => json!({"selector": s}),
         Target::Coords(x, y) => json!({"x": x, "y": y}),
     }
+}
+
+/// Decode a base64 data URL and write the PNG file.
+fn save_screenshot(result: &serde_json::Value, path: &std::path::Path) -> Result<()> {
+    let data_url = result
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("Screenshot result is not a string"))?;
+
+    let base64_data = data_url
+        .strip_prefix("data:image/png;base64,")
+        .unwrap_or(data_url);
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .map_err(|e| anyhow::anyhow!("Failed to decode base64: {e}"))?;
+
+    std::fs::write(path, bytes)?;
+    Ok(())
 }
 
 /// Resolve the socket path from explicit arg, env var, or auto-detection.

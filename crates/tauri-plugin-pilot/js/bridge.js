@@ -338,6 +338,17 @@
     });
   }
 
+  async function screenshot(options) {
+    var selector = options && options.selector;
+    var el = selector ? document.querySelector(selector) : document.documentElement;
+    if (!el) throw new Error("Element not found: " + selector);
+    if (typeof htmlToImage === "undefined" || !htmlToImage.toPng) {
+      throw new Error("html-to-image library not loaded. Bundle it into bridge.js for screenshot support.");
+    }
+    var dataUrl = await htmlToImage.toPng(el);
+    return dataUrl;
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
@@ -358,5 +369,6 @@
     state: state,
     eval: evalScript,
     wait: waitFor,
+    screenshot: screenshot,
   };
 })();

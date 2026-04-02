@@ -17,7 +17,9 @@ pub(crate) async fn dispatch(
         "ping" => Ok(serde_json::json!({"status": "ok"})),
         "snapshot" | "click" | "fill" | "type" | "press" | "select" | "check" | "scroll"
         | "text" | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title"
-        | "state" | "wait" => handle_eval_method(method, params, engine, eval_fn).await,
+        | "state" | "wait" | "screenshot" => {
+            handle_eval_method(method, params, engine, eval_fn).await
+        }
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
