@@ -3,9 +3,7 @@ title: CLI Reference
 description: Complete reference for all tauri-pilot-cli commands, options, and JSON-RPC protocol examples.
 ---
 
-# CLI Reference
-
-`tauri-pilot-cli` is a command-line client that communicates with the `tauri-plugin-pilot` server running inside your Tauri application over a Unix socket.
+`tauri-pilot` is a command-line client that communicates with the `tauri-plugin-pilot` server running inside your Tauri application over a Unix socket.
 
 ## Global Options
 
@@ -52,7 +50,7 @@ tauri-pilot ping
 
 ```bash
 $ tauri-pilot ping
-pong
+✓ ok
 ```
 
 ---
@@ -350,7 +348,7 @@ tauri-pilot ipc create_pr --args '{"title":"Fix bug","branch":"fix/issue-42"}'
 
 ### `screenshot`
 
-Capture the current WebView as a PNG image using the injected `html-to-image` bridge.
+Capture the current WebView as a PNG using the injected `html-to-image` bridge.
 
 ```bash
 tauri-pilot screenshot [path] [OPTIONS]
@@ -391,6 +389,40 @@ tauri-pilot navigate <url>
 ```bash
 tauri-pilot navigate "http://localhost:1420/settings"
 tauri-pilot navigate "/"
+```
+
+---
+
+### `url`
+
+Get the current page URL.
+
+```bash
+tauri-pilot url
+```
+
+**Example:**
+
+```bash
+$ tauri-pilot url
+http://localhost:1420/dashboard
+```
+
+---
+
+### `title`
+
+Get the current page title.
+
+```bash
+tauri-pilot title
+```
+
+**Example:**
+
+```bash
+$ tauri-pilot title
+PR Dashboard
 ```
 
 ---

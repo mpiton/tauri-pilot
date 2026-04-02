@@ -7,7 +7,7 @@ description: Install tauri-pilot and start testing your Tauri v2 app interactive
 
 - Linux (WebKitGTK) — macOS/Windows planned
 - Tauri v2 (v1 not supported)
-- Rust 1.94.1+ (LTS, edition 2024)
+- Rust 1.94.0+ (edition 2024)
 
 ## Installation
 
@@ -41,7 +41,7 @@ fn main() {
 ### 3. Install the CLI
 
 ```bash
-cargo install tauri-pilot
+cargo install tauri-pilot-cli
 ```
 
 ## Quick Start
@@ -76,7 +76,7 @@ tauri-pilot follows a **ping → snapshot → interact → verify** workflow:
 
 ### Example snapshot output
 
-```
+```text
 $ tauri-pilot snapshot -i
 - heading "PR Dashboard" [ref=e1]
 - textbox "Search PRs" [ref=e2] value=""

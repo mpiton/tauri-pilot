@@ -85,12 +85,12 @@ tauri-pilot fill @e5 "hello"  # fills the input at e5
 `webview.eval()` in Tauri v2 is **fire-and-forget** — it dispatches JS into the WebView but provides no return value. All methods that read from the page require a response, so a callback pattern is used:
 
 1. The plugin wraps the target JS in a `try/catch` block
-2. On completion, the JS invokes `window.__TAURI__.core.invoke('plugin:pilot|__callback', {id, result})`
+2. On completion, the JS invokes `window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback', {id, result})`
 3. The plugin's IPC handler for `__callback` looks up the matching `oneshot::Sender` and resolves it
 4. Rust awaits the oneshot channel with a 10-second timeout
 
 The `EvalEngine` maintains:
-- A `HashMap<u64, oneshot::Sender<Value>>` for in-flight requests
+- A `HashMap<u64, oneshot::Sender<Result<Value, String>>>` for in-flight requests
 - An `AtomicU64` counter for request IDs
 
 This makes every eval effectively async and type-safe from the Rust side.
@@ -101,7 +101,7 @@ The JS bridge is compiled into the plugin binary via `include_str!("../js/bridge
 
 Key internals:
 
-- **Snapshot**: Uses a recursive `TreeWalker` to walk the DOM. A `ROLE_MAP` maps implicit HTML element roles (e.g. `<button>` → `"button"`, `<a>` → `"link"`) for elements without an explicit ARIA role.
+- **Snapshot**: Uses a manual recursive traversal over `node.children` to walk the DOM. A `ROLE_MAP` maps implicit HTML element roles (e.g. `<button>` → `"button"`, `<a>` → `"link"`) for elements without an explicit ARIA role.
 - **Actions**: Dispatch realistic DOM event sequences — `focus → mousedown → mouseup → click` — ensuring compatibility with React, Vue, and other frameworks that rely on synthetic events.
 - **`fill`**: Uses the native `HTMLInputElement` value setter via `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set` to trigger React's synthetic change events correctly.
 

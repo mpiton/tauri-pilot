@@ -46,7 +46,7 @@ The `#[cfg(debug_assertions)]` guard is intentional and important:
 
 Once your app starts in dev mode, the plugin creates a Unix socket at:
 
-```
+```text
 /tmp/tauri-pilot-{identifier}.sock
 ```
 
@@ -54,7 +54,7 @@ The `{identifier}` value comes from the `identifier` field in your `tauri.conf.j
 
 **Example:** an app with identifier `com.myapp.dev` creates the socket at:
 
-```
+```text
 /tmp/tauri-pilot-com.myapp.dev.sock
 ```
 
@@ -62,7 +62,15 @@ The CLI auto-discovers this socket when you run commands.
 
 ## 5. Permissions
 
-The plugin requires **no special Tauri permissions**. It operates through the standard Plugin API and WebView eval — no capability entries needed in your `tauri.conf.json`.
+The plugin operates through the standard Plugin API and WebView eval. It ships a default permission (`allow-callback`) for its internal `__callback` IPC command. If your app enforces Tauri capabilities, add the plugin's permission set to your `tauri.conf.json`:
+
+```json
+{
+  "permissions": ["pilot:default"]
+}
+```
+
+Most apps using the default Tauri capability configuration will not need any manual permission entries.
 
 ## 6. Verify the setup
 
