@@ -10,10 +10,12 @@ pub(crate) fn format_json(value: &serde_json::Value) -> Result<()> {
 
 /// Print a value as compact text for human consumption.
 pub(crate) fn format_text(value: &serde_json::Value) {
-    // {ok: true} → "ok"
-    if value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
-        println!("ok");
-        return;
+    // {ok: true} → "ok", {found: true} → "found"
+    for key in ["ok", "found"] {
+        if value.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
+            println!("{key}");
+            return;
+        }
     }
     // {status: "ok"} → "ok"
     if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {

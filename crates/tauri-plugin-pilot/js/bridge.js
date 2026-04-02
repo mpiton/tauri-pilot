@@ -295,6 +295,49 @@
     return new Function("return (" + script + ")")();
   }
 
+  function waitFor(options) {
+    var selector = options && options.selector;
+    var ref = options && options.target;
+    var gone = (options && options.gone) || false;
+    var timeout = (options && options.timeout) || 10000;
+
+    return new Promise(function (res, rej) {
+      function check() {
+        if (selector) return document.querySelector(selector);
+        if (ref) return idMap.get(ref) || null;
+        return null;
+      }
+
+      var el = check();
+      if (!gone && el) return res({ found: true });
+      if (gone && !el) return res({ found: true });
+
+      var timer = setTimeout(function () {
+        observer.disconnect();
+        rej(new Error("Timeout waiting for " + (selector || ref)));
+      }, timeout);
+
+      var observer = new MutationObserver(function () {
+        var found = check();
+        if (!gone && found) {
+          observer.disconnect();
+          clearTimeout(timer);
+          res({ found: true });
+        } else if (gone && !found) {
+          observer.disconnect();
+          clearTimeout(timer);
+          res({ found: true });
+        }
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+      });
+    });
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
@@ -314,5 +357,6 @@
     title: title,
     state: state,
     eval: evalScript,
+    wait: waitFor,
   };
 })();
