@@ -3,12 +3,15 @@ mod client;
 mod output;
 #[allow(dead_code)]
 mod protocol;
+mod style;
 
 use anyhow::Result;
 use base64::Engine;
 use clap::Parser;
 use serde_json::json;
+use std::io::IsTerminal;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use cli::{Cli, Command, Target, parse_target};
 use client::Client;
@@ -32,12 +35,28 @@ async fn main() -> Result<()> {
     } else {
         None
     };
-    let result = run_command(&mut client, args.command).await?;
+    let result = if screenshot_path.is_some() && std::io::stdout().is_terminal() {
+        let spinner = indicatif::ProgressBar::new_spinner();
+        spinner.enable_steady_tick(Duration::from_millis(80));
+        spinner.set_message("Taking screenshot...");
+        let res = run_command(&mut client, args.command).await;
+        spinner.finish_and_clear();
+        res?
+    } else {
+        run_command(&mut client, args.command).await?
+    };
 
     // Screenshot save-to-file: decode base64 data URL and write PNG
     if let Some(path) = screenshot_path {
         save_screenshot(&result, &path)?;
-        println!("Saved to {}", path.display());
+        if args.json {
+            output::format_json(&serde_json::json!({"path": path.display().to_string()}))?;
+        } else {
+            println!(
+                "{}",
+                crate::style::success(&format!("Saved to {}", path.display()))
+            );
+        }
         return Ok(());
     }
 

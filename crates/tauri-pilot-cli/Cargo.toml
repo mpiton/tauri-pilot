@@ -21,6 +21,8 @@ clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22.1"
+owo-colors = { version = "4.3.0", features = ["supports-colors"] }
+indicatif = "0.17"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

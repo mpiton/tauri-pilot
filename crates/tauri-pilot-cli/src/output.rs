@@ -10,16 +10,30 @@ pub(crate) fn format_json(value: &serde_json::Value) -> Result<()> {
 
 /// Print a value as compact text for human consumption.
 pub(crate) fn format_text(value: &serde_json::Value) {
-    // {ok: true} → "ok", {found: true} → "found"
+    // {error: {message: "...", code: N}} → "✗ <message>"
+    if let Some(err) = value.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown error");
+        let code = err.get("code").and_then(serde_json::Value::as_i64);
+        if let Some(c) = code {
+            println!("{}", crate::style::error(&format!("{msg} (code {c})")));
+        } else {
+            println!("{}", crate::style::error(msg));
+        }
+        return;
+    }
+    // {ok: true} → "✓ ok", {found: true} → "✓ found"
     for key in ["ok", "found"] {
         if value.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
-            println!("{key}");
+            println!("{}", crate::style::success(key));
             return;
         }
     }
-    // {status: "ok"} → "ok"
+    // {status: "ok"} → "✓ ok"
     if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
-        println!("{status}");
+        println!("{}", crate::style::success(status));
         return;
     }
     match value {
@@ -58,22 +72,22 @@ pub(crate) fn format_snapshot(value: &serde_json::Value) {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("?");
 
-        let mut line = format!("{indent}- {role}");
+        let mut line = format!("{indent}- {}", crate::style::info(role));
 
         if let Some(name) = el.get("name").and_then(serde_json::Value::as_str) {
-            let _ = write!(line, " \"{name}\"");
+            let _ = write!(line, " {}", crate::style::bold(format!("\"{name}\"")));
         }
 
-        let _ = write!(line, " [ref={ref}]");
+        let _ = write!(line, " {}", crate::style::dim(format!("[ref={ref}]")));
 
         if let Some(val) = el.get("value").and_then(serde_json::Value::as_str) {
-            let _ = write!(line, " value=\"{val}\"");
+            let _ = write!(line, " {}", crate::style::dim(format!("value=\"{val}\"")));
         }
         if el.get("checked").and_then(serde_json::Value::as_bool) == Some(true) {
-            line.push_str(" checked");
+            let _ = write!(line, " {}", crate::style::dim("checked"));
         }
         if el.get("disabled").and_then(serde_json::Value::as_bool) == Some(true) {
-            line.push_str(" disabled");
+            let _ = write!(line, " {}", crate::style::dim("disabled"));
         }
 
         println!("{line}");
@@ -88,6 +102,45 @@ mod tests {
     #[test]
     fn test_format_json_does_not_panic() {
         format_json(&json!({"status": "ok"})).unwrap();
+    }
+
+    #[test]
+    fn test_format_text_ok_contains_checkmark() {
+        // Just verify it doesn't panic
+        format_text(&json!({"ok": true}));
+    }
+
+    #[test]
+    fn test_format_text_found_does_not_panic() {
+        format_text(&json!({"found": true}));
+    }
+
+    #[test]
+    fn test_format_text_status_ok() {
+        // Just verify it doesn't panic
+        format_text(&json!({"status": "ok"}));
+    }
+
+    #[test]
+    fn test_format_text_rpc_error_does_not_panic() {
+        // {error: {message: "..."}} path — just verify it doesn't panic
+        format_text(&json!({"error": {"message": "Method not found", "code": -32601}}));
+    }
+
+    #[test]
+    fn test_format_text_error_without_message() {
+        // {error: {code: -32601}} without message key — should display "unknown error"
+        format_text(&json!({"error": {"code": -32601}}));
+    }
+
+    #[test]
+    fn test_format_text_string_value() {
+        format_text(&json!("some text"));
+    }
+
+    #[test]
+    fn test_format_text_null_value() {
+        format_text(&serde_json::Value::Null);
     }
 
     #[test]
