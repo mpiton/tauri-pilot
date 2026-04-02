@@ -1,4 +1,6 @@
 mod error;
+#[allow(dead_code)]
+mod protocol;
 
 use error::Result;
 
