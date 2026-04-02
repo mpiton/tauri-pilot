@@ -89,7 +89,14 @@ impl EvalEngine {
 
         match result {
             Ok(Ok(inner)) => inner.map_err(EvalError::JsError),
-            Ok(Err(_)) => Err(EvalError::ChannelClosed),
+            Ok(Err(_)) => {
+                // Defensive cleanup — sender dropped without sending
+                self.pending
+                    .lock()
+                    .expect("pending lock poisoned")
+                    .remove(&id);
+                Err(EvalError::ChannelClosed)
+            }
             Err(_) => {
                 // Remove stale entry from pending map on timeout
                 self.pending

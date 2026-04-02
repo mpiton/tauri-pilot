@@ -3,6 +3,7 @@ use crate::eval::EvalEngine;
 use crate::handler;
 use crate::protocol::{Request, Response};
 
+use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -11,13 +12,20 @@ use tokio::net::{UnixListener, UnixStream};
 pub(crate) type EvalFn = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
 
 /// RAII guard that removes the socket file on drop (normal shutdown or panic).
-pub(crate) struct SocketGuard(std::path::PathBuf);
+/// Stores the inode at bind time so it only unlinks its own socket, not one
+/// created by an overlapping instance.
+pub(crate) struct SocketGuard {
+    path: std::path::PathBuf,
+    inode: u64,
+}
 
 impl Drop for SocketGuard {
     fn drop(&mut self) {
-        if self.0.exists() {
-            let _ = std::fs::remove_file(&self.0);
-            tracing::info!(path = %self.0.display(), "socket removed");
+        if let Ok(meta) = std::fs::metadata(&self.path)
+            && meta.ino() == self.inode
+        {
+            let _ = std::fs::remove_file(&self.path);
+            tracing::info!(path = %self.path.display(), "socket removed");
         }
     }
 }
@@ -30,7 +38,16 @@ pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, Socke
     }
     let listener = UnixListener::bind(socket_path)?;
     tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
-    Ok((listener, SocketGuard(socket_path.to_path_buf())))
+
+    let inode = std::fs::metadata(socket_path).map(|m| m.ino()).unwrap_or(0);
+
+    Ok((
+        listener,
+        SocketGuard {
+            path: socket_path.to_path_buf(),
+            inode,
+        },
+    ))
 }
 
 /// Run the accept loop on a pre-bound listener. Logs errors internally.
@@ -126,7 +143,18 @@ async fn dispatch(req: &Request, engine: &EvalEngine, eval_fn: Option<&EvalFn>) 
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
+
+    static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn unique_socket_path() -> PathBuf {
+        let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        PathBuf::from(format!(
+            "/tmp/tauri-pilot-test-{}-{n}.sock",
+            std::process::id()
+        ))
+    }
 
     async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let (listener, guard) = bind(path).expect("bind test socket");
@@ -138,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_responds_ping_ok() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t04a.sock");
+        let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
         let stream = UnixStream::connect(&socket).await.unwrap();
@@ -165,7 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_handles_invalid_json() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t03b.sock");
+        let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
         let stream = UnixStream::connect(&socket).await.unwrap();
@@ -189,7 +217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_handles_multiple_requests() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t03c.sock");
+        let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
         let stream = UnixStream::connect(&socket).await.unwrap();

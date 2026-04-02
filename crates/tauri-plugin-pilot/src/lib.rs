@@ -40,7 +40,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let engine = EvalEngine::new();
                 app.manage(engine.clone());
 
-                let identifier = app.config().identifier.clone();
+                let identifier = sanitize_identifier(&app.config().identifier);
                 let socket_path =
                     std::path::PathBuf::from(format!("/tmp/tauri-pilot-{identifier}.sock"));
 
@@ -57,6 +57,27 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             })
             .invoke_handler(tauri::generate_handler![handler::__callback])
             .build()
+    }
+}
+
+/// Strip path separators and unsafe characters from the app identifier
+/// so it can be safely used in a socket filename.
+#[cfg(all(unix, debug_assertions))]
+fn sanitize_identifier(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if sanitized.is_empty() {
+        "default".to_owned()
+    } else {
+        sanitized
     }
 }
 
