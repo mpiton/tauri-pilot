@@ -25,10 +25,13 @@ async fn main() -> Result<()> {
     let socket = resolve_socket(args.socket)?;
     let mut client = Client::connect(&socket).await?;
 
+    let is_snapshot = matches!(args.command, Command::Snapshot { .. });
     let result = run_command(&mut client, args.command).await?;
 
     if args.json {
         output::format_json(&result)?;
+    } else if is_snapshot {
+        output::format_snapshot(&result);
     } else {
         output::format_text(&result);
     }
