@@ -3,7 +3,6 @@ use crate::eval::EvalEngine;
 use crate::handler;
 use crate::protocol::{Request, Response};
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -11,25 +10,29 @@ use tokio::net::{UnixListener, UnixStream};
 /// A function that evaluates JS in the webview. `None` if no webview is available.
 pub(crate) type EvalFn = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
 
-/// Start the socket server. Logs errors internally.
-pub(crate) async fn start(socket_path: PathBuf, engine: EvalEngine, eval_fn: Option<EvalFn>) {
-    if let Err(e) = run(&socket_path, engine, eval_fn).await {
-        tracing::error!(path = %socket_path.display(), "socket server error: {e}");
-    }
-}
-
-async fn run(
-    socket_path: &PathBuf,
-    engine: EvalEngine,
-    eval_fn: Option<EvalFn>,
-) -> Result<(), Error> {
-    // Remove stale socket from a previous run that didn't clean up
+/// Bind the socket, removing any stale file from a previous run.
+/// Called from plugin setup so bind failures propagate immediately.
+pub(crate) fn bind(socket_path: &std::path::Path) -> Result<UnixListener, Error> {
     if socket_path.exists() {
         let _ = std::fs::remove_file(socket_path);
     }
-
     let listener = UnixListener::bind(socket_path)?;
     tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
+    Ok(listener)
+}
+
+/// Run the accept loop on a pre-bound listener. Logs errors internally.
+pub(crate) async fn run(listener: UnixListener, engine: EvalEngine, eval_fn: Option<EvalFn>) {
+    if let Err(e) = accept_loop(listener, engine, eval_fn).await {
+        tracing::error!("socket server error: {e}");
+    }
+}
+
+async fn accept_loop(
+    listener: UnixListener,
+    engine: EvalEngine,
+    eval_fn: Option<EvalFn>,
+) -> Result<(), Error> {
     let ctx = Arc::new((engine, eval_fn));
 
     loop {
@@ -71,6 +74,11 @@ async fn handle_connection(
         }
 
         let response = match serde_json::from_str::<Request>(trimmed) {
+            Ok(req) if req.jsonrpc != "2.0" => Response::error(
+                req.id,
+                -32600,
+                "Invalid JSON-RPC version (expected \"2.0\")",
+            ),
             Ok(req) => dispatch(&req, engine, eval_fn).await,
             Err(e) => Response::error(0, -32700, format!("Parse error: {e}")),
         };
@@ -99,13 +107,13 @@ async fn dispatch(req: &Request, engine: &EvalEngine, eval_fn: Option<&EvalFn>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
-        let _ = std::fs::remove_file(path);
-        let p = path.clone();
+        let listener = bind(path).expect("bind test socket");
         let engine = EvalEngine::new();
-        let handle = tokio::spawn(async move { start(p, engine, None).await });
+        let handle = tokio::spawn(async move { run(listener, engine, None).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
     }

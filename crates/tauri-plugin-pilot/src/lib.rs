@@ -30,11 +30,14 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             let socket_path =
                 std::path::PathBuf::from(format!("/tmp/tauri-pilot-{identifier}.sock"));
 
-            tracing::info!(path = %socket_path.display(), "starting tauri-pilot socket server");
-
             let eval_fn = make_eval_fn(app);
 
-            tauri::async_runtime::spawn(server::start(socket_path, engine, Some(eval_fn)));
+            let listener = server::bind(&socket_path).map_err(|e| {
+                tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
+                e
+            })?;
+
+            tauri::async_runtime::spawn(server::run(listener, engine, Some(eval_fn)));
 
             Ok(())
         })

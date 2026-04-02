@@ -74,16 +74,16 @@ fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> String
 
     if method == "ipc" {
         // ipc calls Tauri's backend invoke directly
-        // Use JSON.parse for safe interpolation — no string escaping needed
+        // serde_json::to_string produces a valid JS string literal (escaped quotes, backslashes, etc.)
         let command = params
             .and_then(|p| p.get("command"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
-        let command_json = serde_json::to_string(command).unwrap_or_else(|_| "\"\"".to_owned());
+        let command_js = serde_json::to_string(command).unwrap_or_else(|_| "\"\"".to_owned());
         let ipc_args = params
             .and_then(|p| p.get("args"))
             .map_or("{}".to_owned(), ToString::to_string);
-        return format!("window.__TAURI__.core.invoke(JSON.parse({command_json}), {ipc_args})");
+        return format!("window.__TAURI__.core.invoke({command_js}, {ipc_args})");
     }
 
     format!("window.__PILOT__.{method}({args})")
