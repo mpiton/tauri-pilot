@@ -193,8 +193,8 @@
     return el;
   }
 
-  function click(ref) {
-    const el = requireEl(ref);
+  function click(params) {
+    const el = requireEl(params.ref || params.selector);
     el.focus();
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
@@ -202,29 +202,29 @@
     return { ok: true };
   }
 
-  function fill(ref, value) {
-    const el = requireEl(ref);
+  function fill(params) {
+    const el = requireEl(params.ref || params.selector);
     el.focus();
     const setter =
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
     if (setter && setter.set) {
-      setter.set.call(el, value);
+      setter.set.call(el, params.value);
     } else {
-      el.value = value;
+      el.value = params.value;
     }
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
   }
 
-  function typeText(ref, text) {
-    const el = requireEl(ref);
+  function typeText(params) {
+    const el = requireEl(params.ref || params.selector);
     el.focus();
     const setter =
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
-    for (const ch of text) {
+    for (const ch of params.text) {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
       if (setter && setter.set) {
         setter.set.call(el, el.value + ch);
@@ -237,27 +237,28 @@
     return { ok: true };
   }
 
-  function press(key) {
+  function press(params) {
+    var key = params.key || params;
     const target = document.activeElement || document.body;
     target.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true }));
     target.dispatchEvent(new KeyboardEvent("keyup", { key: key, bubbles: true }));
     return { ok: true };
   }
 
-  function select(ref, value) {
-    const el = requireEl(ref);
+  function select(params) {
+    const el = requireEl(params.ref || params.selector);
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
     if (setter && setter.set) {
-      setter.set.call(el, value);
+      setter.set.call(el, params.value);
     } else {
-      el.value = value;
+      el.value = params.value;
     }
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
   }
 
-  function check(ref) {
-    const el = requireEl(ref);
+  function check(params) {
+    const el = requireEl(params.ref || params.selector);
     el.checked = !el.checked;
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
@@ -274,22 +275,22 @@
     return { ok: true };
   }
 
-  function text(ref) {
-    return requireEl(ref).textContent || "";
+  function text(params) {
+    return requireEl(params.ref || params.selector).textContent || "";
   }
 
-  function html(options) {
-    const ref = options && options.ref;
+  function html(params) {
+    var ref = params && params.ref;
     const el = ref ? requireEl(ref) : document.documentElement;
     return el.innerHTML;
   }
 
-  function value(ref) {
-    return requireEl(ref).value || "";
+  function value(params) {
+    return requireEl(params.ref || params.selector).value || "";
   }
 
-  function attrs(ref) {
-    const el = requireEl(ref);
+  function attrs(params) {
+    const el = requireEl(params.ref || params.selector);
     const result = {};
     for (const attr of el.attributes) {
       result[attr.name] = attr.value;
