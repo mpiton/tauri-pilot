@@ -4,6 +4,10 @@
   const idMap = new Map();
   let refCounter = 0;
 
+  const _logs = [];
+  let _logIdCounter = 0;
+  const MAX_LOGS = 500;
+
   const ROLE_MAP = {
     A: "link",
     BUTTON: "button",
@@ -41,6 +45,77 @@
     "textbox",
     "combobox",
   ]);
+
+  function serializeArg(arg) {
+    if (arg === null) return null;
+    if (arg === undefined) return null;
+    if (typeof arg === 'string' || typeof arg === 'number' || typeof arg === 'boolean') return arg;
+    try {
+      JSON.stringify(arg);
+      return arg;
+    } catch (_) {
+      return String(arg);
+    }
+  }
+
+  function extractSource() {
+    try {
+      const stack = new Error().stack;
+      if (!stack) return null;
+      // Skip: Error, extractSource, captureLog, console.X wrapper
+      const lines = stack.split('\n');
+      for (let i = 3; i < lines.length; i++) {
+        const line = lines[i];
+        if (line && !line.includes('__PILOT__')) return line.trim();
+      }
+      return null;
+    } catch (_) { return null; }
+  }
+
+  const _originalConsole = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    info: console.info.bind(console),
+  };
+
+  ['log', 'warn', 'error', 'info'].forEach(level => {
+    console[level] = function(...args) {
+      const entry = {
+        id: ++_logIdCounter,
+        timestamp: Date.now(),
+        level: level,
+        args: args.map(serializeArg),
+        source: extractSource(),
+      };
+      _logs.push(entry);
+      if (_logs.length > MAX_LOGS) _logs.shift();
+      _originalConsole[level].apply(console, args);
+    };
+  });
+
+  function consoleLogs(options) {
+    let result = _logs.slice();
+    if (options) {
+      if (options.level) {
+        result = result.filter(e => e.level === options.level);
+      }
+      if (options.sinceId) {
+        result = result.filter(e => e.id > options.sinceId);
+      } else if (options.since) {
+        result = result.filter(e => e.timestamp > options.since);
+      }
+      if (options.last) {
+        result = result.slice(-options.last);
+      }
+    }
+    return result;
+  }
+
+  function clearLogs() {
+    _logs.length = 0;
+    return { cleared: true };
+  }
 
   function inputRole(el) {
     const t = (el.getAttribute("type") || "text").toLowerCase();
@@ -419,5 +494,7 @@
     eval: evalScript,
     wait: waitFor,
     screenshot: screenshot,
+    consoleLogs: consoleLogs,
+    clearLogs: clearLogs,
   };
 })();

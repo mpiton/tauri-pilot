@@ -34,6 +34,11 @@ pub(crate) fn bold(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.bold()))
 }
 
+/// Format a warning message in yellow.
+pub(crate) fn warn(msg: impl Display) -> String {
+    format!("{}", msg.if_supports_color(Stdout, |t| t.yellow()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

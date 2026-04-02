@@ -7,7 +7,7 @@ mod style;
 use anyhow::Result;
 use base64::Engine;
 use clap::Parser;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -29,6 +29,53 @@ async fn main() -> Result<()> {
     let mut client = Client::connect(&socket).await?;
 
     let is_snapshot = matches!(args.command, Command::Snapshot { .. });
+    let is_logs = matches!(args.command, Command::Logs { .. });
+
+    // Handle --follow mode: loop forever polling for new logs
+    if let Command::Logs {
+        follow: true,
+        ref level,
+        ref last,
+        ..
+    } = args.command
+    {
+        let mut last_seen_id: u64 = 0;
+        let mut first_poll = true;
+        loop {
+            let mut params = serde_json::Map::new();
+            if last_seen_id > 0 {
+                params.insert("sinceId".into(), json!(last_seen_id));
+            }
+            if let Some(l) = level {
+                params.insert("level".into(), json!(l.clone()));
+            }
+            if first_poll {
+                if let Some(n) = last {
+                    params.insert("last".into(), json!(n));
+                }
+                first_poll = false;
+            }
+            let result = client
+                .call("console.getLogs", Some(Value::Object(params)))
+                .await?;
+            if let Some(entries) = result.as_array()
+                && !entries.is_empty()
+            {
+                if args.json {
+                    output::format_json(&result)?;
+                } else {
+                    print!("{}", output::format_logs(&result));
+                }
+                last_seen_id = entries
+                    .last()
+                    .and_then(|e| e.get("id"))
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(last_seen_id);
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
     let screenshot_path = if let Command::Screenshot { ref path, .. } = args.command {
         path.clone()
     } else {
@@ -64,6 +111,8 @@ async fn main() -> Result<()> {
         output::format_json(&result)?;
     } else if is_snapshot {
         output::format_snapshot(&result);
+    } else if is_logs {
+        print!("{}", output::format_logs(&result));
     } else {
         output::format_text(&result);
     }
@@ -129,16 +178,7 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
         Command::Value { target } => client.call("value", Some(target_params(&target))).await,
         Command::Attrs { target } => client.call("attrs", Some(target_params(&target))).await,
         Command::Eval { script } => client.call("eval", Some(json!({"script": script}))).await,
-        Command::Ipc { command, args } => {
-            let parsed_args: Option<serde_json::Value> =
-                args.as_deref().map(serde_json::from_str).transpose()?;
-            client
-                .call(
-                    "ipc",
-                    Some(json!({"command": command, "args": parsed_args})),
-                )
-                .await
-        }
+        Command::Ipc { command, args } => run_ipc_command(client, &command, args.as_deref()).await,
         Command::Screenshot { path, selector } => {
             client
                 .call(
@@ -168,7 +208,52 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
                 )
                 .await
         }
+        Command::Logs {
+            level,
+            last,
+            clear,
+            follow,
+        } => run_logs_command(client, level, last, clear, follow).await,
     }
+}
+
+async fn run_ipc_command(
+    client: &mut Client,
+    command: &str,
+    args: Option<&str>,
+) -> Result<serde_json::Value> {
+    let parsed_args: Option<serde_json::Value> = args.map(serde_json::from_str).transpose()?;
+    client
+        .call(
+            "ipc",
+            Some(json!({"command": command, "args": parsed_args})),
+        )
+        .await
+}
+
+async fn run_logs_command(
+    client: &mut Client,
+    level: Option<String>,
+    last: Option<usize>,
+    clear: bool,
+    follow: bool,
+) -> Result<serde_json::Value> {
+    if follow {
+        anyhow::bail!("follow mode must be handled before run_command");
+    }
+    if clear {
+        return client.call("console.clear", None).await;
+    }
+    let mut params = serde_json::Map::new();
+    if let Some(l) = level {
+        params.insert("level".into(), json!(l));
+    }
+    if let Some(n) = last {
+        params.insert("last".into(), json!(n));
+    }
+    client
+        .call("console.getLogs", Some(serde_json::Value::Object(params)))
+        .await
 }
 
 fn target_params(raw: &str) -> serde_json::Value {

@@ -20,6 +20,8 @@ pub(crate) async fn dispatch(
         | "state" | "wait" | "screenshot" => {
             handle_eval_method(method, params, engine, eval_fn).await
         }
+        "console.getLogs" => handle_eval_method("consoleLogs", params, engine, eval_fn).await,
+        "console.clear" => handle_eval_method("clearLogs", params, engine, eval_fn).await,
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -195,5 +197,37 @@ mod tests {
         handle_callback(&engine, id, None, Some("TypeError: x".to_owned()));
         let result = rx.await.unwrap();
         assert_eq!(result, Err("TypeError: x".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_console_get_logs_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("console.getLogs", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_console_clear_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("console.clear", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_console_logs() {
+        let params = json!({"level": "error", "last": 10});
+        let script = build_bridge_call("consoleLogs", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.consoleLogs("));
+        assert!(script.contains("\"level\":\"error\""));
+    }
+
+    #[test]
+    fn test_build_bridge_call_clear_logs() {
+        let script = build_bridge_call("clearLogs", None).unwrap();
+        assert_eq!(script, "window.__PILOT__.clearLogs({})");
     }
 }
