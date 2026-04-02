@@ -1,7 +1,6 @@
 mod cli;
 mod client;
 mod output;
-#[allow(dead_code)]
 mod protocol;
 mod style;
 
@@ -71,7 +70,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 async fn run_command(client: &mut Client, command: Command) -> Result<serde_json::Value> {
     match command {
         Command::Ping => client.call("ping", None).await,

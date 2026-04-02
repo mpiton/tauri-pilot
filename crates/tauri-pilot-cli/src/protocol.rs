@@ -42,6 +42,7 @@ pub struct RpcError {
     pub data: Option<serde_json::Value>,
 }
 
+#[cfg(test)]
 impl Response {
     /// Create a success response.
     #[must_use]

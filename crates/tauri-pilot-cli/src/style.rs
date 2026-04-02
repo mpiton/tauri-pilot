@@ -19,16 +19,6 @@ pub(crate) fn error(msg: &str) -> String {
     )
 }
 
-/// Format a warning message: "⚠ {msg}" in yellow.
-#[allow(dead_code)]
-pub(crate) fn warning(msg: &str) -> String {
-    format!(
-        "{} {}",
-        "⚠".if_supports_color(Stdout, |t| t.yellow()),
-        msg.if_supports_color(Stdout, |t| t.yellow()),
-    )
-}
-
 /// Format info text in cyan.
 pub(crate) fn info(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.cyan()))
@@ -60,13 +50,6 @@ mod tests {
         let output = error("failed");
         assert!(output.contains('✗'));
         assert!(output.contains("failed"));
-    }
-
-    #[test]
-    fn warning_contains_symbol_and_message() {
-        let output = warning("check this");
-        assert!(output.contains('⚠'));
-        assert!(output.contains("check this"));
     }
 
     #[test]
