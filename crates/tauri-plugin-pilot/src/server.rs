@@ -3,7 +3,7 @@ use crate::eval::EvalEngine;
 use crate::handler;
 use crate::protocol::{Request, Response};
 
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -21,6 +21,8 @@ pub(crate) struct SocketGuard {
 
 impl Drop for SocketGuard {
     fn drop(&mut self) {
+        use std::os::unix::fs::MetadataExt;
+        // Only unlink if the on-disk inode still matches ours
         if let Ok(meta) = std::fs::metadata(&self.path)
             && meta.ino() == self.inode
         {
@@ -30,16 +32,44 @@ impl Drop for SocketGuard {
     }
 }
 
-/// Bind the socket, removing any stale file from a previous run.
+/// Get inode from a listener's file descriptor via `fstat`.
+/// This is race-free: it queries the kernel FD, not the filesystem path.
+fn inode_from_fd(listener: &UnixListener) -> u64 {
+    let fd = listener.as_raw_fd();
+    // SAFETY: fstat only reads from a valid fd and writes to our stack buffer.
+    unsafe {
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        if libc::fstat(fd, stat.as_mut_ptr()) == 0 {
+            stat.assume_init().st_ino
+        } else {
+            0
+        }
+    }
+}
+
+/// Bind the socket. Tries bind first; only removes stale files on `AddrInUse`
+/// after verifying no live server is listening.
 /// Returns the listener and a [`SocketGuard`] that cleans up on drop.
 pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, SocketGuard), Error> {
-    if socket_path.exists() {
-        let _ = std::fs::remove_file(socket_path);
-    }
-    let listener = UnixListener::bind(socket_path)?;
-    tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
+    let listener = match UnixListener::bind(socket_path) {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            // Probe: if a live server answers, the socket is truly in use.
+            if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+                return Err(Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    format!("socket already in use: {}", socket_path.display()),
+                )));
+            }
+            // Stale socket from a crashed process — safe to remove and retry.
+            let _ = std::fs::remove_file(socket_path);
+            UnixListener::bind(socket_path)?
+        }
+        Err(e) => return Err(Error::Io(e)),
+    };
 
-    let inode = std::fs::metadata(socket_path).map(|m| m.ino()).unwrap_or(0);
+    tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
+    let inode = inode_from_fd(&listener);
 
     Ok((
         listener,
