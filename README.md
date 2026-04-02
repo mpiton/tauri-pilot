@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="assets/logo.jpeg" alt="tauri-pilot logo" width="200">
+</p>
+
+<p align="center">
+  <a href="https://github.com/mpiton/tauri-pilot/actions/workflows/ci.yml"><img src="https://github.com/mpiton/tauri-pilot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/mpiton/tauri-pilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/rust-1.94.1+-orange.svg" alt="Rust 1.94.1+">
+  <img src="https://img.shields.io/badge/platform-linux-lightgrey.svg" alt="Platform: Linux">
+  <img src="https://img.shields.io/badge/tauri-v2-24C8D8.svg" alt="Tauri v2">
+</p>
+
 # tauri-pilot
 
 **Interactive testing CLI for Tauri v2 apps** — lets AI agents (Claude Code) and developers inspect, interact with, and debug Tauri applications in real-time.
