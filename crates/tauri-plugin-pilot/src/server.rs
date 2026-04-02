@@ -55,15 +55,24 @@ pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, Socke
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             // Probe: if a live server answers, the socket is truly in use.
-            if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
-                return Err(Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::AddrInUse,
-                    format!("socket already in use: {}", socket_path.display()),
-                )));
+            // Only treat ConnectionRefused as "stale" — other errors (e.g.
+            // PermissionDenied) should propagate rather than blindly unlinking.
+            match std::os::unix::net::UnixStream::connect(socket_path) {
+                Ok(_) => {
+                    return Err(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::AddrInUse,
+                        format!("socket already in use: {}", socket_path.display()),
+                    )));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
+                    // Stale socket from a crashed process — safe to remove and retry.
+                    let _ = std::fs::remove_file(socket_path);
+                    UnixListener::bind(socket_path)?
+                }
+                Err(e) => {
+                    return Err(Error::Io(e));
+                }
             }
-            // Stale socket from a crashed process — safe to remove and retry.
-            let _ = std::fs::remove_file(socket_path);
-            UnixListener::bind(socket_path)?
         }
         Err(e) => return Err(Error::Io(e)),
     };
