@@ -36,6 +36,11 @@ pub(crate) fn format_snapshot(value: &serde_json::Value) {
         return;
     };
 
+    if elements.is_empty() {
+        println!("(empty snapshot)");
+        return;
+    }
+
     for el in elements {
         let depth = usize::try_from(
             el.get("depth")

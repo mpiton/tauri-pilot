@@ -30,8 +30,6 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
             let socket_path =
                 std::path::PathBuf::from(format!("/tmp/tauri-pilot-{identifier}.sock"));
 
-            let _ = std::fs::remove_file(&socket_path);
-
             tracing::info!(path = %socket_path.display(), "starting tauri-pilot socket server");
 
             let eval_fn = make_eval_fn(app);
@@ -44,10 +42,16 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
         .build()
 }
 
-/// Create an eval function from the app handle that evaluates JS in the first webview.
+/// Create an eval function from the app handle that evaluates JS in a webview.
+///
+/// Tries the "main" window label first for deterministic targeting,
+/// falls back to the first available window if "main" doesn't exist.
 fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
     let handle = app.clone();
     Arc::new(move |script| {
+        if let Some(w) = handle.get_webview_window("main") {
+            return w.eval(&script).map_err(|e| e.to_string());
+        }
         let windows = handle.webview_windows();
         let window = windows
             .values()

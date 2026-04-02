@@ -45,14 +45,18 @@ async fn handle_eval_method(
     let (id, rx) = engine.register();
     let wrapped = EvalEngine::wrap_script(id, &script);
 
-    eval_fn(wrapped).map_err(|e| RpcError {
-        code: -32603,
-        message: format!("Eval failed: {e}"),
-        data: None,
-    })?;
+    if let Err(e) = eval_fn(wrapped) {
+        // Clean up pending entry on eval_fn failure
+        engine.resolve(id, Err(format!("Eval failed: {e}")));
+        return Err(RpcError {
+            code: -32603,
+            message: format!("Eval failed: {e}"),
+            data: None,
+        });
+    }
 
     engine
-        .wait(rx, DEFAULT_TIMEOUT)
+        .wait(id, rx, DEFAULT_TIMEOUT)
         .await
         .map_err(|e| RpcError {
             code: -32603,
@@ -70,14 +74,16 @@ fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> String
 
     if method == "ipc" {
         // ipc calls Tauri's backend invoke directly
+        // Use JSON.parse for safe interpolation — no string escaping needed
         let command = params
             .and_then(|p| p.get("command"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
+        let command_json = serde_json::to_string(command).unwrap_or_else(|_| "\"\"".to_owned());
         let ipc_args = params
             .and_then(|p| p.get("args"))
             .map_or("{}".to_owned(), ToString::to_string);
-        return format!("window.__TAURI__.core.invoke('{command}', {ipc_args})");
+        return format!("window.__TAURI__.core.invoke(JSON.parse({command_json}), {ipc_args})");
     }
 
     format!("window.__PILOT__.{method}({args})")
@@ -97,6 +103,9 @@ pub(crate) fn handle_callback(
             Ok(val) => engine.resolve(id, Ok(val)),
             Err(_) => engine.resolve(id, Ok(serde_json::Value::String(res))),
         }
+    } else {
+        tracing::warn!(id, "callback received with neither result nor error");
+        engine.resolve(id, Ok(serde_json::Value::Null));
     }
 }
 

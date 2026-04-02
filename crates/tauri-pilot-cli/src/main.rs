@@ -187,8 +187,7 @@ fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
 
     // Auto-detect: find the most recent tauri-pilot-*.sock in /tmp
     let mut candidates: Vec<PathBuf> = std::fs::read_dir("/tmp")
-        .into_iter()
-        .flatten()
+        .map_err(|e| anyhow::anyhow!("Failed to read /tmp: {e}"))?
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {

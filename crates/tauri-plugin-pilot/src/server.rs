@@ -23,12 +23,23 @@ async fn run(
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
 ) -> Result<(), Error> {
+    // Remove stale socket from a previous run that didn't clean up
+    if socket_path.exists() {
+        let _ = std::fs::remove_file(socket_path);
+    }
+
     let listener = UnixListener::bind(socket_path)?;
     tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
     let ctx = Arc::new((engine, eval_fn));
 
     loop {
-        let (stream, _addr) = listener.accept().await?;
+        let (stream, _addr) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::warn!("accept error: {e}");
+                continue;
+            }
+        };
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
             if let Err(e) = handle_connection(stream, &ctx.0, ctx.1.as_ref()).await {

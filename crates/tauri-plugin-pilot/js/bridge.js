@@ -45,6 +45,8 @@
   function inputRole(el) {
     const t = (el.getAttribute("type") || "text").toLowerCase();
     switch (t) {
+      case "hidden":
+        return null;
       case "checkbox":
         return "checkbox";
       case "radio":
@@ -100,8 +102,11 @@
 
   function isInteractiveElement(el) {
     const tag = el.tagName;
+    if (tag === "INPUT") {
+      const t = (el.getAttribute("type") || "text").toLowerCase();
+      return t !== "hidden";
+    }
     if (
-      tag === "INPUT" ||
       tag === "BUTTON" ||
       tag === "SELECT" ||
       tag === "TEXTAREA" ||
@@ -122,7 +127,16 @@
     refCounter = 0;
     idMap.clear();
 
-    const root = selector ? document.querySelector(selector) : document.body;
+    var root;
+    if (selector) {
+      try {
+        root = document.querySelector(selector);
+      } catch (e) {
+        throw new Error("Invalid selector: " + selector);
+      }
+    } else {
+      root = document.body;
+    }
     if (!root) return { elements: [] };
 
     const elements = [];
@@ -136,7 +150,7 @@
 
       if (interactive && !isInteractive) {
         for (const child of node.children) {
-          walk(child, currentDepth);
+          walk(child, currentDepth + 1);
         }
         return;
       }
@@ -150,7 +164,12 @@
         const name = getName(node);
         if (name) entry.name = name;
         if (node.value !== undefined && node.value !== "") entry.value = node.value;
-        if (node.checked !== undefined) entry.checked = node.checked;
+        if (node.tagName === "INPUT") {
+          var inputType = (node.getAttribute("type") || "text").toLowerCase();
+          if (inputType === "checkbox" || inputType === "radio") {
+            entry.checked = node.checked;
+          }
+        }
         if (node.disabled) entry.disabled = true;
         elements.push(entry);
       }
@@ -202,8 +221,16 @@
   function typeText(ref, text) {
     const el = requireEl(ref);
     el.focus();
+    const setter =
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
     for (const ch of text) {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
+      if (setter && setter.set) {
+        setter.set.call(el, el.value + ch);
+      } else {
+        el.value += ch;
+      }
       el.dispatchEvent(new InputEvent("input", { data: ch, inputType: "insertText", bubbles: true }));
       el.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true }));
     }
@@ -219,7 +246,12 @@
 
   function select(ref, value) {
     const el = requireEl(ref);
-    el.value = value;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+    if (setter && setter.set) {
+      setter.set.call(el, value);
+    } else {
+      el.value = value;
+    }
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
   }

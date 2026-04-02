@@ -57,6 +57,10 @@ impl Client {
 
         let response: Response = serde_json::from_str(line.trim())?;
 
+        if response.id != id {
+            bail!("Response ID mismatch: expected {id}, got {}", response.id);
+        }
+
         if let Some(err) = response.error {
             bail!("RPC error ({}): {}", err.code, err.message);
         }
@@ -99,13 +103,25 @@ mod tests {
         })
     }
 
+    /// Connect with retry to avoid race with server bind.
+    async fn connect_with_retry(path: &Path) -> Client {
+        for _ in 0..20 {
+            match Client::connect(path).await {
+                Ok(c) => return c,
+                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+        Client::connect(path)
+            .await
+            .expect("Failed to connect after retries")
+    }
+
     #[tokio::test]
     async fn test_client_ping_returns_ok() {
         let socket = PathBuf::from("/tmp/tauri-pilot-test-t05a.sock");
         let handle = mock_server(&socket).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut client = Client::connect(&socket).await.unwrap();
+        let mut client = connect_with_retry(&socket).await;
         let result = client.call("ping", None).await.unwrap();
         assert_eq!(result, serde_json::json!({"status": "ok"}));
 
@@ -117,9 +133,8 @@ mod tests {
     async fn test_client_unknown_method_returns_error() {
         let socket = PathBuf::from("/tmp/tauri-pilot-test-t05b.sock");
         let handle = mock_server(&socket).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut client = Client::connect(&socket).await.unwrap();
+        let mut client = connect_with_retry(&socket).await;
         let result = client.call("nonexistent", None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("-32601"));

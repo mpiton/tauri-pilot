@@ -40,6 +40,7 @@
 | `value` | Get input value | `tauri-pilot value @e2` |
 | `attrs` | Get attributes | `tauri-pilot attrs @e1` |
 | `eval` | Run arbitrary JS | `tauri-pilot eval "document.title"` |
+| `ipc` | Invoke Tauri IPC command | `tauri-pilot ipc greet '{"name":"World"}'` |
 | `wait` | Wait for element | `tauri-pilot wait --selector ".loaded"` |
 | `navigate` | Go to URL | `tauri-pilot navigate "https://..."` |
 | `url` | Get current URL | `tauri-pilot url` |

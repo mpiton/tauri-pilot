@@ -11,9 +11,11 @@ if [ ! -f "$PRISM_DIR/src-tauri/Cargo.toml" ]; then
   exit 1
 fi
 
+PILOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
 echo "Adding tauri-plugin-pilot dependency to Prism..."
 cd "$PRISM_DIR/src-tauri"
-cargo add tauri-plugin-pilot --path "../../tauri-pilot/crates/tauri-plugin-pilot"
+cargo add tauri-plugin-pilot --path "$PILOT_DIR/crates/tauri-plugin-pilot"
 
 echo "Done! Now add this to $PRISM_DIR/src-tauri/src/lib.rs after .plugin(tauri_plugin_opener::init()):"
 echo ""

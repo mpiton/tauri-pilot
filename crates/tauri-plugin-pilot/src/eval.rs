@@ -78,17 +78,27 @@ impl EvalEngine {
     }
 
     /// Wait for a pending eval result with timeout.
+    /// Cleans up the pending entry on timeout to prevent memory leaks.
     pub async fn wait(
         &self,
+        id: u64,
         rx: oneshot::Receiver<Result<serde_json::Value, String>>,
         timeout: Duration,
     ) -> Result<serde_json::Value, EvalError> {
-        let result = tokio::time::timeout(timeout, rx)
-            .await
-            .map_err(|_| EvalError::Timeout(timeout))?
-            .map_err(|_| EvalError::ChannelClosed)?;
+        let result = tokio::time::timeout(timeout, rx).await;
 
-        result.map_err(EvalError::JsError)
+        match result {
+            Ok(Ok(inner)) => inner.map_err(EvalError::JsError),
+            Ok(Err(_)) => Err(EvalError::ChannelClosed),
+            Err(_) => {
+                // Remove stale entry from pending map on timeout
+                self.pending
+                    .lock()
+                    .expect("pending lock poisoned")
+                    .remove(&id);
+                Err(EvalError::Timeout(timeout))
+            }
+        }
     }
 }
 
@@ -137,12 +147,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wait_timeout() {
+    async fn test_wait_timeout_cleans_pending() {
         tokio::time::pause();
         let engine = EvalEngine::new();
-        let (_id, rx) = engine.register();
-        let result = engine.wait(rx, Duration::from_secs(1)).await;
+        let (id, rx) = engine.register();
+        let result = engine.wait(id, rx, Duration::from_secs(1)).await;
         assert!(matches!(result, Err(EvalError::Timeout(_))));
+        // Verify pending entry was cleaned up
+        assert!(!engine.pending.lock().expect("lock").contains_key(&id));
     }
 
     #[tokio::test]
@@ -150,7 +162,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         engine.resolve(id, Ok(json!({"title": "hello"})));
-        let result = engine.wait(rx, Duration::from_secs(10)).await;
+        let result = engine.wait(id, rx, Duration::from_secs(10)).await;
         assert_eq!(result.unwrap(), json!({"title": "hello"}));
     }
 
@@ -159,7 +171,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         engine.resolve(id, Err("boom".to_owned()));
-        let result = engine.wait(rx, Duration::from_secs(10)).await;
+        let result = engine.wait(id, rx, Duration::from_secs(10)).await;
         assert!(matches!(result, Err(EvalError::JsError(ref m)) if m == "boom"));
     }
 

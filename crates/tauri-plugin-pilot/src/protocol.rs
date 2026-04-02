@@ -1,4 +1,16 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+/// Deserialize params, normalizing `null` to `None`.
+fn deserialize_params<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let val: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match val {
+        Some(serde_json::Value::Null) => Ok(None),
+        other => Ok(other),
+    }
+}
 
 /// A JSON-RPC 2.0 request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -6,7 +18,7 @@ pub(crate) struct Request {
     pub jsonrpc: String,
     pub id: u64,
     pub method: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_params")]
     pub params: Option<serde_json::Value>,
 }
 
@@ -70,7 +82,7 @@ mod tests {
         assert_eq!(req.jsonrpc, "2.0");
         assert_eq!(req.id, 1);
         assert_eq!(req.method, "ping");
-        assert!(req.params.is_none() || req.params == Some(serde_json::Value::Null));
+        assert!(req.params.is_none(), "null params should normalize to None");
     }
 
     #[test]
