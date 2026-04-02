@@ -66,15 +66,16 @@ impl EvalEngine {
     }
 
     /// Wrap a user script in the ADR-001 callback pattern.
-    /// The expression is `await`-ed so async results (Promises) resolve before
-    /// being serialized. Errors are stringified to handle non-Error rejections.
+    /// Uses `__TAURI_INTERNALS__.invoke` which is always available (even without
+    /// `withGlobalTauri`). The expression is `await`-ed so async results resolve
+    /// before serialization.
     #[must_use]
     pub fn wrap_script(id: u64, script: &str) -> String {
         format!(
             "(async()=>{{try{{let __r=await({script});\
-             await window.__TAURI__.core.invoke('plugin:pilot|__callback',\
+             await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
              {{id:{id},result:JSON.stringify(__r)}});\
-             }}catch(__e){{await window.__TAURI__.core.invoke('plugin:pilot|__callback',\
+             }}catch(__e){{await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
              {{id:{id},error:(__e&&__e.message)||String(__e)}});}}}})();"
         )
     }

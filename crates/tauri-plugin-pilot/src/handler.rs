@@ -90,7 +90,7 @@ fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> Result
             .and_then(|p| p.get("args"))
             .map_or("{}".to_owned(), ToString::to_string);
         return Ok(format!(
-            "window.__TAURI__.core.invoke({command_js}, {ipc_args})"
+            "window.__TAURI_INTERNALS__.invoke({command_js}, {ipc_args})"
         ));
     }
 
