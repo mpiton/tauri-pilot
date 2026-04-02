@@ -31,9 +31,13 @@ pub(crate) fn format_text(value: &serde_json::Value) {
             return;
         }
     }
-    // {status: "ok"} → "✓ ok"
+    // {status: "ok"} → "✓ ok", {status: "error"} → "✗ error"
     if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
-        println!("{}", crate::style::success(status));
+        if status == "ok" || status == "success" {
+            println!("{}", crate::style::success(status));
+        } else {
+            println!("{}", crate::style::error(status));
+        }
         return;
     }
     match value {

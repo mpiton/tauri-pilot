@@ -34,7 +34,8 @@ async fn main() -> Result<()> {
     } else {
         None
     };
-    let result = if screenshot_path.is_some() && std::io::stdout().is_terminal() {
+    let is_screenshot = matches!(args.command, Command::Screenshot { .. });
+    let result = if is_screenshot && !args.json && std::io::stdout().is_terminal() {
         let spinner = indicatif::ProgressBar::new_spinner();
         spinner.enable_steady_tick(Duration::from_millis(80));
         spinner.set_message("Taking screenshot...");
