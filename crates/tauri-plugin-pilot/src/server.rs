@@ -12,11 +12,7 @@ use tokio::net::{UnixListener, UnixStream};
 pub(crate) type EvalFn = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
 
 /// Start the socket server. Logs errors internally.
-pub(crate) async fn start(
-    socket_path: PathBuf,
-    engine: EvalEngine,
-    eval_fn: Option<EvalFn>,
-) {
+pub(crate) async fn start(socket_path: PathBuf, engine: EvalEngine, eval_fn: Option<EvalFn>) {
     if let Err(e) = run(&socket_path, engine, eval_fn).await {
         tracing::error!(path = %socket_path.display(), "socket server error: {e}");
     }
@@ -77,11 +73,7 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn dispatch(
-    req: &Request,
-    engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
-) -> Response {
+async fn dispatch(req: &Request, engine: &EvalEngine, eval_fn: Option<&EvalFn>) -> Response {
     match handler::dispatch(&req.method, req.params.as_ref(), engine, eval_fn).await {
         Ok(result) => Response::success(req.id, result),
         Err(rpc_err) => Response {

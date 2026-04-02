@@ -15,7 +15,9 @@ pub(crate) async fn dispatch(
 ) -> Result<serde_json::Value, RpcError> {
     match method {
         "ping" => Ok(serde_json::json!({"status": "ok"})),
-        "snapshot" => handle_eval_method("snapshot", params, engine, eval_fn).await,
+        "snapshot" | "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" => {
+            handle_eval_method(method, params, engine, eval_fn).await
+        }
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),

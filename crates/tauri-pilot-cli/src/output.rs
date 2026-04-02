@@ -10,6 +10,16 @@ pub(crate) fn format_json(value: &serde_json::Value) -> Result<()> {
 
 /// Print a value as compact text for human consumption.
 pub(crate) fn format_text(value: &serde_json::Value) {
+    // {ok: true} → "ok"
+    if value.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        println!("ok");
+        return;
+    }
+    // {status: "ok"} → "ok"
+    if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
+        println!("{status}");
+        return;
+    }
     match value {
         serde_json::Value::String(s) => println!("{s}"),
         serde_json::Value::Null => {}
