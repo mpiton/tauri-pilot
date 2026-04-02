@@ -32,10 +32,9 @@ impl Drop for SocketGuard {
     }
 }
 
-/// Get inode from a listener's file descriptor via `fstat`.
+/// Get inode from a raw file descriptor via `fstat`.
 /// This is race-free: it queries the kernel FD, not the filesystem path.
-fn inode_from_fd(listener: &UnixListener) -> u64 {
-    let fd = listener.as_raw_fd();
+fn inode_from_raw_fd(fd: std::os::unix::io::RawFd) -> u64 {
     // SAFETY: fstat only reads from a valid fd and writes to our stack buffer.
     unsafe {
         let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
@@ -47,11 +46,16 @@ fn inode_from_fd(listener: &UnixListener) -> u64 {
     }
 }
 
-/// Bind the socket. Tries bind first; only removes stale files on `AddrInUse`
-/// after verifying no live server is listening.
-/// Returns the listener and a [`SocketGuard`] that cleans up on drop.
-pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, SocketGuard), Error> {
-    let listener = match UnixListener::bind(socket_path) {
+/// Bind the socket using the **std** (sync) listener so this can be called
+/// outside a tokio runtime (e.g. from Tauri plugin `setup`).
+///
+/// Tries bind first; only removes stale files on `AddrInUse` after verifying
+/// no live server is listening.
+/// Returns a std listener and a [`SocketGuard`] that cleans up on drop.
+pub(crate) fn bind(
+    socket_path: &std::path::Path,
+) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
+    let listener = match std::os::unix::net::UnixListener::bind(socket_path) {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             // Probe: if a live server answers, the socket is truly in use.
@@ -67,7 +71,7 @@ pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, Socke
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
                     // Stale socket from a crashed process — safe to remove and retry.
                     let _ = std::fs::remove_file(socket_path);
-                    UnixListener::bind(socket_path)?
+                    std::os::unix::net::UnixListener::bind(socket_path)?
                 }
                 Err(e) => {
                     return Err(Error::Io(e));
@@ -77,8 +81,13 @@ pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, Socke
         Err(e) => return Err(Error::Io(e)),
     };
 
+    // Must be non-blocking for tokio conversion
+    listener
+        .set_nonblocking(true)
+        .expect("set_nonblocking on unix listener");
+
     tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
-    let inode = inode_from_fd(&listener);
+    let inode = inode_from_raw_fd(listener.as_raw_fd());
 
     Ok((
         listener,
@@ -89,14 +98,21 @@ pub(crate) fn bind(socket_path: &std::path::Path) -> Result<(UnixListener, Socke
     ))
 }
 
-/// Run the accept loop on a pre-bound listener. Logs errors internally.
+/// Run the accept loop on a pre-bound std listener. Converts to tokio internally.
 /// The `_guard` is held for its `Drop` cleanup.
 pub(crate) async fn run(
-    listener: UnixListener,
+    std_listener: std::os::unix::net::UnixListener,
     _guard: SocketGuard,
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
 ) {
+    let listener = match UnixListener::from_std(std_listener) {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("failed to convert listener to tokio: {e}");
+            return;
+        }
+    };
     if let Err(e) = accept_loop(listener, engine, eval_fn).await {
         tracing::error!("socket server error: {e}");
     }
