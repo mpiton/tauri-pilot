@@ -193,8 +193,23 @@
     return el;
   }
 
+  function resolveTarget(params) {
+    if (params.ref) return requireEl(params.ref);
+    if (params.selector) {
+      var el = document.querySelector(params.selector);
+      if (!el) throw new Error("No element matches selector: " + params.selector);
+      return el;
+    }
+    if (params.x != null && params.y != null) {
+      var el = document.elementFromPoint(params.x, params.y);
+      if (!el) throw new Error("No element at (" + params.x + "," + params.y + ")");
+      return el;
+    }
+    throw new Error("No ref, selector, or coordinates provided");
+  }
+
   function click(params) {
-    const el = requireEl(params.ref || params.selector);
+    const el = resolveTarget(params);
     el.focus();
     el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
@@ -203,7 +218,7 @@
   }
 
   function fill(params) {
-    const el = requireEl(params.ref || params.selector);
+    const el = resolveTarget(params);
     el.focus();
     const setter =
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
@@ -219,7 +234,7 @@
   }
 
   function typeText(params) {
-    const el = requireEl(params.ref || params.selector);
+    const el = resolveTarget(params);
     el.focus();
     const setter =
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
@@ -246,7 +261,7 @@
   }
 
   function select(params) {
-    const el = requireEl(params.ref || params.selector);
+    const el = resolveTarget(params);
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
     if (setter && setter.set) {
       setter.set.call(el, params.value);
@@ -258,7 +273,7 @@
   }
 
   function check(params) {
-    const el = requireEl(params.ref || params.selector);
+    const el = resolveTarget(params);
     el.checked = !el.checked;
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
@@ -276,21 +291,22 @@
   }
 
   function text(params) {
-    return requireEl(params.ref || params.selector).textContent || "";
+    return resolveTarget(params).textContent || "";
   }
 
   function html(params) {
-    var ref = params && params.ref;
-    const el = ref ? requireEl(ref) : document.documentElement;
-    return el.innerHTML;
+    if (params && (params.ref || params.selector)) {
+      return resolveTarget(params).innerHTML;
+    }
+    return document.documentElement.innerHTML;
   }
 
   function value(params) {
-    return requireEl(params.ref || params.selector).value || "";
+    return resolveTarget(params).value || "";
   }
 
   function attrs(params) {
-    const el = requireEl(params.ref || params.selector);
+    const el = resolveTarget(params);
     const result = {};
     for (const attr of el.attributes) {
       result[attr.name] = attr.value;

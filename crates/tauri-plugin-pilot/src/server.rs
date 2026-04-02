@@ -82,9 +82,7 @@ pub(crate) fn bind(
     };
 
     // Must be non-blocking for tokio conversion
-    listener
-        .set_nonblocking(true)
-        .expect("set_nonblocking on unix listener");
+    listener.set_nonblocking(true)?;
 
     tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
     let inode = inode_from_raw_fd(listener.as_raw_fd());
