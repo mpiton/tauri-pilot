@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+links = "tauri-plugin-pilot"
 
 [lints]
 workspace = true
@@ -19,3 +20,6 @@ libc = "0.2.184"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2.5.4", features = ["build"] }

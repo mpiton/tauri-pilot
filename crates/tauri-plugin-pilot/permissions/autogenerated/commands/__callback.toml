@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow---callback"
+description = "Enables the __callback command without any pre-configured scope."
+commands.allow = ["__callback"]
+
+[[permission]]
+identifier = "deny---callback"
+description = "Denies the __callback command without any pre-configured scope."
+commands.deny = ["__callback"]
