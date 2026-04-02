@@ -168,8 +168,89 @@
     return idMap.get(ref) || null;
   }
 
+  function requireEl(ref) {
+    const el = idMap.get(ref);
+    if (!el) throw new Error("Unknown ref: " + ref);
+    return el;
+  }
+
+  function click(ref) {
+    const el = requireEl(ref);
+    el.focus();
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return { ok: true };
+  }
+
+  function fill(ref, value) {
+    const el = requireEl(ref);
+    el.focus();
+    const setter =
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+    if (setter && setter.set) {
+      setter.set.call(el, value);
+    } else {
+      el.value = value;
+    }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true };
+  }
+
+  function typeText(ref, text) {
+    const el = requireEl(ref);
+    el.focus();
+    for (const ch of text) {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
+      el.dispatchEvent(new InputEvent("input", { data: ch, inputType: "insertText", bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true }));
+    }
+    return { ok: true };
+  }
+
+  function press(key) {
+    const target = document.activeElement || document.body;
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true }));
+    target.dispatchEvent(new KeyboardEvent("keyup", { key: key, bubbles: true }));
+    return { ok: true };
+  }
+
+  function select(ref, value) {
+    const el = requireEl(ref);
+    el.value = value;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true };
+  }
+
+  function check(ref) {
+    const el = requireEl(ref);
+    el.checked = !el.checked;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true };
+  }
+
+  function scroll(options) {
+    const dir = (options && options.direction) || "down";
+    const amount = (options && options.amount) || 300;
+    const ref = options && options.ref;
+    const target = ref ? requireEl(ref) : window;
+    const dx = (dir === "left" ? -amount : dir === "right" ? amount : 0);
+    const dy = (dir === "up" ? -amount : dir === "down" ? amount : 0);
+    target.scrollBy(dx, dy);
+    return { ok: true };
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
+    click: click,
+    fill: fill,
+    type: typeText,
+    press: press,
+    select: select,
+    check: check,
+    scroll: scroll,
   };
 })();
