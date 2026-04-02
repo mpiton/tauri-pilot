@@ -17,8 +17,14 @@ use std::sync::Arc;
 #[cfg(unix)]
 use tauri::Manager;
 
+// Available on all Unix builds (include_str! is compile-time).
+// The plugin itself is only active under debug_assertions; see init().
 #[cfg(unix)]
-const BRIDGE_JS: &str = include_str!("../js/bridge.js");
+const BRIDGE_JS: &str = concat!(
+    include_str!("../js/vendor/html-to-image.iife.js"),
+    "\n",
+    include_str!("../js/bridge.js"),
+);
 
 /// Initialize the tauri-pilot plugin.
 ///
@@ -99,4 +105,21 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
             .ok_or_else(|| "No webview window available".to_owned())?;
         window.eval(&script).map_err(|e| e.to_string())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn bridge_js_contains_html_to_image_and_pilot() {
+        let js = super::BRIDGE_JS;
+        assert!(
+            js.contains("htmlToImage"),
+            "BRIDGE_JS must include the html-to-image IIFE bundle"
+        );
+        assert!(
+            js.contains("window.__PILOT__"),
+            "BRIDGE_JS must include the pilot bridge"
+        );
+    }
 }
