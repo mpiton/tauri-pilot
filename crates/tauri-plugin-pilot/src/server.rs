@@ -1,33 +1,52 @@
 use crate::error::Error;
+use crate::eval::EvalEngine;
 use crate::handler;
 use crate::protocol::{Request, Response};
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
-/// Start the socket server. Logs errors internally — never returns `Err` to callers.
-pub(crate) async fn start(socket_path: PathBuf) {
-    if let Err(e) = run(&socket_path).await {
+/// A function that evaluates JS in the webview. `None` if no webview is available.
+pub(crate) type EvalFn = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
+
+/// Start the socket server. Logs errors internally.
+pub(crate) async fn start(
+    socket_path: PathBuf,
+    engine: EvalEngine,
+    eval_fn: Option<EvalFn>,
+) {
+    if let Err(e) = run(&socket_path, engine, eval_fn).await {
         tracing::error!(path = %socket_path.display(), "socket server error: {e}");
     }
 }
 
-async fn run(socket_path: &PathBuf) -> Result<(), Error> {
+async fn run(
+    socket_path: &PathBuf,
+    engine: EvalEngine,
+    eval_fn: Option<EvalFn>,
+) -> Result<(), Error> {
     let listener = UnixListener::bind(socket_path)?;
     tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
+    let ctx = Arc::new((engine, eval_fn));
 
     loop {
         let (stream, _addr) = listener.accept().await?;
+        let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream).await {
+            if let Err(e) = handle_connection(stream, &ctx.0, ctx.1.as_ref()).await {
                 tracing::warn!("connection error: {e}");
             }
         });
     }
 }
 
-async fn handle_connection(stream: UnixStream) -> Result<(), Error> {
+async fn handle_connection(
+    stream: UnixStream,
+    engine: &EvalEngine,
+    eval_fn: Option<&EvalFn>,
+) -> Result<(), Error> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = String::new();
@@ -45,7 +64,7 @@ async fn handle_connection(stream: UnixStream) -> Result<(), Error> {
         }
 
         let response = match serde_json::from_str::<Request>(trimmed) {
-            Ok(req) => dispatch(&req),
+            Ok(req) => dispatch(&req, engine, eval_fn).await,
             Err(e) => Response::error(0, -32700, format!("Parse error: {e}")),
         };
 
@@ -58,8 +77,12 @@ async fn handle_connection(stream: UnixStream) -> Result<(), Error> {
     Ok(())
 }
 
-fn dispatch(req: &Request) -> Response {
-    match handler::dispatch(&req.method, req.params.as_ref()) {
+async fn dispatch(
+    req: &Request,
+    engine: &EvalEngine,
+    eval_fn: Option<&EvalFn>,
+) -> Response {
+    match handler::dispatch(&req.method, req.params.as_ref(), engine, eval_fn).await {
         Ok(result) => Response::success(req.id, result),
         Err(rpc_err) => Response {
             jsonrpc: "2.0".to_owned(),
@@ -78,7 +101,8 @@ mod tests {
     async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let _ = std::fs::remove_file(path);
         let p = path.clone();
-        let handle = tokio::spawn(async move { start(p).await });
+        let engine = EvalEngine::new();
+        let handle = tokio::spawn(async move { start(p, engine, None).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
     }

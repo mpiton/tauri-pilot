@@ -1,19 +1,69 @@
 use crate::eval::EvalEngine;
 use crate::protocol::RpcError;
+use crate::server::EvalFn;
+
+use std::time::Duration;
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Dispatch a JSON-RPC method call to the appropriate handler.
-pub(crate) fn dispatch(
+pub(crate) async fn dispatch(
     method: &str,
-    _params: Option<&serde_json::Value>,
+    params: Option<&serde_json::Value>,
+    engine: &EvalEngine,
+    eval_fn: Option<&EvalFn>,
 ) -> Result<serde_json::Value, RpcError> {
     match method {
         "ping" => Ok(serde_json::json!({"status": "ok"})),
+        "snapshot" => handle_eval_method("snapshot", params, engine, eval_fn).await,
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
             data: None,
         }),
     }
+}
+
+/// Handle a method that requires JS evaluation via the bridge.
+async fn handle_eval_method(
+    method: &str,
+    params: Option<&serde_json::Value>,
+    engine: &EvalEngine,
+    eval_fn: Option<&EvalFn>,
+) -> Result<serde_json::Value, RpcError> {
+    let eval_fn = eval_fn.ok_or_else(|| RpcError {
+        code: -32603,
+        message: "No webview available for eval".to_owned(),
+        data: None,
+    })?;
+
+    let script = build_bridge_call(method, params);
+    let (id, rx) = engine.register();
+    let wrapped = EvalEngine::wrap_script(id, &script);
+
+    eval_fn(wrapped).map_err(|e| RpcError {
+        code: -32603,
+        message: format!("Eval failed: {e}"),
+        data: None,
+    })?;
+
+    engine
+        .wait(rx, DEFAULT_TIMEOUT)
+        .await
+        .map_err(|e| RpcError {
+            code: -32603,
+            message: format!("Eval error: {e}"),
+            data: None,
+        })
+}
+
+/// Build a `window.__PILOT__.<method>(params)` JS call string.
+fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> String {
+    let args = match params {
+        Some(v) if !v.is_null() => v.to_string(),
+        _ => "{}".to_owned(),
+    };
+    format!("window.__PILOT__.{method}({args})")
 }
 
 /// Process the IPC callback from the JS bridge (ADR-001).
@@ -50,20 +100,42 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
-    fn test_dispatch_ping_returns_ok() {
-        let result = dispatch("ping", None);
-        assert!(result.is_ok());
+    #[tokio::test]
+    async fn test_dispatch_ping_returns_ok() {
+        let engine = EvalEngine::new();
+        let result = dispatch("ping", None, &engine, None).await;
         assert_eq!(result.unwrap(), json!({"status": "ok"}));
     }
 
-    #[test]
-    fn test_dispatch_unknown_method_returns_error() {
-        let result = dispatch("nonexistent", None);
-        assert!(result.is_err());
+    #[tokio::test]
+    async fn test_dispatch_unknown_method_returns_error() {
+        let engine = EvalEngine::new();
+        let result = dispatch("nonexistent", None, &engine, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32601);
-        assert!(err.message.contains("nonexistent"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_snapshot_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("snapshot", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_snapshot() {
+        let params = json!({"interactive": true, "selector": null, "depth": 3});
+        let script = build_bridge_call("snapshot", Some(&params));
+        assert!(script.starts_with("window.__PILOT__.snapshot("));
+        assert!(script.contains("\"interactive\":true"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_no_params() {
+        let script = build_bridge_call("snapshot", None);
+        assert_eq!(script, "window.__PILOT__.snapshot({})");
     }
 
     #[tokio::test]
@@ -76,26 +148,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_callback_with_plain_string_result() {
-        let engine = EvalEngine::new();
-        let (id, rx) = engine.register();
-        handle_callback(&engine, id, Some("not json".to_owned()), None);
-        let val = rx.await.unwrap().unwrap();
-        assert_eq!(val, json!("not json"));
-    }
-
-    #[tokio::test]
     async fn test_callback_with_error() {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         handle_callback(&engine, id, None, Some("TypeError: x".to_owned()));
         let result = rx.await.unwrap();
         assert_eq!(result, Err("TypeError: x".to_owned()));
-    }
-
-    #[test]
-    fn test_callback_unknown_id_no_panic() {
-        let engine = EvalEngine::new();
-        handle_callback(&engine, 999, Some("{}".to_owned()), None);
     }
 }

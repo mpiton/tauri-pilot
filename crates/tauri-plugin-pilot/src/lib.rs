@@ -3,37 +3,56 @@ mod error;
 pub(crate) mod eval;
 mod handler;
 pub(crate) mod protocol;
-mod server;
+pub(crate) mod server;
 
 pub use error::Error;
 
 use eval::EvalEngine;
+use server::EvalFn;
+use std::sync::Arc;
 use tauri::Manager;
+
+const BRIDGE_JS: &str = include_str!("../js/bridge.js");
 
 /// Initialize the tauri-pilot plugin.
 ///
-/// Stores an `EvalEngine` in app state and starts a Unix socket server
-/// at `/tmp/tauri-pilot-{identifier}.sock`. Registers the `__callback`
-/// IPC handler for the eval+callback pattern (ADR-001).
+/// Injects the JS bridge, stores an `EvalEngine` in app state,
+/// and starts a Unix socket server at `/tmp/tauri-pilot-{identifier}.sock`.
 #[must_use]
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("pilot")
+        .js_init_script(BRIDGE_JS.to_owned())
         .setup(|app, _api| {
-            app.manage(EvalEngine::new());
+            let engine = EvalEngine::new();
+            app.manage(engine.clone());
 
             let identifier = app.config().identifier.clone();
             let socket_path =
                 std::path::PathBuf::from(format!("/tmp/tauri-pilot-{identifier}.sock"));
 
-            // Remove stale socket from a previous run
             let _ = std::fs::remove_file(&socket_path);
 
             tracing::info!(path = %socket_path.display(), "starting tauri-pilot socket server");
 
-            tauri::async_runtime::spawn(server::start(socket_path));
+            let eval_fn = make_eval_fn(app);
+
+            tauri::async_runtime::spawn(server::start(socket_path, engine, Some(eval_fn)));
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![handler::__callback])
         .build()
+}
+
+/// Create an eval function from the app handle that evaluates JS in the first webview.
+fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
+    let handle = app.clone();
+    Arc::new(move |script| {
+        let windows = handle.webview_windows();
+        let window = windows
+            .values()
+            .next()
+            .ok_or_else(|| "No webview window available".to_owned())?;
+        window.eval(&script).map_err(|e| e.to_string())
+    })
 }
