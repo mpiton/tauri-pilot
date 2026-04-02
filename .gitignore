@@ -21,6 +21,7 @@ CLAUDE.md
 # Node (for bridge build step)
 node_modules/
 package-lock.json
+!docs/package-lock.json
 
 # Project Managment
 ARCHI.md
