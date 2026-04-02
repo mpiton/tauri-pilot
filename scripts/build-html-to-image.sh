@@ -15,13 +15,13 @@ OUTPUT="$VENDOR_DIR/html-to-image.iife.js"
 cd "$PROJECT_DIR"
 
 # Install html-to-image + esbuild in a temporary workspace
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
 
-cd "$TMPDIR"
+cd "$WORK_DIR"
 npm init -y --silent > /dev/null 2>&1
-npm install --save html-to-image@1.11.13 > /dev/null 2>&1
-npm install --save-dev esbuild@0.25.1 > /dev/null 2>&1
+npm install --save-dev --save-exact html-to-image@1.11.13 > /dev/null 2>&1
+npm install --save-dev --save-exact esbuild@0.25.1 > /dev/null 2>&1
 
 mkdir -p "$VENDOR_DIR"
 
