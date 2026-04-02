@@ -1,4 +1,6 @@
 mod error;
+#[allow(dead_code)]
+pub(crate) mod eval;
 mod handler;
 pub(crate) mod protocol;
 mod server;
