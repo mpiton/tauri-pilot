@@ -105,6 +105,18 @@ pub(crate) enum Command {
         #[arg(long, default_value = "10000")]
         timeout: u64,
     },
+    /// Watch for DOM mutations and report changes.
+    Watch {
+        /// CSS selector to scope observation to a subtree.
+        #[arg(long)]
+        selector: Option<String>,
+        /// Timeout in ms (reject if no changes).
+        #[arg(long, default_value = "10000")]
+        timeout: u64,
+        /// Wait until DOM is stable for N ms (no new mutations).
+        #[arg(long, default_value = "300")]
+        stable: u64,
+    },
     /// Display or stream captured console logs.
     Logs {
         /// Filter by log level (log, info, warn, error).
@@ -332,6 +344,51 @@ mod tests {
             assert_eq!(expected, "/dashboard");
         } else {
             panic!("Expected Assert Url command");
+        }
+    }
+
+    #[test]
+    fn test_parse_watch_command() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "watch",
+            "--selector",
+            ".results",
+            "--timeout",
+            "5000",
+            "--stable",
+            "500",
+        ]);
+        if let Command::Watch {
+            selector,
+            timeout,
+            stable,
+        } = cli.command
+        {
+            assert_eq!(selector, Some(".results".to_owned()));
+            assert_eq!(timeout, 5000);
+            assert_eq!(stable, 500);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_parse_watch_defaults() {
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "watch"]);
+        if let Command::Watch {
+            selector,
+            timeout,
+            stable,
+        } = cli.command
+        {
+            assert_eq!(selector, None);
+            assert_eq!(timeout, 10000);
+            assert_eq!(stable, 300);
+        } else {
+            panic!("Expected Watch command");
         }
     }
 

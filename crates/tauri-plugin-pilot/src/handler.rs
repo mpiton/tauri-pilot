@@ -7,6 +7,9 @@ use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Extra headroom added to the JS-side watch timeout so the Rust oneshot channel
+/// doesn't expire before the JS `MutationObserver` can resolve/reject.
+const WATCH_BUFFER_MS: u64 = 2_000;
 
 /// Dispatch a JSON-RPC method call to the appropriate handler.
 pub(crate) async fn dispatch(
@@ -28,6 +31,14 @@ pub(crate) async fn dispatch(
         | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state" | "wait"
         | "visible" | "count" | "checked" => {
             handle_eval_method(method, params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
+        "watch" => {
+            let timeout_ms = params
+                .and_then(|p| p.get("timeout"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(10_000);
+            let timeout = Duration::from_millis(timeout_ms.saturating_add(WATCH_BUFFER_MS));
+            handle_eval_method(method, params, engine, eval_fn, timeout).await
         }
         "screenshot" => {
             handle_eval_method(method, params, engine, eval_fn, SCREENSHOT_TIMEOUT).await
@@ -429,5 +440,22 @@ mod tests {
         let script = build_bridge_call("checked", Some(&params)).unwrap();
         assert!(script.starts_with("window.__PILOT__.checked("));
         assert!(script.contains("\"ref\":\"el-2\""));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_watch_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("watch", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_watch() {
+        let params = json!({"timeout": 5000, "selector": ".results", "stable": 500});
+        let script = build_bridge_call("watch", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.watch("));
+        assert!(script.contains("\"timeout\":5000"));
     }
 }

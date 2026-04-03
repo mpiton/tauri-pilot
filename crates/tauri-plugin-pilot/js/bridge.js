@@ -630,6 +630,104 @@
     });
   }
 
+  function summarizeNode(node) {
+    var entry = { tag: node.tagName.toLowerCase() };
+    if (node.id) entry.id = node.id;
+    if (node.className && typeof node.className === 'string' && node.className.trim()) entry.class = node.className.trim();
+    var text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text) entry.text = text.substring(0, 80);
+    return entry;
+  }
+
+  function watch(options) {
+    var selector = options && options.selector;
+    var timeout = (options && options.timeout != null) ? options.timeout : 10000;
+    var stable = (options && options.stable != null) ? options.stable : 300;
+
+    var root;
+    if (selector) {
+      root = document.querySelector(selector);
+      if (!root) throw new Error("watch: no element matches selector: " + selector);
+    } else {
+      root = document.body;
+    }
+
+    return new Promise(function (res, rej) {
+      var changes = { added: [], removed: [], modified: [] };
+      var stableTimer = null;
+      var timeoutTimer = null;
+      var settled = false;
+
+      function finish() {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutTimer);
+        observer.disconnect();
+        res(changes);
+      }
+
+      function resetStableTimer() {
+        clearTimeout(stableTimer);
+        stableTimer = setTimeout(finish, stable);
+      }
+
+      timeoutTimer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(stableTimer);
+        observer.disconnect();
+        if (changes.added.length > 0 || changes.removed.length > 0 || changes.modified.length > 0) {
+          res(changes);
+        } else {
+          rej(new Error("watch timeout: no DOM changes within " + timeout + "ms"));
+        }
+      }, timeout);
+
+      var observer = new MutationObserver(function (mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var mutation = mutations[i];
+          if (mutation.type === 'childList') {
+            for (var j = 0; j < mutation.addedNodes.length; j++) {
+              var node = mutation.addedNodes[j];
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                changes.added.push(summarizeNode(node));
+              }
+            }
+            for (var k = 0; k < mutation.removedNodes.length; k++) {
+              var removed = mutation.removedNodes[k];
+              if (removed.nodeType === Node.ELEMENT_NODE) {
+                changes.removed.push(summarizeNode(removed));
+              }
+            }
+          } else if (mutation.type === 'attributes') {
+            var target = mutation.target;
+            changes.modified.push({
+              tag: target.tagName.toLowerCase(),
+              attribute: mutation.attributeName,
+              value: target.getAttribute(mutation.attributeName),
+            });
+          } else if (mutation.type === 'characterData') {
+            var parent = mutation.target.parentElement;
+            if (parent) {
+              changes.modified.push({
+                tag: parent.tagName.toLowerCase(),
+                text: (mutation.target.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80),
+              });
+            }
+          }
+        }
+        resetStableTimer();
+      });
+
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
+    });
+  }
+
   async function screenshot(options) {
     var selector = options && options.selector;
     var el = selector ? document.querySelector(selector) : document.documentElement;
@@ -669,5 +767,6 @@
     visible: visible,
     count: count,
     checked: checked,
+    watch: watch,
   };
 })();

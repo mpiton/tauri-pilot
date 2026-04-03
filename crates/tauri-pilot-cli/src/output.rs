@@ -224,6 +224,80 @@ pub(crate) fn format_network(value: &serde_json::Value) -> String {
     output
 }
 
+/// Format watch result showing DOM mutations grouped by type.
+pub(crate) fn format_watch(value: &serde_json::Value) {
+    let added = value.get("added").and_then(|v| v.as_array());
+    let removed = value.get("removed").and_then(|v| v.as_array());
+    let modified = value.get("modified").and_then(|v| v.as_array());
+
+    let is_empty = added.is_none_or(Vec::is_empty)
+        && removed.is_none_or(Vec::is_empty)
+        && modified.is_none_or(Vec::is_empty);
+
+    if is_empty {
+        println!("{}", crate::style::dim("No DOM changes detected."));
+        return;
+    }
+
+    if let Some(entries) = added
+        && !entries.is_empty()
+    {
+        println!("{}", crate::style::success("Added:"));
+        for el in entries {
+            println!("  {}", format_mutation_entry(el));
+        }
+    }
+
+    if let Some(entries) = removed
+        && !entries.is_empty()
+    {
+        println!("{}", crate::style::error("Removed:"));
+        for el in entries {
+            println!("  {}", format_mutation_entry(el));
+        }
+    }
+
+    if let Some(entries) = modified
+        && !entries.is_empty()
+    {
+        println!("{}", crate::style::warn("Modified:"));
+        for el in entries {
+            let tag = el.get("tag").and_then(|t| t.as_str()).unwrap_or("?");
+            if let Some(attr) = el.get("attribute").and_then(|a| a.as_str()) {
+                let val = el.get("value").and_then(|v| v.as_str()).unwrap_or("");
+                println!(
+                    "  {} {} = {}",
+                    crate::style::info(tag),
+                    attr,
+                    crate::style::dim(format!("\"{val}\""))
+                );
+            } else if let Some(text) = el.get("text").and_then(|t| t.as_str()) {
+                println!(
+                    "  {} {}",
+                    crate::style::info(tag),
+                    crate::style::dim(format!("\"{text}\""))
+                );
+            }
+        }
+    }
+}
+
+fn format_mutation_entry(el: &serde_json::Value) -> String {
+    let tag = el.get("tag").and_then(|t| t.as_str()).unwrap_or("?");
+    let mut desc = crate::style::info(tag).clone();
+    if let Some(id) = el.get("id").and_then(|i| i.as_str()) {
+        let _ = write!(desc, "#{id}");
+    }
+    if let Some(class) = el.get("class").and_then(|c| c.as_str()) {
+        let first = class.split_whitespace().next().unwrap_or("");
+        let _ = write!(desc, ".{first}");
+    }
+    if let Some(text) = el.get("text").and_then(|t| t.as_str()) {
+        let _ = write!(desc, " {}", crate::style::dim(format!("\"{text}\"")));
+    }
+    desc
+}
+
 /// Format a diff result showing added, removed, and changed elements.
 pub(crate) fn format_diff(value: &serde_json::Value) {
     let added = value.get("added").and_then(|v| v.as_array());
@@ -585,6 +659,32 @@ mod tests {
             }]
         });
         format_diff(&diff);
+    }
+
+    #[test]
+    fn test_format_watch_no_changes() {
+        format_watch(&json!({"added": [], "removed": [], "modified": []}));
+        format_watch(&json!({}));
+    }
+
+    #[test]
+    fn test_format_watch_added() {
+        let result = json!({
+            "added": [{"tag": "div", "class": "result", "text": "Hello"}],
+            "removed": [],
+            "modified": []
+        });
+        format_watch(&result);
+    }
+
+    #[test]
+    fn test_format_watch_mixed() {
+        let result = json!({
+            "added": [{"tag": "div", "id": "new", "text": "New item"}],
+            "removed": [{"tag": "span", "class": "old"}],
+            "modified": [{"tag": "div", "attribute": "class", "value": "active"}]
+        });
+        format_watch(&result);
     }
 
     #[test]

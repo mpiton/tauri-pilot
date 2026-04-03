@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-04-03
+### Added
+
+- **DOM watch command** — observe DOM mutations with MutationObserver, debounce until stable, and return a change summary ([#10])
+  - `tauri-pilot watch` — block until any DOM change, print summary
+  - `--timeout` timeout in ms, `--selector` scope to subtree, `--stable` debounce duration
+  - Uses `MutationObserver` with `childList`, `subtree`, `attributes`, `characterData`
 
 ## [0.1.0] - 2026-04-03
 
@@ -81,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bridge functions accept params object (not positional arguments)
 - `build.rs` + permissions for `__callback` IPC command
 
+[#10]: https://github.com/mpiton/tauri-pilot/issues/10
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/mpiton/tauri-pilot/releases/tag/v0.1.0
 [#9]: https://github.com/mpiton/tauri-pilot/issues/9
