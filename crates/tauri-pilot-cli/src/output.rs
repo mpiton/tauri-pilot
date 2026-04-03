@@ -25,7 +25,7 @@ pub(crate) fn format_text(value: &serde_json::Value) {
         return;
     }
     // {ok: true} → "✓ ok", {found: true} → "✓ found"
-    for key in ["ok", "found"] {
+    for key in ["ok", "found", "cleared"] {
         if value.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
             println!("{}", crate::style::success(key));
             return;
@@ -98,6 +98,100 @@ pub(crate) fn format_snapshot(value: &serde_json::Value) {
     }
 }
 
+/// Format console log entries for human-readable display.
+pub(crate) fn format_logs(value: &serde_json::Value) -> String {
+    let mut output = String::new();
+    let Some(entries) = value.as_array() else {
+        return format!("{}\n", crate::style::error("Unexpected response format"));
+    };
+    if entries.is_empty() {
+        return String::from("No logs captured\n");
+    }
+    for entry in entries {
+        let timestamp = entry
+            .get("timestamp")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        let level = entry.get("level").and_then(|l| l.as_str()).unwrap_or("log");
+        let args = entry.get("args").and_then(|a| a.as_array());
+
+        // Format timestamp as HH:MM:SS.mmm
+        let secs = (timestamp / 1000) % 86400;
+        let ms = timestamp % 1000;
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        let s = secs % 60;
+        let time_str = format!("{h:02}:{m:02}:{s:02}.{ms:03}");
+
+        // Format args (strip ANSI escape sequences to prevent terminal injection)
+        let args_str = match args {
+            Some(arr) => arr
+                .iter()
+                .map(|a| {
+                    let raw = match a {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    strip_ansi(&raw)
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            None => String::new(),
+        };
+
+        // Color by level
+        let level_display = match level {
+            "error" => crate::style::error(level),
+            "warn" => crate::style::warn(level),
+            "info" => crate::style::info(level),
+            _ => crate::style::dim(level),
+        };
+
+        let _ = writeln!(output, "[{time_str}] {level_display} {args_str}");
+    }
+    output
+}
+
+/// Strip ANSI escape sequences from a string to prevent terminal injection.
+fn strip_ansi(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip CSI sequences: ESC [ ... final_byte
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() || next == '~' {
+                        break;
+                    }
+                }
+            // Skip OSC sequences: ESC ] ... BEL or ESC \ (ST)
+            } else if chars.peek() == Some(&']') {
+                chars.next();
+                let mut prev_was_esc = false;
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == '\x07' {
+                        break;
+                    }
+                    if prev_was_esc && next == '\\' {
+                        break;
+                    }
+                    prev_was_esc = next == '\x1b';
+                }
+            } else {
+                // Skip single-char escape (ESC + one char)
+                chars.next();
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +261,57 @@ mod tests {
         format_snapshot(&json!({"elements": []}));
         format_snapshot(&json!({}));
         format_snapshot(&json!(null));
+    }
+
+    #[test]
+    fn test_format_logs_with_entries() {
+        let logs = json!([
+            {"id": 1, "timestamp": 3661123_u64, "level": "error", "args": ["fail"], "source": null},
+            {"id": 2, "timestamp": 3661500_u64, "level": "info", "args": ["ok", 42], "source": null},
+        ]);
+        let output = format_logs(&logs);
+        assert!(output.contains("01:01:01.123"));
+        assert!(output.contains("fail"));
+        assert!(output.contains("ok 42"));
+    }
+
+    #[test]
+    fn test_format_logs_empty_array() {
+        let output = format_logs(&json!([]));
+        assert!(output.contains("No logs captured"));
+    }
+
+    #[test]
+    fn test_format_logs_non_array() {
+        let output = format_logs(&json!({"unexpected": true}));
+        assert!(output.contains("Unexpected"));
+    }
+
+    #[test]
+    fn test_strip_ansi_removes_csi_sequences() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(strip_ansi("\x1b[2J\x1b[Hcleared"), "cleared");
+    }
+
+    #[test]
+    fn test_strip_ansi_removes_osc_sequences() {
+        // BEL terminator
+        assert_eq!(strip_ansi("\x1b]0;title\x07text"), "text");
+        // ST terminator (ESC \)
+        assert_eq!(strip_ansi("\x1b]0;title\x1b\\text"), "text");
+    }
+
+    #[test]
+    fn test_strip_ansi_preserves_backslash_in_osc() {
+        // Bare backslash inside OSC should not terminate early
+        assert_eq!(
+            strip_ansi("\x1b]8;;http://host/path\\to\\file\x07link"),
+            "link"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_preserves_plain_text() {
+        assert_eq!(strip_ansi("hello world"), "hello world");
     }
 }

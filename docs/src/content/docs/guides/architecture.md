@@ -62,7 +62,7 @@ The protocol is implemented with three hand-rolled serde structs (~50 lines tota
 | `Response` | `jsonrpc`, `id`, `result?`, `error?` |
 | `RpcError` | `code`, `message`, `data?` |
 
-21 methods are available: `ping`, `snapshot`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `wait`, `navigate`, `url`, `title`, `state`, `ipc`.
+23 methods are available: `ping`, `snapshot`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `wait`, `navigate`, `url`, `title`, `state`, `ipc`, `console.getLogs`, `console.clear`.
 
 ## Element Reference System
 
@@ -104,6 +104,7 @@ Key internals:
 - **Snapshot**: Uses a manual recursive traversal over `node.children` to walk the DOM. A `ROLE_MAP` maps implicit HTML element roles (e.g. `<button>` → `"button"`, `<a>` → `"link"`) for elements without an explicit ARIA role.
 - **Actions**: Dispatch realistic DOM event sequences — `focus → mousedown → mouseup → click` — ensuring compatibility with React, Vue, and other frameworks that rely on synthetic events.
 - **`fill`**: Uses the native `HTMLInputElement` value setter via `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set` to trigger React's synthetic change events correctly.
+- **Console capture**: Monkey-patches `console.log/warn/error/info`, stores entries in a 500-entry ring buffer with `id`, `timestamp`, `level`, `args`, and `source`. Exposed via `consoleLogs(options)` and `clearLogs()`.
 
 ## Project Structure
 

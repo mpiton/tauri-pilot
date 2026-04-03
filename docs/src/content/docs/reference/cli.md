@@ -473,6 +473,78 @@ tauri-pilot wait --selector ".toast-success" --timeout 5000
 
 ---
 
+### `logs`
+
+Display or stream captured console logs (`console.log`, `console.warn`, `console.error`, `console.info`).
+
+The JS bridge monkey-patches the browser console methods and stores entries in a 500-entry ring buffer with timestamp, level, serialized arguments, and source location.
+
+```bash
+tauri-pilot logs [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--level <level>` | Filter by log level: `log`, `info`, `warn`, `error` |
+| `--last <n>` | Show only the last N entries |
+| `-f`, `--follow` | Continuously poll for new logs (500ms interval) |
+| `--clear` | Flush the ring buffer |
+
+**Examples:**
+
+```bash
+# Show all captured logs
+$ tauri-pilot logs
+[14:32:01.123] log App initialized
+[14:32:01.456] warn Deprecated API call
+[14:32:02.789] ✗ error Failed to fetch: NetworkError
+
+# Filter by level
+$ tauri-pilot logs --level error
+[14:32:02.789] ✗ error Failed to fetch: NetworkError
+
+# Last 5 entries
+$ tauri-pilot logs --last 5
+
+# Stream logs in real-time
+$ tauri-pilot logs --follow
+
+# Stream errors as NDJSON (one JSON object per line, compatible with jq)
+$ tauri-pilot logs --follow --level error --json
+
+# Clear the buffer
+$ tauri-pilot logs --clear
+✓ cleared
+```
+
+**JSON output format:**
+
+```json
+[
+  {
+    "id": 1,
+    "timestamp": 1712073600000,
+    "level": "error",
+    "args": ["Failed to fetch:", "NetworkError: 500"],
+    "source": "app.js:42"
+  }
+]
+```
+
+**JSON-RPC examples:**
+
+```json
+// Get logs filtered by level
+{"jsonrpc":"2.0","id":1,"method":"console.getLogs","params":{"level":"error","last":10}}
+
+// Clear buffer
+{"jsonrpc":"2.0","id":2,"method":"console.clear"}
+```
+
+---
+
 ## JSON-RPC Protocol
 
 The CLI communicates with the plugin over a Unix socket using a hand-rolled JSON-RPC 2.0 protocol with newline-delimited framing (`\n`).

@@ -88,6 +88,24 @@ pub(crate) enum Command {
         #[arg(long, default_value = "10000")]
         timeout: u64,
     },
+    /// Display or stream captured console logs.
+    Logs {
+        /// Filter by log level (log, info, warn, error).
+        #[arg(long, value_parser = ["log", "info", "warn", "error"])]
+        level: Option<String>,
+
+        /// Show last N log entries.
+        #[arg(long)]
+        last: Option<usize>,
+
+        /// Clear the log buffer.
+        #[arg(long, conflicts_with = "follow")]
+        clear: bool,
+
+        /// Continuously poll for new logs.
+        #[arg(long, short = 'f')]
+        follow: bool,
+    },
 }
 
 /// Parsed target for element-targeting commands.
