@@ -4,6 +4,13 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Tauri v2 plugin for runtime UI testing and automation via Unix socket JSON-RPC"
+keywords = ["tauri", "plugin", "testing", "automation", "accessibility"]
+categories = ["development-tools::testing", "gui"]
+readme = "README.md"
 links = "tauri-plugin-pilot"
 
 [lints]
