@@ -21,6 +21,7 @@
 3. **Use `wait` after async actions** (navigation, data loading, animations).
 4. **Use `@ref` notation** (e.g., `@e3`) to target elements from the snapshot.
 5. **One action at a time**, then re-snapshot to verify.
+6. **Check `logs --level error`** after actions to catch JS errors.
 
 ## Commands Reference
 
@@ -47,6 +48,11 @@
 | `title` | Get page title | `tauri-pilot title` |
 | `state` | Get app state | `tauri-pilot state` |
 | `screenshot` | Capture PNG | `tauri-pilot screenshot ./out.png` |
+| `logs` | Show console output | `tauri-pilot logs` |
+| `logs --level` | Filter by level | `tauri-pilot logs --level error` |
+| `logs --last` | Last N entries | `tauri-pilot logs --last 10` |
+| `logs --follow` | Stream logs | `tauri-pilot logs -f` |
+| `logs --clear` | Flush buffer | `tauri-pilot logs --clear` |
 
 ## Example Workflows
 
@@ -80,6 +86,15 @@ tauri-pilot url
 tauri-pilot navigate "/settings"
 tauri-pilot wait --selector "#settings-page"
 tauri-pilot snapshot -i
+```
+
+### Debug with console logs
+
+```bash
+tauri-pilot logs --clear
+tauri-pilot click @e3           # trigger action
+tauri-pilot logs --level error  # check for JS errors
+tauri-pilot logs --json         # structured output for parsing
 ```
 
 ## Flags
