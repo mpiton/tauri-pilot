@@ -247,15 +247,20 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
     if let Some(entries) = changed_entries {
         for entry in entries {
             let el = entry.get("new").unwrap_or(entry);
-            let role = el
-                .get("role")
+            let role = strip_ansi(
+                el.get("role")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?"),
+            );
+            let r#ref = strip_ansi(
+                el.get("ref")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?"),
+            );
+            let name = el
+                .get("name")
                 .and_then(serde_json::Value::as_str)
-                .unwrap_or("?");
-            let r#ref = el
-                .get("ref")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("?");
-            let name = el.get("name").and_then(serde_json::Value::as_str);
+                .map(strip_ansi);
 
             let old = entry.get("old");
             let field_changes = entry.get("changes").and_then(|c| c.as_array());
@@ -263,24 +268,26 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
             if let Some(fields) = field_changes {
                 for field in fields {
                     let field_name = field.as_str().unwrap_or("?");
-                    let old_val = old
-                        .and_then(|o| o.get(field_name))
-                        .map(|v| match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        })
-                        .unwrap_or_default();
-                    let new_val = el
-                        .get(field_name)
-                        .map(|v| match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        })
-                        .unwrap_or_default();
+                    let old_val = strip_ansi(
+                        &old.and_then(|o| o.get(field_name))
+                            .map(|v| match v {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            })
+                            .unwrap_or_default(),
+                    );
+                    let new_val = strip_ansi(
+                        &el.get(field_name)
+                            .map(|v| match v {
+                                serde_json::Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            })
+                            .unwrap_or_default(),
+                    );
 
                     let mut line =
-                        format!("{} {} ", crate::style::warn("~"), crate::style::info(role),);
-                    if let Some(n) = name {
+                        format!("{} {} ", crate::style::warn("~"), crate::style::info(&role),);
+                    if let Some(ref n) = name {
                         let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
                     }
                     let _ = write!(
@@ -295,8 +302,8 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
                 }
             } else {
                 let mut line =
-                    format!("{} {} ", crate::style::warn("~"), crate::style::info(role),);
-                if let Some(n) = name {
+                    format!("{} {} ", crate::style::warn("~"), crate::style::info(&role),);
+                if let Some(ref n) = name {
                     let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
                 }
                 let _ = write!(line, "{}", crate::style::dim(format!("[ref={ref}]")));

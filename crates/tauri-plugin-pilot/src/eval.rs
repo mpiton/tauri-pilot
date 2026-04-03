@@ -39,6 +39,10 @@ impl EvalEngine {
     }
 
     /// Store the last snapshot result for later diff comparison.
+    ///
+    /// Note: `store_snapshot` and `get_last_snapshot` each acquire the lock independently.
+    /// Concurrent snapshot/diff calls may observe non-deterministic ordering — acceptable
+    /// for this single-connection CLI debugging tool.
     pub fn store_snapshot(&self, value: &serde_json::Value) {
         *self
             .last_snapshot

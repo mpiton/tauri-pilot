@@ -105,28 +105,30 @@ pub fn compute_diff(old: &[SnapshotElement], new: &[SnapshotElement]) -> DiffRes
         }
     }
 
-    let removed: Vec<SnapshotElement> = old
+    let mut removed: Vec<SnapshotElement> = old
         .iter()
         .enumerate()
         .filter(|(i, _)| !matched_old[*i])
         .map(|(_, el)| el.clone())
         .collect();
 
-    let added: Vec<SnapshotElement> = new
+    let mut added: Vec<SnapshotElement> = new
         .iter()
         .enumerate()
         .filter(|(i, _)| !matched_new[*i])
         .map(|(_, el)| el.clone())
         .collect();
 
-    // Sort changed entries for deterministic output (HashMap iteration is unordered)
-    changed.sort_by(|a, b| {
-        a.new
-            .depth
-            .cmp(&b.new.depth)
-            .then_with(|| a.new.role.cmp(&b.new.role))
-            .then_with(|| a.new.name.cmp(&b.new.name))
-    });
+    // Sort all result arrays for deterministic output (HashMap iteration is unordered)
+    let sort_key = |a: &SnapshotElement, b: &SnapshotElement| {
+        a.depth
+            .cmp(&b.depth)
+            .then_with(|| a.role.cmp(&b.role))
+            .then_with(|| a.name.cmp(&b.name))
+    };
+    added.sort_by(sort_key);
+    removed.sort_by(sort_key);
+    changed.sort_by(|a, b| sort_key(&a.new, &b.new));
 
     DiffResult {
         added,

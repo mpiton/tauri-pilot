@@ -64,12 +64,21 @@ async fn handle_diff(
         })?
     };
 
-    // Take a new snapshot using the bridge
-    let script = build_bridge_call("snapshot", params).map_err(|msg| RpcError {
-        code: -32602,
-        message: msg,
-        data: None,
-    })?;
+    // Take a new snapshot using the bridge — strip "reference" to avoid embedding
+    // the entire old snapshot in the JS eval string (the bridge doesn't use it).
+    let snapshot_params = params.map(|p| {
+        let mut cleaned = p.clone();
+        if let Some(obj) = cleaned.as_object_mut() {
+            obj.remove("reference");
+        }
+        cleaned
+    });
+    let script =
+        build_bridge_call("snapshot", snapshot_params.as_ref()).map_err(|msg| RpcError {
+            code: -32602,
+            message: msg,
+            data: None,
+        })?;
     let (id, rx) = engine.register();
     let wrapped = EvalEngine::wrap_script(id, &script);
 

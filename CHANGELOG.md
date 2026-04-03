@@ -72,4 +72,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [#4]: https://github.com/mpiton/tauri-pilot/pull/4
 [#5]: https://github.com/mpiton/tauri-pilot/pull/5
 [#7]: https://github.com/mpiton/tauri-pilot/issues/7
+[#8]: https://github.com/mpiton/tauri-pilot/issues/8
 [#17]: https://github.com/mpiton/tauri-pilot/pull/17
