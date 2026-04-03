@@ -121,19 +121,21 @@
     return { cleared: true };
   }
 
+  function bodySize(body) {
+    if (!body) return 0;
+    if (typeof body === "string") return body.length;
+    if (body instanceof URLSearchParams) return body.toString().length;
+    if (body instanceof Blob) return body.size;
+    if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return body.byteLength;
+    return 0;
+  }
+
   const _originalFetch = window.fetch.bind(window);
   window.fetch = function(input, init) {
     const method = (init && init.method) || (input && input.method) || "GET";
     const url = (typeof input === "string") ? input : (input && input.url) || String(input);
     const timestamp = Date.now();
-    const reqBody = init && init.body;
-    const requestSize = reqBody
-      ? (typeof reqBody === "string" ? reqBody.length
-        : reqBody instanceof Blob ? reqBody.size
-        : reqBody instanceof ArrayBuffer ? reqBody.byteLength
-        : reqBody instanceof URLSearchParams ? reqBody.toString().length
-        : 0)
-      : 0;
+    const requestSize = bodySize(init && init.body);
     return _originalFetch(input, init).then(function(response) {
       const duration_ms = Date.now() - timestamp;
       const status = response.status;
@@ -175,24 +177,28 @@
   const _origXhrSend = XMLHttpRequest.prototype.send;
 
   XMLHttpRequest.prototype.open = function(method, url) {
-    this._pilot = { method: method, url: url };
-    return _origXhrOpen.apply(this, arguments);
+    const result = _origXhrOpen.apply(this, arguments);
+    this._pilot = { method: String(method), url: String(url) };
+    return result;
   };
 
   XMLHttpRequest.prototype.send = function(body) {
     if (this._pilot) {
       const pilot = this._pilot;
       const timestamp = Date.now();
-      const requestSize = body
-        ? (typeof body === "string" ? body.length
-          : body instanceof Blob ? body.size
-          : body instanceof ArrayBuffer ? body.byteLength
-          : 0)
-        : 0;
+      const requestSize = bodySize(body);
       let recorded = false;
+      let onLoad, onError, onTimeout, onAbort;
+      const cleanup = () => {
+        this.removeEventListener("load", onLoad);
+        this.removeEventListener("error", onError);
+        this.removeEventListener("timeout", onTimeout);
+        this.removeEventListener("abort", onAbort);
+      };
       const pushEntry = (status, error, responseSize) => {
         if (recorded) return;
         recorded = true;
+        cleanup();
         const entry = {
           id: ++_netIdCounter,
           timestamp: timestamp,
@@ -207,23 +213,27 @@
         _networkRequests.push(entry);
         if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
       };
-      this.addEventListener("load", () => {
+      onLoad = () => {
         const cl = parseInt(this.getResponseHeader("Content-Length") || "0", 10) || 0;
         const r = this.response;
         const responseSize = (this.responseType === "" || this.responseType === "text")
           ? ((r && r.length) || cl)
           : (r instanceof ArrayBuffer ? r.byteLength : (r instanceof Blob ? r.size : cl));
         pushEntry(this.status, null, responseSize);
-      });
-      this.addEventListener("error", () => {
-        pushEntry(0, "Network error", 0);
-      });
-      this.addEventListener("timeout", () => {
-        pushEntry(0, "Timeout", 0);
-      });
-      this.addEventListener("abort", () => {
-        pushEntry(0, "Aborted", 0);
-      });
+      };
+      onError = () => { pushEntry(0, "Network error", 0); };
+      onTimeout = () => { pushEntry(0, "Timeout", 0); };
+      onAbort = () => { pushEntry(0, "Aborted", 0); };
+      this.addEventListener("load", onLoad);
+      this.addEventListener("error", onError);
+      this.addEventListener("timeout", onTimeout);
+      this.addEventListener("abort", onAbort);
+      try {
+        return _origXhrSend.apply(this, arguments);
+      } catch (err) {
+        cleanup();
+        throw err;
+      }
     }
     return _origXhrSend.apply(this, arguments);
   };
