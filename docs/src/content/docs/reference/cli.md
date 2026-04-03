@@ -70,6 +70,7 @@ tauri-pilot snapshot [OPTIONS]
 | `-i`, `--interactive` | Only include interactive elements (buttons, inputs, links, etc.) |
 | `-s`, `--selector <sel>` | Scope the snapshot to the subtree matching this CSS selector |
 | `-d`, `--depth <n>` | Maximum tree depth to traverse |
+| `--save <file>` | Save the snapshot to a JSON file for later comparison with `diff --ref` |
 
 **Example:**
 
@@ -92,6 +93,77 @@ e3  button    "Refresh"
   {"ref":"e2","role":"textbox","name":"Search PRs","depth":1,"value":""},
   {"ref":"e3","role":"button","name":"Refresh","depth":1}
 ]}}
+```
+
+---
+
+### `diff`
+
+Compare the current page state with a previous snapshot and show only the differences. Massive token savings for AI agents that currently re-read the entire tree after each interaction.
+
+```bash
+tauri-pilot diff [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--ref <file>` | Diff against a saved snapshot file instead of the last in-memory snapshot |
+| `-i`, `--interactive` | Only include interactive elements in the new snapshot |
+| `-s`, `--selector <sel>` | Scope the new snapshot to a CSS selector |
+| `-d`, `--depth <n>` | Maximum tree depth to traverse |
+
+**Output format:**
+
+```bash
++ button "Submit" [ref=e8]              # added
+- button "Loading..." [ref=e3]          # removed
+~ textbox "Search" [ref=e2] value: "" → "workspace"  # changed
+```
+
+**Example:**
+
+```bash
+# Take a snapshot, interact, then diff
+$ tauri-pilot snapshot -i
+$ tauri-pilot click @e3
+$ tauri-pilot diff
+- button "Refresh" [ref=e3]
++ button "Loading..." [ref=e3]
+~ textbox "Search" [ref=e2] value: "" → "workspace"
+
+# Save and diff against a file
+$ tauri-pilot snapshot --save before.snap
+$ tauri-pilot click @e3
+$ tauri-pilot diff --ref before.snap
+
+# No changes
+$ tauri-pilot diff
+No changes detected.
+```
+
+**How matching works:**
+
+Elements are matched between snapshots by `(role, name, depth)` — not by ref ID, since refs reset on every snapshot. For duplicate elements sharing the same identity, position order is used as a tiebreaker.
+
+**JSON-RPC example:**
+
+```json
+// Request (diff vs last snapshot)
+{"jsonrpc":"2.0","id":1,"method":"diff","params":{"interactive":true}}
+
+// Request (diff vs saved reference)
+{"jsonrpc":"2.0","id":1,"method":"diff","params":{"interactive":true,"reference":{"elements":[...]}}}
+
+// Response
+{"jsonrpc":"2.0","id":1,"result":{
+  "added": [{"ref":"e8","role":"button","name":"Submit","depth":1}],
+  "removed": [{"ref":"e3","role":"button","name":"Loading...","depth":1}],
+  "changed": [{"old":{"ref":"e2","role":"textbox","name":"Search","value":"","depth":1},
+               "new":{"ref":"e2","role":"textbox","name":"Search","value":"workspace","depth":1},
+               "changes":["value"]}]
+}}
 ```
 
 ---

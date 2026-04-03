@@ -110,7 +110,8 @@ tauri-pilot screenshot ./capture.png
 | Command | Description |
 |---------|-------------|
 | `ping` | Health check |
-| `snapshot` | Accessibility tree with refs |
+| `snapshot` | Accessibility tree with refs (`--save` to persist) |
+| `diff` | Compare snapshots, show only changes |
 | `click` | Click an element |
 | `fill` | Clear + type in an input |
 | `type` | Type without clearing |
@@ -129,6 +130,7 @@ tauri-pilot screenshot ./capture.png
 | `navigate` | Change the WebView URL |
 | `state` | Get URL, title, viewport, scroll |
 | `logs` | Capture and display console output |
+| `network` | Capture and display network requests |
 
 ## For AI Agents
 
@@ -137,7 +139,7 @@ tauri-pilot is designed for AI agent consumption. The workflow is:
 1. `tauri-pilot snapshot -i` — get the accessibility tree with refs
 2. Read the refs in the output (`@e1`, `@e2`, ...)
 3. `tauri-pilot click @e3` — interact using refs
-4. `tauri-pilot snapshot -i` — verify the result
+4. `tauri-pilot diff` — see only what changed (saves tokens vs full re-snapshot)
 5. `tauri-pilot logs --level error` — check for JS errors
 
 Use `--json` for structured output when parsing programmatically.
