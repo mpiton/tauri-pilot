@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Snapshot diff command** — compare current page state with a previous snapshot ([#8])
+  - `diff` JSON-RPC method in plugin with added/removed/changed detection
+  - `tauri-pilot diff` CLI command with `--ref FILE`, `--interactive`, `--selector`, `--depth` flags
+  - `tauri-pilot snapshot --save FILE` flag to persist snapshots for later comparison
+  - Colored diff output: red `-` removed, green `+` added, yellow `~` changed with field-level detail
+  - Snapshot storage in `EvalEngine` — last snapshot retained automatically after each `snapshot` call
 - **Network request interception** — monkey-patch `fetch` and `XMLHttpRequest` in the JS bridge with a 200-entry ring buffer ([#7])
   - `network.getRequests` and `network.clear` JSON-RPC methods
   - `tauri-pilot network` CLI command with `--filter`, `--failed`, `--last`, `--follow`, `--clear` flags
@@ -66,4 +72,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [#4]: https://github.com/mpiton/tauri-pilot/pull/4
 [#5]: https://github.com/mpiton/tauri-pilot/pull/5
 [#7]: https://github.com/mpiton/tauri-pilot/issues/7
+[#8]: https://github.com/mpiton/tauri-pilot/issues/8
 [#17]: https://github.com/mpiton/tauri-pilot/pull/17

@@ -1,3 +1,4 @@
+use crate::diff;
 use crate::eval::EvalEngine;
 use crate::protocol::RpcError;
 use crate::server::EvalFn;
@@ -15,11 +16,15 @@ pub(crate) async fn dispatch(
 ) -> Result<serde_json::Value, RpcError> {
     match method {
         "ping" => Ok(serde_json::json!({"status": "ok"})),
-        "snapshot" | "click" | "fill" | "type" | "press" | "select" | "check" | "scroll"
-        | "text" | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title"
-        | "state" | "wait" | "screenshot" => {
-            handle_eval_method(method, params, engine, eval_fn).await
+        "snapshot" => {
+            let result = handle_eval_method("snapshot", params, engine, eval_fn).await?;
+            engine.store_snapshot(&result);
+            Ok(result)
         }
+        "diff" => handle_diff(params, engine, eval_fn).await,
+        "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" | "text" | "html"
+        | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state" | "wait"
+        | "screenshot" => handle_eval_method(method, params, engine, eval_fn).await,
         "console.getLogs" => handle_eval_method("consoleLogs", params, engine, eval_fn).await,
         "console.clear" => handle_eval_method("clearLogs", params, engine, eval_fn).await,
         "network.getRequests" => {
@@ -32,6 +37,102 @@ pub(crate) async fn dispatch(
             data: None,
         }),
     }
+}
+
+/// Handle the "diff" method: take a new snapshot, compare with the reference, and return `DiffResult`.
+async fn handle_diff(
+    params: Option<&serde_json::Value>,
+    engine: &EvalEngine,
+    eval_fn: Option<&EvalFn>,
+) -> Result<serde_json::Value, RpcError> {
+    let eval_fn = eval_fn.ok_or_else(|| RpcError {
+        code: -32603,
+        message: "No webview available for eval".to_owned(),
+        data: None,
+    })?;
+
+    // Determine reference snapshot: from params["reference"] or last stored snapshot
+    let reference = if let Some(ref_val) = params.and_then(|p| p.get("reference")) {
+        ref_val.clone()
+    } else {
+        engine.get_last_snapshot().ok_or_else(|| RpcError {
+            code: -32602,
+            message:
+                "No previous snapshot available. Run `snapshot` first or use `diff --ref <file>`"
+                    .to_owned(),
+            data: None,
+        })?
+    };
+
+    // Take a new snapshot using the bridge — strip "reference" to avoid embedding
+    // the entire old snapshot in the JS eval string (the bridge doesn't use it).
+    let snapshot_params = params.map(|p| {
+        let mut cleaned = p.clone();
+        if let Some(obj) = cleaned.as_object_mut() {
+            obj.remove("reference");
+        }
+        cleaned
+    });
+    let script =
+        build_bridge_call("snapshot", snapshot_params.as_ref()).map_err(|msg| RpcError {
+            code: -32602,
+            message: msg,
+            data: None,
+        })?;
+    let (id, rx) = engine.register();
+    let wrapped = EvalEngine::wrap_script(id, &script);
+
+    if let Err(e) = eval_fn(wrapped) {
+        engine.resolve(id, Err(format!("Eval failed: {e}")));
+        return Err(RpcError {
+            code: -32603,
+            message: format!("Eval failed: {e}"),
+            data: None,
+        });
+    }
+
+    let result = engine
+        .wait(id, rx, DEFAULT_TIMEOUT)
+        .await
+        .map_err(|e| RpcError {
+            code: -32603,
+            message: format!("Eval error: {e}"),
+            data: None,
+        })?;
+
+    // Parse both snapshots: extract "elements" arrays
+    let old_elements: Vec<diff::SnapshotElement> = reference
+        .get("elements")
+        .map(|v| serde_json::from_value(v.clone()))
+        .transpose()
+        .map_err(|e| RpcError {
+            code: -32602,
+            message: format!("Failed to parse reference snapshot elements: {e}"),
+            data: None,
+        })?
+        .unwrap_or_default();
+
+    let new_elements: Vec<diff::SnapshotElement> = result
+        .get("elements")
+        .map(|v| serde_json::from_value(v.clone()))
+        .transpose()
+        .map_err(|e| RpcError {
+            code: -32603,
+            message: format!("Failed to parse new snapshot elements: {e}"),
+            data: None,
+        })?
+        .unwrap_or_default();
+
+    let diff_result = diff::compute_diff(&old_elements, &new_elements);
+
+    // Store the new snapshot for subsequent diffs
+    engine.store_snapshot(&result);
+
+    serde_json::to_value(&diff_result).map_err(|e| RpcError {
+        code: -32603,
+        message: format!("Serialization error: {e}"),
+        data: None,
+    })
 }
 
 /// Handle a method that requires JS evaluation via the bridge.
@@ -162,6 +263,34 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_diff_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("diff", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_diff_without_previous_snapshot() {
+        let engine = EvalEngine::new();
+        // Provide a dummy eval_fn that always succeeds (won't be called because we fail before)
+        // Actually diff needs eval_fn first, then checks reference.
+        // We need an eval_fn that returns something, but there's no previous snapshot.
+        // Use an eval_fn that will block forever — but we check reference before eval.
+        // Wait: handle_diff checks eval_fn first, then reference.
+        // So with eval_fn but no previous snapshot, we get -32602 after eval completes.
+        // Let's use a sync eval_fn and resolve manually.
+        // Actually the reference check happens BEFORE the eval call, so we can check:
+        // eval_fn present + no reference in params + no last_snapshot → -32602
+        let eval_fn: crate::server::EvalFn = std::sync::Arc::new(|_script| Ok(()));
+        let result = dispatch("diff", None, &engine, Some(&eval_fn)).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("No previous snapshot"));
     }
 
     #[test]
