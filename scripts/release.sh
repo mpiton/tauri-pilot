@@ -24,23 +24,30 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Preflight: ensure clean worktree
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Error: working tree is not clean. Commit or stash changes before releasing."
+  git status --short
+  exit 1
+fi
+
 echo "Releasing v$VERSION..."
 
 # Update [package].version in all crate Cargo.toml files
 for toml in crates/tauri-plugin-pilot/Cargo.toml crates/tauri-pilot-cli/Cargo.toml; do
-  sed -i "s/^version = \".*\"/version = \"$VERSION\"/" "$toml"
+  perl -i -pe "s/^version = \".*\"/version = \"$VERSION\"/" "$toml"
   echo "  Updated $toml"
 done
 
 # Update CHANGELOG.md
 TODAY=$(date +%Y-%m-%d)
 # Replace "## [Unreleased]" with "## [Unreleased]\n\n## [$VERSION] - $TODAY"
-sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $TODAY/" CHANGELOG.md
+perl -i -pe "s/^## \\[Unreleased\\]/## [Unreleased]\n\n## [$VERSION] - $TODAY/" CHANGELOG.md
 
 # Update comparison links at bottom of CHANGELOG
 # Add new unreleased comparison link and version link
 if grep -q "\[Unreleased\]:.*compare" CHANGELOG.md; then
-  sed -i "s|\[Unreleased\]:.*|[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v$VERSION...HEAD|" CHANGELOG.md
+  perl -i -pe "s|\[Unreleased\]:.*|[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v$VERSION...HEAD|" CHANGELOG.md
 else
   echo "" >> CHANGELOG.md
   echo "[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v$VERSION...HEAD" >> CHANGELOG.md
@@ -53,15 +60,21 @@ fi
 
 echo "  Updated CHANGELOG.md"
 
-# Verify compilation
+# Verify compilation and quality
 echo "Running cargo check..."
 cargo check --workspace
+
+echo "Running cargo clippy..."
+cargo clippy --workspace -- -D warnings
+
+echo "Running cargo test..."
+cargo test --workspace
 
 echo "Running cargo fmt..."
 cargo fmt --all
 
-# Git operations
-git add crates/tauri-plugin-pilot/Cargo.toml crates/tauri-pilot-cli/Cargo.toml CHANGELOG.md
+# Git operations — stage all changes (release files + any fmt-touched files)
+git add -A
 git commit -m "chore: release v$VERSION"
 git tag -a "v$VERSION" -m "Release v$VERSION"
 
