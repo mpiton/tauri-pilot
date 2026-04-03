@@ -24,7 +24,9 @@ pub(crate) async fn dispatch(
         "diff" => handle_diff(params, engine, eval_fn).await,
         "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" | "text" | "html"
         | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state" | "wait"
-        | "screenshot" => handle_eval_method(method, params, engine, eval_fn).await,
+        | "screenshot" | "visible" | "count" | "checked" => {
+            handle_eval_method(method, params, engine, eval_fn).await
+        }
         "console.getLogs" => handle_eval_method("consoleLogs", params, engine, eval_fn).await,
         "console.clear" => handle_eval_method("clearLogs", params, engine, eval_fn).await,
         "network.getRequests" => {
@@ -394,5 +396,29 @@ mod tests {
     fn test_build_bridge_call_clear_network() {
         let script = build_bridge_call("clearNetwork", None).unwrap();
         assert_eq!(script, "window.__PILOT__.clearNetwork({})");
+    }
+
+    #[test]
+    fn test_build_bridge_call_visible() {
+        let params = json!({"ref": "el-1"});
+        let script = build_bridge_call("visible", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.visible("));
+        assert!(script.contains("\"ref\":\"el-1\""));
+    }
+
+    #[test]
+    fn test_build_bridge_call_count() {
+        let params = json!({"selector": ".item"});
+        let script = build_bridge_call("count", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.count("));
+        assert!(script.contains("\"selector\":\".item\""));
+    }
+
+    #[test]
+    fn test_build_bridge_call_checked() {
+        let params = json!({"ref": "el-2"});
+        let script = build_bridge_call("checked", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.checked("));
+        assert!(script.contains("\"ref\":\"el-2\""));
     }
 }

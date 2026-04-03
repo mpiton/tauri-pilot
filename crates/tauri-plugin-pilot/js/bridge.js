@@ -534,6 +534,28 @@
     return result;
   }
 
+  function visible(params) {
+    const el = resolveTarget(params);
+    const style = getComputedStyle(el);
+    const isVisible =
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      (el.offsetWidth > 0 || el.offsetHeight > 0);
+    return { visible: isVisible };
+  }
+
+  function count(params) {
+    if (!params || !params.selector) {
+      throw new Error("count requires a selector parameter");
+    }
+    return { count: document.querySelectorAll(params.selector).length };
+  }
+
+  function checked(params) {
+    const el = resolveTarget(params);
+    return { checked: !!el.checked };
+  }
+
   function navigate(options) {
     const url = options && options.url;
     if (url) window.location.href = url;
@@ -643,5 +665,8 @@
     clearLogs: clearLogs,
     networkRequests: networkRequests,
     clearNetwork: clearNetwork,
+    visible: visible,
+    count: count,
+    checked: checked,
   };
 })();

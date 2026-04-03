@@ -167,6 +167,73 @@ Elements are matched between snapshots by `(role, name, depth)` — not by ref I
 
 ---
 
+### `assert`
+
+One-step verification of element state, text, or URL. Returns exit code 0 with `ok` on success, exit code 1 with a clear error message on failure. Designed to reduce AI agent round-trips and token usage.
+
+```bash
+tauri-pilot assert <subcommand> [args...]
+```
+
+**Subcommands:**
+
+| Subcommand | Arguments | Description |
+|------------|-----------|-------------|
+| `text` | `<target> <expected>` | Assert exact text content match |
+| `visible` | `<target>` | Assert element is visible |
+| `hidden` | `<target>` | Assert element is hidden |
+| `value` | `<target> <expected>` | Assert input/textarea/select value |
+| `count` | `<selector> <expected>` | Assert number of elements matching CSS selector |
+| `checked` | `<target>` | Assert checkbox/radio is checked |
+| `contains` | `<target> <expected>` | Assert text contains substring |
+| `url` | `<expected>` | Assert current URL contains substring |
+
+**Examples:**
+
+```bash
+# Take a snapshot first (refs reset each time)
+$ tauri-pilot snapshot -i
+
+# Exact text match
+$ tauri-pilot assert text @e1 "Dashboard"
+✓ ok
+
+# Element visibility
+$ tauri-pilot assert visible @e3
+✓ ok
+
+# Check input value
+$ tauri-pilot assert value @e2 "workspace"
+FAIL: expected value "workspace", got ""
+
+# Count elements by CSS selector
+$ tauri-pilot assert count ".list-item" 5
+✓ ok
+
+# Checkbox state
+$ tauri-pilot assert checked @e4
+FAIL: element is not checked
+
+# Partial text match
+$ tauri-pilot assert contains @e1 "Dash"
+✓ ok
+
+# URL check
+$ tauri-pilot assert url "/dashboard"
+✓ ok
+```
+
+> **Note:** Element refs (`@e1`, `@e2`, …) require a prior `snapshot` call. Always take a fresh snapshot before using refs in assertions.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Assertion passed |
+| `1` | Assertion failed — error message on stderr |
+
+---
+
 ### `click`
 
 Simulate a realistic click on an element (dispatches focus → mousedown → mouseup → click events).
