@@ -7,7 +7,7 @@ description: Inspect, interact with, and test a running Tauri v2 app via CLI. Co
 
 ## Workflow
 
-```
+```text
 1. ping          — verify connectivity
 2. snapshot -i   — get interactive elements with refs
 3. read refs     — inspect elements (text, value, attrs)

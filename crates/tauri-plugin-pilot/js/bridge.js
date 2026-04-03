@@ -126,7 +126,14 @@
     const method = (init && init.method) || (input && input.method) || "GET";
     const url = (typeof input === "string") ? input : (input && input.url) || String(input);
     const timestamp = Date.now();
-    const requestSize = (init && init.body && init.body.length) || 0;
+    const reqBody = init && init.body;
+    const requestSize = reqBody
+      ? (typeof reqBody === "string" ? reqBody.length
+        : reqBody instanceof Blob ? reqBody.size
+        : reqBody instanceof ArrayBuffer ? reqBody.byteLength
+        : reqBody instanceof URLSearchParams ? reqBody.toString().length
+        : 0)
+      : 0;
     return _originalFetch(input, init).then(function(response) {
       const duration_ms = Date.now() - timestamp;
       const status = response.status;
@@ -176,7 +183,12 @@
     if (this._pilot) {
       const pilot = this._pilot;
       const timestamp = Date.now();
-      const requestSize = (body && body.length) || 0;
+      const requestSize = body
+        ? (typeof body === "string" ? body.length
+          : body instanceof Blob ? body.size
+          : body instanceof ArrayBuffer ? body.byteLength
+          : 0)
+        : 0;
       let recorded = false;
       const pushEntry = (status, error, responseSize) => {
         if (recorded) return;
@@ -196,8 +208,11 @@
         if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
       };
       this.addEventListener("load", () => {
-        const responseSize = (this.response && this.response.length) ||
-          parseInt(this.getResponseHeader("Content-Length") || "0", 10) || 0;
+        const cl = parseInt(this.getResponseHeader("Content-Length") || "0", 10) || 0;
+        const r = this.response;
+        const responseSize = (this.responseType === "" || this.responseType === "text")
+          ? ((r && r.length) || cl)
+          : (r instanceof ArrayBuffer ? r.byteLength : (r instanceof Blob ? r.size : cl));
         pushEntry(this.status, null, responseSize);
       });
       this.addEventListener("error", () => {
@@ -205,6 +220,9 @@
       });
       this.addEventListener("timeout", () => {
         pushEntry(0, "Timeout", 0);
+      });
+      this.addEventListener("abort", () => {
+        pushEntry(0, "Aborted", 0);
       });
     }
     return _origXhrSend.apply(this, arguments);

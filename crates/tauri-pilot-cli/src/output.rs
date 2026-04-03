@@ -204,7 +204,7 @@ pub(crate) fn format_network(value: &serde_json::Value) -> String {
             let err_safe = strip_ansi(err);
             let _ = writeln!(
                 output,
-                "[{time_str}] {method_display} {status_display} {url_safe} {}",
+                "[{time_str}] {method_display} {status_display} {url_safe} {} {duration_display}",
                 crate::style::error(&err_safe)
             );
         } else {
