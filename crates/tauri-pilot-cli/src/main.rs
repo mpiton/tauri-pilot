@@ -63,10 +63,8 @@ async fn main() -> Result<()> {
             {
                 if args.json {
                     // Emit NDJSON: one JSON object per entry for jq compatibility
-                    if let Some(entries) = result.as_array() {
-                        for entry in entries {
-                            println!("{entry}");
-                        }
+                    for entry in entries {
+                        println!("{entry}");
                     }
                 } else {
                     print!("{}", output::format_logs(&result));
