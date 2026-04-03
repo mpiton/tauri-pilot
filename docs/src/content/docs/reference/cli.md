@@ -70,6 +70,7 @@ tauri-pilot snapshot [OPTIONS]
 | `-i`, `--interactive` | Only include interactive elements (buttons, inputs, links, etc.) |
 | `-s`, `--selector <sel>` | Scope the snapshot to the subtree matching this CSS selector |
 | `-d`, `--depth <n>` | Maximum tree depth to traverse |
+| `--save <file>` | Save the snapshot to a JSON file for later comparison with `diff --ref` |
 
 **Example:**
 
@@ -92,6 +93,76 @@ e3  button    "Refresh"
   {"ref":"e2","role":"textbox","name":"Search PRs","depth":1,"value":""},
   {"ref":"e3","role":"button","name":"Refresh","depth":1}
 ]}}
+```
+
+---
+
+### `diff`
+
+Compare the current page state with a previous snapshot and show only the differences. Massive token savings for AI agents that currently re-read the entire tree after each interaction.
+
+```bash
+tauri-pilot diff [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--ref <file>` | Diff against a saved snapshot file instead of the last in-memory snapshot |
+| `-i`, `--interactive` | Only include interactive elements in the new snapshot |
+| `-s`, `--selector <sel>` | Scope the new snapshot to a CSS selector |
+| `-d`, `--depth <n>` | Maximum tree depth to traverse |
+
+**Output format:**
+
+```bash
++ button "Submit" [ref=e8]              # added
+- button "Loading..." [ref=e3]          # removed
+~ textbox "Search PRs" [ref=e2] value: "" → "workspace"  # changed
+```
+
+**Example:**
+
+```bash
+# Take a snapshot, interact, then diff
+$ tauri-pilot snapshot -i
+$ tauri-pilot fill @e2 "workspace"
+$ tauri-pilot click @e3
+$ tauri-pilot diff -i
+~ textbox "Search PRs" [ref=e2] value: "" → "workspace"
+
+# Save and diff against a file
+$ tauri-pilot snapshot -i --save before.snap
+$ tauri-pilot fill @e2 "workspace"
+$ tauri-pilot diff -i --ref before.snap
+
+# No changes
+$ tauri-pilot diff -i
+No changes detected.
+```
+
+**How matching works:**
+
+Elements are matched between snapshots by `(role, name, depth)` — not by ref ID, since refs reset on every snapshot. For duplicate elements sharing the same identity, position order is used as a tiebreaker.
+
+**JSON-RPC example:**
+
+```json
+// Request (diff vs last snapshot)
+{"jsonrpc":"2.0","id":1,"method":"diff","params":{"interactive":true}}
+
+// Request (diff vs saved reference)
+{"jsonrpc":"2.0","id":1,"method":"diff","params":{"interactive":true,"reference":{"elements":[...]}}}
+
+// Response
+{"jsonrpc":"2.0","id":1,"result":{
+  "added": [{"ref":"e8","role":"button","name":"Submit","depth":1}],
+  "removed": [{"ref":"e3","role":"button","name":"Loading...","depth":1}],
+  "changed": [{"old":{"ref":"e2","role":"textbox","name":"Search PRs","value":"","depth":1},
+               "new":{"ref":"e2","role":"textbox","name":"Search PRs","value":"workspace","depth":1},
+               "changes":["value"]}]
+}}
 ```
 
 ---
@@ -541,6 +612,64 @@ $ tauri-pilot logs --clear
 
 // Clear buffer
 {"jsonrpc":"2.0","id":2,"method":"console.clear"}
+```
+
+---
+
+### `network`
+
+Display or stream captured network requests (`fetch` and `XMLHttpRequest`).
+
+The JS bridge monkey-patches `fetch` and `XMLHttpRequest` and stores entries in a 200-entry ring buffer with timestamp, method, URL, status code, duration, and error details.
+
+```bash
+tauri-pilot network [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--filter <pattern>` | Filter by URL substring match |
+| `--failed` | Show only failed requests (4xx/5xx and network errors) |
+| `--last <n>` | Show only the last N entries |
+| `-f`, `--follow` | Continuously poll for new requests (500ms interval) |
+| `--clear` | Flush the ring buffer |
+
+**Examples:**
+
+```bash
+# Show all captured requests
+$ tauri-pilot network
+[14:32:01.123] GET  https://api.github.com/repos  200  125ms
+[14:32:02.456] POST https://api.github.com/graphql  200  340ms
+[14:32:03.789] GET  https://api.github.com/rate_limit  403  12ms
+
+# Filter by URL
+$ tauri-pilot network --filter graphql
+
+# Show only failures
+$ tauri-pilot network --failed
+
+# Stream requests in real-time
+$ tauri-pilot network --follow
+
+# Stream as NDJSON (compatible with jq)
+$ tauri-pilot network --follow --json
+
+# Clear the buffer
+$ tauri-pilot network --clear
+✓ cleared
+```
+
+**JSON-RPC examples:**
+
+```json
+// Get requests filtered by URL
+{"jsonrpc":"2.0","id":1,"method":"network.getRequests","params":{"filter":"graphql","last":10}}
+
+// Clear buffer
+{"jsonrpc":"2.0","id":2,"method":"network.clear"}
 ```
 
 ---

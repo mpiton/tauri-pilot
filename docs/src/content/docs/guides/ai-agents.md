@@ -29,9 +29,11 @@ tauri-pilot snapshot -i
 # Step 2: Interact using refs
 tauri-pilot click @e3
 
-# Step 3: Verify the result
-tauri-pilot snapshot -i
+# Step 3: See what changed (instead of re-reading the full tree)
+tauri-pilot diff
 ```
+
+The `diff` command compares the current page with the last snapshot and returns only added, removed, and changed elements. This saves significant tokens — a typical diff after a click is 2-5 lines vs 50-100 for a full re-snapshot.
 
 The `-i` flag filters to interactive elements only, reducing noise in the output.
 
@@ -76,9 +78,11 @@ tauri-pilot text @e1
 ## Best practices for snapshot parsing
 
 - **Always take a fresh snapshot before interacting** — refs reset on each snapshot. `@e1` in one snapshot may refer to a different element in the next.
+- **Use `diff` instead of re-snapshotting** — after an interaction, `tauri-pilot diff` returns only what changed. This is much cheaper than re-reading the full tree.
 - **Use `-i` to filter interactive elements** — this reduces output size and makes the tree easier to parse.
 - **Use `-s` to scope to a section** — `tauri-pilot snapshot -s "#sidebar"` limits the tree to a subtree, further reducing noise.
 - **Use `wait` before snapshot** — after navigation or interaction, wait for the page to settle before taking a snapshot to avoid acting on stale state.
+- **Save snapshots for multi-step workflows** — `tauri-pilot snapshot --save before.snap` then `tauri-pilot diff --ref before.snap` lets you compare against any point in time.
 
 ```bash
 # Scoped snapshot example
@@ -102,7 +106,7 @@ tauri-pilot snapshot -i                   # discover what's on screen
 tauri-pilot fill @e2 "search query"       # interact
 tauri-pilot click @e3                     # submit
 tauri-pilot wait --selector ".results"    # wait for response
-tauri-pilot snapshot -i                   # verify outcome
+tauri-pilot diff                          # see what changed (token-efficient)
 ```
 
 No custom integration code is needed — tauri-pilot is a CLI that Claude Code can invoke directly.
