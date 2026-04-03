@@ -25,7 +25,7 @@ pub(crate) fn format_text(value: &serde_json::Value) {
         return;
     }
     // {ok: true} → "✓ ok", {found: true} → "✓ found"
-    for key in ["ok", "found"] {
+    for key in ["ok", "found", "cleared"] {
         if value.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
             println!("{}", crate::style::success(key));
             return;
