@@ -4,6 +4,13 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "CLI for interactive testing and automation of Tauri v2 applications"
+keywords = ["tauri", "cli", "testing", "automation", "accessibility"]
+categories = ["command-line-utilities", "development-tools::testing"]
+readme = "README.md"
 
 [[bin]]
 name = "tauri-pilot"
