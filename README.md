@@ -14,6 +14,10 @@
 
 **Interactive testing CLI for Tauri v2 apps** — lets AI agents (Claude Code) and developers inspect, interact with, and debug Tauri applications in real-time.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="tauri-pilot demo" width="700">
+</p>
+
 ```
 $ tauri-pilot snapshot -i
 - heading "PR Dashboard" [ref=e1]
