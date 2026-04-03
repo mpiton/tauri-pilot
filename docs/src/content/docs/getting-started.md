@@ -60,9 +60,9 @@ tauri-pilot fill @e2 "hello"
 tauri-pilot press Enter
 
 # Verify
-tauri-pilot text @e1
+tauri-pilot assert text @e1 "Expected text"
+tauri-pilot assert visible @e3
 tauri-pilot wait --selector ".success-message"
-tauri-pilot screenshot ./capture.png
 ```
 
 ## Basic Usage Flow
@@ -72,7 +72,7 @@ tauri-pilot follows a **ping → snapshot → interact → verify** workflow:
 1. **Ping** — verify the plugin is running and the socket is reachable.
 2. **Snapshot** — capture the current state of the UI. This assigns stable refs (`@e1`, `@e2`, …) to every element. Refs are reset on each snapshot, so always snapshot before interacting.
 3. **Interact** — use refs to click, fill, press, or scroll elements.
-4. **Verify** — read text, wait for selectors, or take a screenshot to confirm the expected state.
+4. **Verify** — use `assert` for one-step verification, `wait` for async state, or `diff` to see what changed.
 
 ### Example snapshot output
 

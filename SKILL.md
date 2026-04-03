@@ -12,7 +12,7 @@ description: Inspect, interact with, and test a running Tauri v2 app via CLI. Co
 2. snapshot -i   — get interactive elements with refs
 3. read refs     — inspect elements (text, value, attrs)
 4. act on refs   — click, fill, type, select, check
-5. snapshot -i   — verify result
+5. assert        — verify result in one step (exit 0 = pass, exit 1 = fail)
 ```
 
 ## Rules
@@ -69,6 +69,21 @@ Three target formats, auto-detected:
 | `check <target>` | `check @e6` |
 | `scroll <dir> [amount] [--ref <target>]` | `scroll down 500` |
 
+### Assertions
+
+| Command | Example |
+|---------|---------|
+| `assert text <target> <expected>` | `assert text @e1 "Dashboard"` |
+| `assert visible <target>` | `assert visible @e3` |
+| `assert hidden <target>` | `assert hidden @e3` |
+| `assert value <target> <expected>` | `assert value @e2 "workspace"` |
+| `assert count <selector> <n>` | `assert count ".item" 5` |
+| `assert checked <target>` | `assert checked @e8` |
+| `assert contains <target> <substr>` | `assert contains @e1 "error"` |
+| `assert url <substr>` | `assert url "/dashboard"` |
+
+Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `assert` over manual `text` + compare — saves one round-trip and parsing.
+
 ### Navigation & Waiting
 
 | Command | Description |
@@ -121,6 +136,14 @@ tauri-pilot fill @e2 "password123"
 tauri-pilot click @e3
 tauri-pilot wait --selector ".dashboard"
 tauri-pilot snapshot -i
+tauri-pilot assert text @e1 "Welcome"
+tauri-pilot assert url "/dashboard"
+
+# Verify element state
+tauri-pilot snapshot -i
+tauri-pilot assert checked @e8
+tauri-pilot assert visible @e3
+tauri-pilot assert count ".list-item" 5
 
 # Debug after action
 tauri-pilot logs --clear
