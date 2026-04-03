@@ -27,6 +27,7 @@ package-lock.json
 ARCHI.md
 PRD.md
 SPEC.md
+demo.tape
 
 # ECC
 .insaits_audit*

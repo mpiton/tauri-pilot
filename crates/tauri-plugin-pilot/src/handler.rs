@@ -6,6 +6,7 @@ use crate::server::EvalFn;
 use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Dispatch a JSON-RPC method call to the appropriate handler.
 pub(crate) async fn dispatch(
@@ -17,22 +18,32 @@ pub(crate) async fn dispatch(
     match method {
         "ping" => Ok(serde_json::json!({"status": "ok"})),
         "snapshot" => {
-            let result = handle_eval_method("snapshot", params, engine, eval_fn).await?;
+            let result =
+                handle_eval_method("snapshot", params, engine, eval_fn, DEFAULT_TIMEOUT).await?;
             engine.store_snapshot(&result);
             Ok(result)
         }
         "diff" => handle_diff(params, engine, eval_fn).await,
         "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" | "text" | "html"
         | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state" | "wait"
-        | "screenshot" | "visible" | "count" | "checked" => {
-            handle_eval_method(method, params, engine, eval_fn).await
+        | "visible" | "count" | "checked" => {
+            handle_eval_method(method, params, engine, eval_fn, DEFAULT_TIMEOUT).await
         }
-        "console.getLogs" => handle_eval_method("consoleLogs", params, engine, eval_fn).await,
-        "console.clear" => handle_eval_method("clearLogs", params, engine, eval_fn).await,
+        "screenshot" => {
+            handle_eval_method(method, params, engine, eval_fn, SCREENSHOT_TIMEOUT).await
+        }
+        "console.getLogs" => {
+            handle_eval_method("consoleLogs", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
+        "console.clear" => {
+            handle_eval_method("clearLogs", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
         "network.getRequests" => {
-            handle_eval_method("networkRequests", params, engine, eval_fn).await
+            handle_eval_method("networkRequests", params, engine, eval_fn, DEFAULT_TIMEOUT).await
         }
-        "network.clear" => handle_eval_method("clearNetwork", params, engine, eval_fn).await,
+        "network.clear" => {
+            handle_eval_method("clearNetwork", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -143,6 +154,7 @@ async fn handle_eval_method(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
+    timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
     let eval_fn = eval_fn.ok_or_else(|| RpcError {
         code: -32603,
@@ -168,14 +180,11 @@ async fn handle_eval_method(
         });
     }
 
-    engine
-        .wait(id, rx, DEFAULT_TIMEOUT)
-        .await
-        .map_err(|e| RpcError {
-            code: -32603,
-            message: format!("Eval error: {e}"),
-            data: None,
-        })
+    engine.wait(id, rx, timeout).await.map_err(|e| RpcError {
+        code: -32603,
+        message: format!("Eval error: {e}"),
+        data: None,
+    })
 }
 
 /// Build a `window.__PILOT__.<method>(params)` JS call string.

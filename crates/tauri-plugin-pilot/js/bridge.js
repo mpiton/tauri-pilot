@@ -636,7 +636,7 @@
     if (typeof htmlToImage === "undefined" || !htmlToImage.toPng) {
       throw new Error("html-to-image library not loaded. Bundle it into bridge.js for screenshot support.");
     }
-    var dataUrl = await htmlToImage.toPng(el);
+    var dataUrl = await htmlToImage.toPng(el, { pixelRatio: 1 });
     return dataUrl;
   }
 
