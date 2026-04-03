@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cli::{Cli, Command, Target, parse_target};
+use cli::{AssertKind, Cli, Command, Target, parse_target};
 use client::Client;
 
 #[tokio::main]
@@ -282,6 +282,7 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
             clear,
             follow,
         } => run_network_command(client, filter, failed, last, clear, follow).await,
+        Command::Assert(kind) => run_assert_command(client, kind).await,
         cmd => run_dom_command(client, cmd).await,
     }
 }
@@ -361,6 +362,102 @@ async fn run_dom_command(client: &mut Client, command: Command) -> Result<serde_
         Command::Eval { script } => client.call("eval", Some(json!({"script": script}))).await,
         _ => anyhow::bail!("unexpected command in run_dom_command"),
     }
+}
+
+/// Extract a string from a JSON value, bailing if not a string.
+fn require_str(val: &serde_json::Value) -> Result<&str> {
+    val.as_str()
+        .ok_or_else(|| anyhow::anyhow!("expected string response from server"))
+}
+
+/// Extract a bool field from a JSON object, bailing if missing.
+fn require_bool_field(val: &serde_json::Value, field: &str) -> Result<bool> {
+    val.get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| anyhow::anyhow!("missing '{field}' field in server response"))
+}
+
+/// Print assertion failure and exit with code 1.
+fn assert_fail(msg: &str) -> ! {
+    output::format_assert_fail(msg);
+    std::process::exit(1)
+}
+
+async fn run_assert_command(client: &mut Client, kind: AssertKind) -> Result<serde_json::Value> {
+    match kind {
+        AssertKind::Text { target, expected } => {
+            let result = client.call("text", Some(target_params(&target))).await?;
+            let actual = require_str(&result)?;
+            if actual != expected {
+                assert_fail(&format!("expected text \"{expected}\", got \"{actual}\""));
+            }
+        }
+        AssertKind::Visible { target } => {
+            let visible = require_bool_field(
+                &client.call("visible", Some(target_params(&target))).await?,
+                "visible",
+            )?;
+            if !visible {
+                assert_fail("element is not visible");
+            }
+        }
+        AssertKind::Hidden { target } => {
+            let visible = require_bool_field(
+                &client.call("visible", Some(target_params(&target))).await?,
+                "visible",
+            )?;
+            if visible {
+                assert_fail("element is visible");
+            }
+        }
+        AssertKind::Value { target, expected } => {
+            let result = client.call("value", Some(target_params(&target))).await?;
+            let actual = require_str(&result)?;
+            if actual != expected {
+                assert_fail(&format!("expected value \"{expected}\", got \"{actual}\""));
+            }
+        }
+        AssertKind::Count { selector, expected } => {
+            let result = client
+                .call("count", Some(json!({"selector": selector})))
+                .await?;
+            let actual = result
+                .get("count")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| anyhow::anyhow!("missing 'count' field in server response"))?;
+            if actual != expected {
+                assert_fail(&format!("expected {expected} elements, found {actual}"));
+            }
+        }
+        AssertKind::Checked { target } => {
+            let checked = require_bool_field(
+                &client.call("checked", Some(target_params(&target))).await?,
+                "checked",
+            )?;
+            if !checked {
+                assert_fail("element is not checked");
+            }
+        }
+        AssertKind::Contains { target, expected } => {
+            let result = client.call("text", Some(target_params(&target))).await?;
+            let actual = require_str(&result)?;
+            if !actual.contains(&expected) {
+                assert_fail(&format!(
+                    "text does not contain \"{expected}\", got \"{actual}\""
+                ));
+            }
+        }
+        AssertKind::Url { expected } => {
+            let result = client.call("url", None).await?;
+            let actual = require_str(&result)?;
+            if !actual.contains(&expected) {
+                assert_fail(&format!(
+                    "URL does not contain \"{expected}\", got \"{actual}\""
+                ));
+            }
+        }
+    }
+    Ok(json!({"ok": true}))
 }
 
 async fn run_ipc_command(

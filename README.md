@@ -14,6 +14,10 @@
 
 **Interactive testing CLI for Tauri v2 apps** — lets AI agents (Claude Code) and developers inspect, interact with, and debug Tauri applications in real-time.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="tauri-pilot demo" width="700">
+</p>
+
 ```
 $ tauri-pilot snapshot -i
 - heading "PR Dashboard" [ref=e1]
@@ -100,9 +104,9 @@ tauri-pilot fill @e2 "hello"
 tauri-pilot press Enter
 
 # Verify
-tauri-pilot text @e1
+tauri-pilot assert text @e1 "Expected text"
+tauri-pilot assert visible @e3
 tauri-pilot wait --selector ".success-message"
-tauri-pilot screenshot ./capture.png
 ```
 
 ## Commands
@@ -129,6 +133,7 @@ tauri-pilot screenshot ./capture.png
 | `wait` | Wait for element to appear/disappear |
 | `navigate` | Change the WebView URL |
 | `state` | Get URL, title, viewport, scroll |
+| `assert` | One-step verification (text, visible, hidden, value, count, checked, contains, url) |
 | `logs` | Capture and display console output |
 | `network` | Capture and display network requests |
 
@@ -139,8 +144,11 @@ tauri-pilot is designed for AI agent consumption. The workflow is:
 1. `tauri-pilot snapshot -i` — get the accessibility tree with refs
 2. Read the refs in the output (`@e1`, `@e2`, ...)
 3. `tauri-pilot click @e3` — interact using refs
-4. `tauri-pilot diff -i` — see only what changed (saves tokens vs full re-snapshot)
-5. `tauri-pilot logs --level error` — check for JS errors
+4. `tauri-pilot assert text @e1 "Dashboard"` — verify state in one step (exit 0 = pass, exit 1 = fail)
+5. `tauri-pilot diff -i` — see only what changed (saves tokens vs full re-snapshot)
+6. `tauri-pilot logs --level error` — check for JS errors
+
+The `assert` command replaces the manual `text @ref` + parse + compare pattern, reducing round-trips and token usage.
 
 Use `--json` for structured output when parsing programmatically.
 

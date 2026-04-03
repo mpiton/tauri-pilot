@@ -145,6 +145,29 @@ pub(crate) enum Command {
         #[arg(long, short = 'f')]
         follow: bool,
     },
+    /// Assert element state
+    #[command(subcommand)]
+    Assert(AssertKind),
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum AssertKind {
+    /// Assert exact text content
+    Text { target: String, expected: String },
+    /// Assert element is visible
+    Visible { target: String },
+    /// Assert element is hidden
+    Hidden { target: String },
+    /// Assert input value
+    Value { target: String, expected: String },
+    /// Assert element count matching selector
+    Count { selector: String, expected: u64 },
+    /// Assert checkbox is checked
+    Checked { target: String },
+    /// Assert text contains substring
+    Contains { target: String, expected: String },
+    /// Assert current URL contains string
+    Url { expected: String },
 }
 
 /// Parsed target for element-targeting commands.
@@ -237,6 +260,78 @@ mod tests {
             assert_eq!(path, std::path::PathBuf::from("/tmp/snap.json"));
         } else {
             panic!("Expected Diff command with ref");
+        }
+    }
+
+    #[test]
+    fn test_parse_assert_text() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "assert",
+            "text",
+            "@e1",
+            "Dashboard",
+        ]);
+        if let Command::Assert(AssertKind::Text { target, expected }) = cli.command {
+            assert_eq!(target, "@e1");
+            assert_eq!(expected, "Dashboard");
+        } else {
+            panic!("Expected Assert Text command");
+        }
+    }
+
+    #[test]
+    fn test_parse_assert_visible() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "assert",
+            "visible",
+            "#submit",
+        ]);
+        if let Command::Assert(AssertKind::Visible { target }) = cli.command {
+            assert_eq!(target, "#submit");
+        } else {
+            panic!("Expected Assert Visible command");
+        }
+    }
+
+    #[test]
+    fn test_parse_assert_count() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "assert",
+            "count",
+            ".list-item",
+            "5",
+        ]);
+        if let Command::Assert(AssertKind::Count { selector, expected }) = cli.command {
+            assert_eq!(selector, ".list-item");
+            assert_eq!(expected, 5);
+        } else {
+            panic!("Expected Assert Count command");
+        }
+    }
+
+    #[test]
+    fn test_parse_assert_url() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "assert",
+            "url",
+            "/dashboard",
+        ]);
+        if let Command::Assert(AssertKind::Url { expected }) = cli.command {
+            assert_eq!(expected, "/dashboard");
+        } else {
+            panic!("Expected Assert Url command");
         }
     }
 

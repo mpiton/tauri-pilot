@@ -8,6 +8,13 @@ pub(crate) fn format_json(value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// Print an assertion failure message to stderr in red.
+pub(crate) fn format_assert_fail(message: &str) {
+    use owo_colors::{OwoColorize, Stream::Stderr};
+    let text = format!("FAIL: {}", strip_ansi(message));
+    eprintln!("{}", text.if_supports_color(Stderr, |t| t.red()));
+}
+
 /// Print a value as compact text for human consumption.
 pub(crate) fn format_text(value: &serde_json::Value) {
     // {error: {message: "...", code: N}} → "✗ <message>"

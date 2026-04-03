@@ -72,7 +72,9 @@ tauri-pilot click @e5
 
 # 7. Verify success
 tauri-pilot wait --selector ".success-toast"
-tauri-pilot text @e1
+tauri-pilot snapshot -i
+tauri-pilot assert text @e1 "Settings saved"
+tauri-pilot assert url "/settings"
 ```
 
 ## Best practices for snapshot parsing
@@ -82,9 +84,18 @@ tauri-pilot text @e1
 - **Use `-i` to filter interactive elements** — this reduces output size and makes the tree easier to parse.
 - **Use `-s` to scope to a section** — `tauri-pilot snapshot -s "#sidebar"` limits the tree to a subtree, further reducing noise.
 - **Use `wait` before snapshot** — after navigation or interaction, wait for the page to settle before taking a snapshot to avoid acting on stale state.
+- **Use `assert` for verification** — `tauri-pilot assert text @e1 "Dashboard"` returns exit 0 on match, exit 1 on mismatch. This replaces the three-step `text @e1` → parse → compare pattern, saving a round-trip and token parsing.
 - **Save snapshots for multi-step workflows** — `tauri-pilot snapshot --save before.snap` then `tauri-pilot diff --ref before.snap` lets you compare against any point in time.
 
 ```bash
+# Assert examples — one-step verification
+tauri-pilot assert text @e1 "Dashboard"           # exact text match
+tauri-pilot assert visible @e3                     # element is visible
+tauri-pilot assert value @e2 "workspace"           # input value
+tauri-pilot assert count ".list-item" 5            # element count
+tauri-pilot assert contains @e1 "error"            # partial text match
+tauri-pilot assert url "/dashboard"                # URL substring
+
 # Scoped snapshot example
 tauri-pilot snapshot -i -s "#main-content"
 ```
@@ -107,6 +118,8 @@ tauri-pilot fill @e2 "search query"       # interact
 tauri-pilot click @e3                     # submit
 tauri-pilot wait --selector ".results"    # wait for response
 tauri-pilot diff                          # see what changed (token-efficient)
+tauri-pilot snapshot -i                   # refresh refs
+tauri-pilot assert text @e1 "Results"     # verify in one step
 ```
 
 No custom integration code is needed — tauri-pilot is a CLI that Claude Code can invoke directly.

@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Built-in assertions** — one-step verification for AI agents instead of manual text+parse+compare ([#9])
+  - `tauri-pilot assert text @e1 "Dashboard"` — exact text content match
+  - `tauri-pilot assert visible @e3` / `hidden @e3` — element visibility checks
+  - `tauri-pilot assert value @e2 "workspace"` — input value match
+  - `tauri-pilot assert count ".list-item" 5` — element count by CSS selector
+  - `tauri-pilot assert checked @e4` — checkbox state
+  - `tauri-pilot assert contains @e1 "error"` — partial text match
+  - `tauri-pilot assert url "/dashboard"` — URL substring match
+  - Exit code 0 + `ok` on success, exit code 1 + `FAIL: ...` on failure
+  - 3 new JS bridge functions: `visible()`, `count()`, `checked()`
 - **Snapshot diff command** — compare current page state with a previous snapshot ([#8])
   - `diff` JSON-RPC method in plugin with added/removed/changed detection
   - `tauri-pilot diff` CLI command with `--ref FILE`, `--interactive`, `--selector`, `--depth` flags
@@ -66,6 +76,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Bridge functions accept params object (not positional arguments)
 - `build.rs` + permissions for `__callback` IPC command
 
+[#9]: https://github.com/mpiton/tauri-pilot/issues/9
 [#1]: https://github.com/mpiton/tauri-pilot/pull/1
 [#2]: https://github.com/mpiton/tauri-pilot/pull/2
 [#3]: https://github.com/mpiton/tauri-pilot/pull/3

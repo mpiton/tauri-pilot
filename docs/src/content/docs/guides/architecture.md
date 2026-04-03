@@ -62,7 +62,7 @@ The protocol is implemented with three hand-rolled serde structs (~50 lines tota
 | `Response` | `jsonrpc`, `id`, `result?`, `error?` |
 | `RpcError` | `code`, `message`, `data?` |
 
-23 methods are available: `ping`, `snapshot`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `wait`, `navigate`, `url`, `title`, `state`, `ipc`, `console.getLogs`, `console.clear`.
+29 methods are available: `ping`, `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `visible`, `count`, `checked`, `wait`, `navigate`, `url`, `title`, `state`, `ipc`, `console.getLogs`, `console.clear`, `network.getRequests`, `network.clear`.
 
 ## Element Reference System
 

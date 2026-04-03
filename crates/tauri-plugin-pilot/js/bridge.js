@@ -534,6 +534,29 @@
     return result;
   }
 
+  function visible(params) {
+    const el = resolveTarget(params);
+    const style = getComputedStyle(el);
+    const isVisible =
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      style.opacity !== "0" &&
+      (el.offsetWidth > 0 || el.offsetHeight > 0);
+    return { visible: isVisible };
+  }
+
+  function count(params) {
+    if (!params || !params.selector) {
+      throw new Error("count requires a selector parameter");
+    }
+    return { count: document.querySelectorAll(params.selector).length };
+  }
+
+  function checked(params) {
+    const el = resolveTarget(params);
+    return { checked: !!el.checked };
+  }
+
   function navigate(options) {
     const url = options && options.url;
     if (url) window.location.href = url;
@@ -614,7 +637,7 @@
     if (typeof htmlToImage === "undefined" || !htmlToImage.toPng) {
       throw new Error("html-to-image library not loaded. Bundle it into bridge.js for screenshot support.");
     }
-    var dataUrl = await htmlToImage.toPng(el);
+    var dataUrl = await htmlToImage.toPng(el, { pixelRatio: 1 });
     return dataUrl;
   }
 
@@ -643,5 +666,8 @@
     clearLogs: clearLogs,
     networkRequests: networkRequests,
     clearNetwork: clearNetwork,
+    visible: visible,
+    count: count,
+    checked: checked,
   };
 })();
