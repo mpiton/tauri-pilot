@@ -4,7 +4,7 @@ mod output;
 mod protocol;
 mod style;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::Engine;
 use clap::Parser;
 use serde_json::{Value, json};
@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
     let mut client = Client::connect(&socket).await?;
 
     let is_snapshot = matches!(args.command, Command::Snapshot { .. });
+    let is_diff = matches!(args.command, Command::Diff { .. });
     let is_logs = matches!(args.command, Command::Logs { .. });
     let is_network = matches!(args.command, Command::Network { .. });
 
@@ -87,6 +88,8 @@ async fn main() -> Result<()> {
         output::format_json(&result)?;
     } else if is_snapshot {
         output::format_snapshot(&result);
+    } else if is_diff {
+        output::format_diff(&result);
     } else if is_logs {
         // console.clear returns {"cleared": true}, not an array
         if result.get("cleared").is_some() {
@@ -210,8 +213,9 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
             interactive,
             selector,
             depth,
+            save,
         } => {
-            client
+            let result = client
                 .call(
                     "snapshot",
                     Some(json!({
@@ -220,8 +224,21 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
                         "depth": depth,
                     })),
                 )
-                .await
+                .await?;
+            if let Some(ref path) = save {
+                let json = serde_json::to_string_pretty(&result)?;
+                std::fs::write(path, &json)
+                    .with_context(|| format!("Failed to save snapshot to {}", path.display()))?;
+                eprintln!("Snapshot saved to {}", path.display());
+            }
+            Ok(result)
         }
+        Command::Diff {
+            r#ref: ref_path,
+            interactive,
+            selector,
+            depth,
+        } => run_diff_command(client, ref_path, interactive, selector, depth).await,
         Command::Ipc { command, args } => run_ipc_command(client, &command, args.as_deref()).await,
         Command::Screenshot { path, selector } => {
             client
@@ -267,6 +284,39 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
         } => run_network_command(client, filter, failed, last, clear, follow).await,
         cmd => run_dom_command(client, cmd).await,
     }
+}
+
+async fn run_diff_command(
+    client: &mut Client,
+    ref_path: Option<std::path::PathBuf>,
+    interactive: bool,
+    selector: Option<String>,
+    depth: Option<u8>,
+) -> Result<serde_json::Value> {
+    let mut params = json!({
+        "interactive": interactive,
+        "selector": selector,
+        "depth": depth,
+    });
+    if let Some(path) = ref_path {
+        let meta = std::fs::metadata(&path)
+            .with_context(|| format!("Failed to stat snapshot file: {}", path.display()))?;
+        anyhow::ensure!(
+            meta.len() < 50 * 1024 * 1024,
+            "Snapshot file too large (>50 MB): {}",
+            path.display()
+        );
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read snapshot file: {}", path.display()))?;
+        let reference: serde_json::Value =
+            serde_json::from_str(&content).context("Invalid snapshot file format")?;
+        anyhow::ensure!(
+            reference.get("elements").is_some(),
+            "Snapshot file missing \"elements\" key — not a valid snapshot"
+        );
+        params["reference"] = reference;
+    }
+    client.call("diff", Some(params)).await
 }
 
 async fn run_dom_command(client: &mut Client, command: Command) -> Result<serde_json::Value> {

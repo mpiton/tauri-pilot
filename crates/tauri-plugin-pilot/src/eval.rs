@@ -26,6 +26,7 @@ type PendingMap = HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>
 pub(crate) struct EvalEngine {
     pending: Arc<Mutex<PendingMap>>,
     next_id: Arc<AtomicU64>,
+    last_snapshot: Arc<Mutex<Option<serde_json::Value>>>,
 }
 
 impl EvalEngine {
@@ -33,7 +34,24 @@ impl EvalEngine {
         Self {
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(AtomicU64::new(1)),
+            last_snapshot: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Store the last snapshot result for later diff comparison.
+    pub fn store_snapshot(&self, value: &serde_json::Value) {
+        *self
+            .last_snapshot
+            .lock()
+            .expect("last_snapshot lock poisoned") = Some(value.clone());
+    }
+
+    /// Retrieve the last stored snapshot, if any.
+    pub fn get_last_snapshot(&self) -> Option<serde_json::Value> {
+        self.last_snapshot
+            .lock()
+            .expect("last_snapshot lock poisoned")
+            .clone()
     }
 
     /// Register a pending eval request. Returns the ID and a receiver.
@@ -193,5 +211,20 @@ mod tests {
         assert!(script.contains("__callback"));
         assert!(script.contains("try"));
         assert!(script.contains("catch"));
+    }
+
+    #[test]
+    fn test_get_last_snapshot_none_initially() {
+        let engine = EvalEngine::new();
+        assert!(engine.get_last_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_store_and_retrieve_snapshot() {
+        let engine = EvalEngine::new();
+        let value = json!({"elements": [{"ref": "e1", "role": "button", "depth": 1}]});
+        engine.store_snapshot(&value);
+        let retrieved = engine.get_last_snapshot();
+        assert_eq!(retrieved, Some(value));
     }
 }

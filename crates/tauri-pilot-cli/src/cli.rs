@@ -30,6 +30,23 @@ pub(crate) enum Command {
         selector: Option<String>,
         #[arg(short, long)]
         depth: Option<u8>,
+        #[arg(long, value_name = "FILE")]
+        save: Option<std::path::PathBuf>,
+    },
+    /// Compare current page with previous snapshot, showing only differences
+    Diff {
+        /// Path to a saved snapshot file to compare against
+        #[arg(long, value_name = "FILE")]
+        r#ref: Option<std::path::PathBuf>,
+        /// Only include interactive elements
+        #[arg(short, long)]
+        interactive: bool,
+        /// CSS selector to scope the snapshot
+        #[arg(short, long)]
+        selector: Option<String>,
+        /// Maximum depth to traverse
+        #[arg(short, long)]
+        depth: Option<u8>,
     },
     /// Click an element.
     Click { target: String },
@@ -187,5 +204,59 @@ mod tests {
             parse_target("abc,def"),
             Target::Selector("abc,def".to_owned())
         );
+    }
+
+    #[test]
+    fn test_parse_diff_command() {
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "diff"]);
+        assert!(matches!(
+            cli.command,
+            Command::Diff {
+                r#ref: None,
+                interactive: false,
+                selector: None,
+                depth: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_diff_with_ref() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "diff",
+            "--ref",
+            "/tmp/snap.json",
+        ]);
+        if let Command::Diff {
+            r#ref: Some(path), ..
+        } = cli.command
+        {
+            assert_eq!(path, std::path::PathBuf::from("/tmp/snap.json"));
+        } else {
+            panic!("Expected Diff command with ref");
+        }
+    }
+
+    #[test]
+    fn test_parse_snapshot_with_save() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "snapshot",
+            "--save",
+            "/tmp/snap.json",
+        ]);
+        if let Command::Snapshot {
+            save: Some(path), ..
+        } = cli.command
+        {
+            assert_eq!(path, std::path::PathBuf::from("/tmp/snap.json"));
+        } else {
+            panic!("Expected Snapshot command with save");
+        }
     }
 }
