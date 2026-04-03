@@ -78,13 +78,18 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish -p tauri-plugin-pilot 2>&1 || {
-            if cargo publish -p tauri-plugin-pilot 2>&1 | grep -q "already uploaded"; then
-              echo "tauri-plugin-pilot already published, skipping"
-            else
-              exit 1
-            fi
-          }
+          set +e
+          OUTPUT=$(cargo publish -p tauri-plugin-pilot 2>&1)
+          STATUS=$?
+          set -e
+          if [ $STATUS -eq 0 ]; then
+            echo "tauri-plugin-pilot published successfully"
+          elif echo "$OUTPUT" | grep -q "already uploaded"; then
+            echo "tauri-plugin-pilot already published, skipping"
+          else
+            echo "$OUTPUT"
+            exit 1
+          fi
 
       - name: Wait for crates.io index to update
         env:
@@ -107,13 +112,18 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish -p tauri-pilot-cli 2>&1 || {
-            if cargo publish -p tauri-pilot-cli 2>&1 | grep -q "already uploaded"; then
-              echo "tauri-pilot-cli already published, skipping"
-            else
-              exit 1
-            fi
-          }
+          set +e
+          OUTPUT=$(cargo publish -p tauri-pilot-cli 2>&1)
+          STATUS=$?
+          set -e
+          if [ $STATUS -eq 0 ]; then
+            echo "tauri-pilot-cli published successfully"
+          elif echo "$OUTPUT" | grep -q "already uploaded"; then
+            echo "tauri-pilot-cli already published, skipping"
+          else
+            echo "$OUTPUT"
+            exit 1
+          fi
 
       - name: Extract changelog for this version
         id: changelog

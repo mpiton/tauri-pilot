@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage: ./scripts/release.sh 0.2.0
 # Bumps version in all Cargo.toml files, updates CHANGELOG.md,
-# commits, tags, and pushes to trigger the release workflow.
+# commits and tags the release; push separately to trigger the release workflow.
 
 VERSION="${1:-}"
 
@@ -31,6 +31,12 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# Preflight: ensure tag does not already exist
+if git rev-parse -q --verify "refs/tags/v$VERSION" > /dev/null 2>&1; then
+  echo "Error: tag v$VERSION already exists"
+  exit 1
+fi
+
 echo "Releasing v$VERSION..."
 
 # Update [package].version in all crate Cargo.toml files
@@ -42,7 +48,17 @@ done
 # Update CHANGELOG.md
 TODAY=$(date +%Y-%m-%d)
 # Replace "## [Unreleased]" with "## [Unreleased]\n\n## [$VERSION] - $TODAY"
+if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+  echo "Error: CHANGELOG.md is missing '## [Unreleased]' header"
+  exit 1
+fi
 perl -i -pe "s/^## \\[Unreleased\\]/## [Unreleased]\n\n## [$VERSION] - $TODAY/" CHANGELOG.md
+
+# Verify the version section was created
+if ! grep -q "## \[$VERSION\] - " CHANGELOG.md; then
+  echo "Error: failed to create version section in CHANGELOG.md"
+  exit 1
+fi
 
 # Update comparison links at bottom of CHANGELOG
 # Add new unreleased comparison link and version link
