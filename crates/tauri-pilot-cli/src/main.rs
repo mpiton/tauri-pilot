@@ -457,7 +457,7 @@ async fn run_assert_command(client: &mut Client, kind: AssertKind) -> Result<ser
             }
         }
     }
-    Ok(json!("ok"))
+    Ok(json!({"ok": true}))
 }
 
 async fn run_ipc_command(

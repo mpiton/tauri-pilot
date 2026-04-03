@@ -133,7 +133,7 @@ tauri-pilot wait --selector ".success-message"
 | `wait` | Wait for element to appear/disappear |
 | `navigate` | Change the WebView URL |
 | `state` | Get URL, title, viewport, scroll |
-| `assert` | One-step verification (text, visible, value, count...) |
+| `assert` | One-step verification (text, visible, hidden, value, count, checked, contains, url) |
 | `logs` | Capture and display console output |
 | `network` | Capture and display network requests |
 

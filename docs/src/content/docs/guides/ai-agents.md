@@ -84,7 +84,7 @@ tauri-pilot assert url "/settings"
 - **Use `-i` to filter interactive elements** — this reduces output size and makes the tree easier to parse.
 - **Use `-s` to scope to a section** — `tauri-pilot snapshot -s "#sidebar"` limits the tree to a subtree, further reducing noise.
 - **Use `wait` before snapshot** — after navigation or interaction, wait for the page to settle before taking a snapshot to avoid acting on stale state.
-- **Use `assert` for verification** — `tauri-pilot assert text @e1 "Dashboard"` is a single command that returns exit 0 on match, exit 1 on mismatch. This replaces the three-step `text @e1` → parse → compare pattern and saves one round-trip plus token parsing.
+- **Use `assert` for verification** — `tauri-pilot assert text @e1 "Dashboard"` returns exit 0 on match, exit 1 on mismatch. This replaces the three-step `text @e1` → parse → compare pattern, saving a round-trip and token parsing.
 - **Save snapshots for multi-step workflows** — `tauri-pilot snapshot --save before.snap` then `tauri-pilot diff --ref before.snap` lets you compare against any point in time.
 
 ```bash
@@ -117,9 +117,9 @@ tauri-pilot snapshot -i                   # discover what's on screen
 tauri-pilot fill @e2 "search query"       # interact
 tauri-pilot click @e3                     # submit
 tauri-pilot wait --selector ".results"    # wait for response
+tauri-pilot diff                          # see what changed (token-efficient)
 tauri-pilot snapshot -i                   # refresh refs
 tauri-pilot assert text @e1 "Results"     # verify in one step
-tauri-pilot diff                          # see what changed (token-efficient)
 ```
 
 No custom integration code is needed — tauri-pilot is a CLI that Claude Code can invoke directly.

@@ -540,6 +540,7 @@
     const isVisible =
       style.display !== "none" &&
       style.visibility !== "hidden" &&
+      style.opacity !== "0" &&
       (el.offsetWidth > 0 || el.offsetHeight > 0);
     return { visible: isVisible };
   }
