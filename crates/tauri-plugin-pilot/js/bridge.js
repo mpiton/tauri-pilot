@@ -630,11 +630,18 @@
     });
   }
 
+  var MAX_WATCH_ENTRIES = 200;
+
   function summarizeNode(node) {
     var entry = { tag: node.tagName.toLowerCase() };
     if (node.id) entry.id = node.id;
     if (node.className && typeof node.className === 'string' && node.className.trim()) entry.class = node.className.trim();
-    var text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+    var text = Array.from(node.childNodes)
+      .filter(function(n) { return n.nodeType === Node.TEXT_NODE; })
+      .map(function(n) { return n.textContent || ''; })
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (text) entry.text = text.substring(0, 80);
     return entry;
   }
@@ -653,7 +660,7 @@
     }
 
     return new Promise(function (res, rej) {
-      var changes = { added: [], removed: [], modified: [] };
+      var changes = { added: [], removed: [], modified: [], truncated: false };
       var stableTimer = null;
       var timeoutTimer = null;
       var settled = false;
@@ -683,6 +690,14 @@
         }
       }, timeout);
 
+      function pushCapped(arr, entry) {
+        if (arr.length < MAX_WATCH_ENTRIES) {
+          arr.push(entry);
+        } else {
+          changes.truncated = true;
+        }
+      }
+
       var observer = new MutationObserver(function (mutations) {
         for (var i = 0; i < mutations.length; i++) {
           var mutation = mutations[i];
@@ -690,26 +705,32 @@
             for (var j = 0; j < mutation.addedNodes.length; j++) {
               var node = mutation.addedNodes[j];
               if (node.nodeType === Node.ELEMENT_NODE) {
-                changes.added.push(summarizeNode(node));
+                pushCapped(changes.added, summarizeNode(node));
               }
             }
             for (var k = 0; k < mutation.removedNodes.length; k++) {
-              var removed = mutation.removedNodes[k];
-              if (removed.nodeType === Node.ELEMENT_NODE) {
-                changes.removed.push(summarizeNode(removed));
+              var removedNode = mutation.removedNodes[k];
+              if (removedNode.nodeType === Node.ELEMENT_NODE) {
+                pushCapped(changes.removed, summarizeNode(removedNode));
               }
             }
           } else if (mutation.type === 'attributes') {
             var target = mutation.target;
-            changes.modified.push({
+            var attrValue = target.getAttribute(mutation.attributeName);
+            var entry = {
               tag: target.tagName.toLowerCase(),
               attribute: mutation.attributeName,
-              value: target.getAttribute(mutation.attributeName),
-            });
+            };
+            if (attrValue === null) {
+              entry.removed = true;
+            } else {
+              entry.value = attrValue;
+            }
+            pushCapped(changes.modified, entry);
           } else if (mutation.type === 'characterData') {
             var parent = mutation.target.parentElement;
             if (parent) {
-              changes.modified.push({
+              pushCapped(changes.modified, {
                 tag: parent.tagName.toLowerCase(),
                 text: (mutation.target.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80),
               });
