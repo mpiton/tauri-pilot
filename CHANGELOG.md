@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-04-03
 
+## [0.1.0] - 2026-04-03
+
 ### Added
 
 - **Built-in assertions** — one-step verification for AI agents instead of manual text+parse+compare ([#9])
