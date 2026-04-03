@@ -106,6 +106,28 @@ pub(crate) enum Command {
         #[arg(long, short = 'f')]
         follow: bool,
     },
+    /// Display or stream captured network requests.
+    Network {
+        /// Filter by URL pattern (substring match).
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Show only failed requests (4xx/5xx and network errors).
+        #[arg(long)]
+        failed: bool,
+
+        /// Show last N requests.
+        #[arg(long)]
+        last: Option<usize>,
+
+        /// Clear the request buffer.
+        #[arg(long, conflicts_with = "follow")]
+        clear: bool,
+
+        /// Continuously poll for new requests.
+        #[arg(long, short = 'f')]
+        follow: bool,
+    },
 }
 
 /// Parsed target for element-targeting commands.

@@ -1,112 +1,132 @@
-# tauri-pilot — Skill for Claude Code
+---
+name: tauri-pilot
+description: Inspect, interact with, and test a running Tauri v2 app via CLI. Communicates over Unix socket using JSON-RPC 2.0. Use when testing UI, automating interactions, or debugging a Tauri app.
+---
 
-## Overview
+# tauri-pilot
 
-`tauri-pilot` lets you inspect, interact with, and test a running Tauri v2 app via CLI. It communicates over a Unix socket using JSON-RPC 2.0.
+## Workflow
 
-## Standard Workflow
-
-```
+```text
 1. ping          — verify connectivity
 2. snapshot -i   — get interactive elements with refs
-3. read refs     — inspect specific elements (text, value, attrs)
+3. read refs     — inspect elements (text, value, attrs)
 4. act on refs   — click, fill, type, select, check
 5. snapshot -i   — verify result
 ```
 
 ## Rules
 
-1. **Always snapshot before interacting.** Refs reset on each snapshot call.
-2. **Prefer `snapshot -i`** (interactive only) to minimize output tokens.
-3. **Use `wait` after async actions** (navigation, data loading, animations).
-4. **Use `@ref` notation** (e.g., `@e3`) to target elements from the snapshot.
-5. **One action at a time**, then re-snapshot to verify.
-6. **Check `logs --level error`** after actions to catch JS errors.
+1. **Always snapshot before interacting.** Refs reset on each snapshot.
+2. **Prefer `snapshot -i`** to minimize output.
+3. **Use `wait` after async actions** (navigation, data loading).
+4. **One action at a time**, then re-snapshot to verify.
+5. **Check `logs --level error`** after actions to catch JS errors.
 
-## Commands Reference
+## Targeting
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `ping` | Check connectivity | `tauri-pilot ping` |
-| `snapshot` | Accessibility tree | `tauri-pilot snapshot -i` |
-| `click` | Click element | `tauri-pilot click @e3` |
-| `fill` | Set input value | `tauri-pilot fill @e2 "hello"` |
-| `type` | Type characters | `tauri-pilot type @e2 "abc"` |
-| `press` | Press key | `tauri-pilot press Enter` |
-| `select` | Select option | `tauri-pilot select @e5 "opt1"` |
-| `check` | Toggle checkbox | `tauri-pilot check @e6` |
-| `scroll` | Scroll page/element | `tauri-pilot scroll down 500` |
-| `text` | Get text content | `tauri-pilot text @e1` |
-| `html` | Get innerHTML | `tauri-pilot html @e1` |
-| `value` | Get input value | `tauri-pilot value @e2` |
-| `attrs` | Get attributes | `tauri-pilot attrs @e1` |
-| `eval` | Run arbitrary JS | `tauri-pilot eval "document.title"` |
-| `ipc` | Invoke Tauri IPC command | `tauri-pilot ipc greet '{"name":"World"}'` |
-| `wait` | Wait for element | `tauri-pilot wait --selector ".loaded"` |
-| `navigate` | Go to URL | `tauri-pilot navigate "https://..."` |
-| `url` | Get current URL | `tauri-pilot url` |
-| `title` | Get page title | `tauri-pilot title` |
-| `state` | Get app state | `tauri-pilot state` |
-| `screenshot` | Capture PNG | `tauri-pilot screenshot ./out.png` |
-| `logs` | Show console output | `tauri-pilot logs` |
-| `logs --level` | Filter by level | `tauri-pilot logs --level error` |
-| `logs --last` | Last N entries | `tauri-pilot logs --last 10` |
-| `logs --follow` | Stream logs | `tauri-pilot logs -f` |
-| `logs --clear` | Flush buffer | `tauri-pilot logs --clear` |
+Three target formats, auto-detected:
 
-## Example Workflows
+| Format | Example | Usage |
+|--------|---------|-------|
+| `@ref` | `@e3` | Element ref from last snapshot |
+| CSS selector | `#login-btn`, `.card` | Direct DOM query |
+| Coordinates | `100,200` | Click at x,y position |
 
-### Test a login form
+## Commands
+
+### Connectivity & State
+
+| Command | Description |
+|---------|-------------|
+| `ping` | Check connectivity |
+| `state` | Get app state (URL, title, viewport, scroll) |
+| `url` | Get current URL |
+| `title` | Get page title |
+
+### Snapshot & Inspection
+
+| Command | Description |
+|---------|-------------|
+| `snapshot` | Full accessibility tree |
+| `snapshot -i` | Interactive elements only |
+| `snapshot -s ".panel"` | Scope to CSS selector |
+| `snapshot -d 3` | Limit tree depth |
+| `text <target>` | Get text content |
+| `html [target]` | Get innerHTML (page if no target) |
+| `value <target>` | Get input value |
+| `attrs <target>` | Get all attributes |
+
+### Interaction
+
+| Command | Example |
+|---------|---------|
+| `click <target>` | `click @e3` |
+| `fill <target> <value>` | `fill @e2 "hello"` |
+| `type <target> <text>` | `type @e2 "abc"` |
+| `press <key>` | `press Enter` |
+| `select <target> <value>` | `select @e5 "opt1"` |
+| `check <target>` | `check @e6` |
+| `scroll <dir> [amount] [--ref <target>]` | `scroll down 500` |
+
+### Navigation & Waiting
+
+| Command | Description |
+|---------|-------------|
+| `navigate <url>` | Go to URL |
+| `wait [target]` | Wait for element to appear |
+| `wait --selector ".loaded"` | Wait for CSS selector |
+| `wait --gone @e3` | Wait for element to disappear |
+| `wait --timeout 5000` | Custom timeout (default: 10000ms) |
+
+### Debugging
+
+| Command | Description |
+|---------|-------------|
+| `eval <script>` | Run arbitrary JS |
+| `ipc <command> [--args <json>]` | Invoke Tauri IPC command |
+| `screenshot [path] [--selector ".el"]` | Capture PNG |
+| `logs` | Show console output |
+| `logs --level error` | Filter by level (log/info/warn/error) |
+| `logs --last 10` | Last N entries |
+| `logs -f` | Stream logs (follow) |
+| `logs --clear` | Flush buffer |
+| `network` | Show captured network requests |
+| `network --last 10` | Last N requests |
+| `network --filter "api/"` | Filter by URL pattern |
+| `network --failed` | Only 4xx/5xx and network errors |
+| `network -f` | Stream requests (follow) |
+| `network --clear` | Flush request buffer |
+
+## Global Flags
+
+| Flag | Description |
+|------|-------------|
+| `--socket <path>` | Explicit socket path (auto-detected by default) |
+| `--json` | Raw JSON output |
+
+## Socket Auto-Detection
+
+1. `$TAURI_PILOT_SOCKET` env var
+2. Most recent `/tmp/tauri-pilot-*.sock` file
+
+## Examples
 
 ```bash
+# Login form test
 tauri-pilot ping
 tauri-pilot snapshot -i
-# Output: textbox "Email" [ref=e1], textbox "Password" [ref=e2], button "Login" [ref=e3]
 tauri-pilot fill @e1 "user@example.com"
 tauri-pilot fill @e2 "password123"
 tauri-pilot click @e3
 tauri-pilot wait --selector ".dashboard"
 tauri-pilot snapshot -i
-```
 
-### Verify page content
-
-```bash
-tauri-pilot snapshot
-# Full tree — look for specific text
-tauri-pilot text @e5
-tauri-pilot attrs @e5
-tauri-pilot html @e5
-```
-
-### Test navigation
-
-```bash
-tauri-pilot url
-tauri-pilot navigate "/settings"
-tauri-pilot wait --selector "#settings-page"
-tauri-pilot snapshot -i
-```
-
-### Debug with console logs
-
-```bash
+# Debug after action
 tauri-pilot logs --clear
-tauri-pilot click @e3           # trigger action
-tauri-pilot logs --level error  # check for JS errors
-tauri-pilot logs --json         # structured output for parsing
+tauri-pilot click @e3
+tauri-pilot logs --level error
+
+# IPC call
+tauri-pilot ipc greet --args '{"name":"World"}'
 ```
-
-## Flags
-
-- `--socket <path>` — Explicit socket path (auto-detected by default)
-- `--json` — Output raw JSON instead of compact text
-- `-i` / `--interactive` — Snapshot interactive elements only
-- `-s` / `--selector` — Scope snapshot to CSS selector
-- `-d` / `--depth` — Limit snapshot depth
-
-## Socket Auto-Detection
-
-If `--socket` is not provided, the CLI looks for:
-1. `$TAURI_PILOT_SOCKET` env var
-2. Most recent `/tmp/tauri-pilot-*.sock` file

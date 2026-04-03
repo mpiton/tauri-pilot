@@ -22,6 +22,10 @@ pub(crate) async fn dispatch(
         }
         "console.getLogs" => handle_eval_method("consoleLogs", params, engine, eval_fn).await,
         "console.clear" => handle_eval_method("clearLogs", params, engine, eval_fn).await,
+        "network.getRequests" => {
+            handle_eval_method("networkRequests", params, engine, eval_fn).await
+        }
+        "network.clear" => handle_eval_method("clearNetwork", params, engine, eval_fn).await,
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -229,5 +233,37 @@ mod tests {
     fn test_build_bridge_call_clear_logs() {
         let script = build_bridge_call("clearLogs", None).unwrap();
         assert_eq!(script, "window.__PILOT__.clearLogs({})");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_network_get_requests_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("network.getRequests", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_network_clear_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("network.clear", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_network_requests() {
+        let params = json!({"filter": "/api", "failedOnly": true, "last": 10});
+        let script = build_bridge_call("networkRequests", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.networkRequests("));
+        assert!(script.contains("\"filter\":\"/api\""));
+    }
+
+    #[test]
+    fn test_build_bridge_call_clear_network() {
+        let script = build_bridge_call("clearNetwork", None).unwrap();
+        assert_eq!(script, "window.__PILOT__.clearNetwork({})");
     }
 }

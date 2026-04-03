@@ -8,6 +8,10 @@
   let _logIdCounter = 0;
   const MAX_LOGS = 500;
 
+  const _networkRequests = [];
+  let _netIdCounter = 0;
+  const MAX_REQUESTS = 200;
+
   const ROLE_MAP = {
     A: "link",
     BUTTON: "button",
@@ -114,6 +118,147 @@
 
   function clearLogs() {
     _logs.length = 0;
+    return { cleared: true };
+  }
+
+  function bodySize(body) {
+    if (!body) return 0;
+    if (typeof body === "string") return body.length;
+    if (body instanceof URLSearchParams) return body.toString().length;
+    if (body instanceof Blob) return body.size;
+    if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return body.byteLength;
+    return 0;
+  }
+
+  const _originalFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const method = (init && init.method) || (input && input.method) || "GET";
+    const url = (typeof input === "string") ? input : (input && input.url) || String(input);
+    const timestamp = Date.now();
+    const requestSize = bodySize(init && init.body);
+    return _originalFetch(input, init).then(function(response) {
+      const duration_ms = Date.now() - timestamp;
+      const status = response.status;
+      const responseSize = parseInt(response.headers.get("Content-Length") || "0", 10) || 0;
+      const entry = {
+        id: ++_netIdCounter,
+        timestamp: timestamp,
+        method: method,
+        url: url,
+        status: status,
+        duration_ms: duration_ms,
+        error: null,
+        request_size: requestSize,
+        response_size: responseSize,
+      };
+      _networkRequests.push(entry);
+      if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
+      return response;
+    }, function(err) {
+      const duration_ms = Date.now() - timestamp;
+      const entry = {
+        id: ++_netIdCounter,
+        timestamp: timestamp,
+        method: method,
+        url: url,
+        status: 0,
+        duration_ms: duration_ms,
+        error: err ? err.message : "Network error",
+        request_size: requestSize,
+        response_size: 0,
+      };
+      _networkRequests.push(entry);
+      if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
+      throw err;
+    });
+  };
+
+  const _origXhrOpen = XMLHttpRequest.prototype.open;
+  const _origXhrSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function(method, url) {
+    const result = _origXhrOpen.apply(this, arguments);
+    this._pilot = { method: String(method), url: String(url) };
+    return result;
+  };
+
+  XMLHttpRequest.prototype.send = function(body) {
+    if (this._pilot) {
+      const pilot = this._pilot;
+      const timestamp = Date.now();
+      const requestSize = bodySize(body);
+      let recorded = false;
+      let onLoad, onError, onTimeout, onAbort;
+      const cleanup = () => {
+        this.removeEventListener("load", onLoad);
+        this.removeEventListener("error", onError);
+        this.removeEventListener("timeout", onTimeout);
+        this.removeEventListener("abort", onAbort);
+      };
+      const pushEntry = (status, error, responseSize) => {
+        if (recorded) return;
+        recorded = true;
+        cleanup();
+        const entry = {
+          id: ++_netIdCounter,
+          timestamp: timestamp,
+          method: pilot.method,
+          url: pilot.url,
+          status: status,
+          duration_ms: Date.now() - timestamp,
+          error: error,
+          request_size: requestSize,
+          response_size: responseSize,
+        };
+        _networkRequests.push(entry);
+        if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
+      };
+      onLoad = () => {
+        const cl = parseInt(this.getResponseHeader("Content-Length") || "0", 10) || 0;
+        const r = this.response;
+        const responseSize = (this.responseType === "" || this.responseType === "text")
+          ? ((r && r.length) || cl)
+          : (r instanceof ArrayBuffer ? r.byteLength : (r instanceof Blob ? r.size : cl));
+        pushEntry(this.status, null, responseSize);
+      };
+      onError = () => { pushEntry(0, "Network error", 0); };
+      onTimeout = () => { pushEntry(0, "Timeout", 0); };
+      onAbort = () => { pushEntry(0, "Aborted", 0); };
+      this.addEventListener("load", onLoad);
+      this.addEventListener("error", onError);
+      this.addEventListener("timeout", onTimeout);
+      this.addEventListener("abort", onAbort);
+      try {
+        return _origXhrSend.apply(this, arguments);
+      } catch (err) {
+        cleanup();
+        throw err;
+      }
+    }
+    return _origXhrSend.apply(this, arguments);
+  };
+
+  function networkRequests(options) {
+    let result = _networkRequests.slice();
+    if (options) {
+      if (options.filter) {
+        result = result.filter(e => e.url.includes(options.filter));
+      }
+      if (options.failedOnly) {
+        result = result.filter(e => e.status >= 400 || e.status === 0 || e.error);
+      }
+      if (options.sinceId) {
+        result = result.filter(e => e.id > options.sinceId);
+      }
+      if (options.last) {
+        result = result.slice(-options.last);
+      }
+    }
+    return result;
+  }
+
+  function clearNetwork() {
+    _networkRequests.length = 0;
     return { cleared: true };
   }
 
@@ -496,5 +641,7 @@
     screenshot: screenshot,
     consoleLogs: consoleLogs,
     clearLogs: clearLogs,
+    networkRequests: networkRequests,
+    clearNetwork: clearNetwork,
   };
 })();
