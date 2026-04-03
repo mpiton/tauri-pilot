@@ -167,14 +167,19 @@ fn strip_ansi(input: &str) -> String {
                         break;
                     }
                 }
-            // Skip OSC sequences: ESC ] ... BEL or ST
+            // Skip OSC sequences: ESC ] ... BEL or ESC \ (ST)
             } else if chars.peek() == Some(&']') {
                 chars.next();
+                let mut prev_was_esc = false;
                 while let Some(&next) = chars.peek() {
                     chars.next();
-                    if next == '\x07' || next == '\\' {
+                    if next == '\x07' {
                         break;
                     }
+                    if prev_was_esc && next == '\\' {
+                        break;
+                    }
+                    prev_was_esc = next == '\x1b';
                 }
             } else {
                 // Skip single-char escape (ESC + one char)
@@ -290,7 +295,19 @@ mod tests {
 
     #[test]
     fn test_strip_ansi_removes_osc_sequences() {
+        // BEL terminator
         assert_eq!(strip_ansi("\x1b]0;title\x07text"), "text");
+        // ST terminator (ESC \)
+        assert_eq!(strip_ansi("\x1b]0;title\x1b\\text"), "text");
+    }
+
+    #[test]
+    fn test_strip_ansi_preserves_backslash_in_osc() {
+        // Bare backslash inside OSC should not terminate early
+        assert_eq!(
+            strip_ansi("\x1b]8;;http://host/path\\to\\file\x07link"),
+            "link"
+        );
     }
 
     #[test]

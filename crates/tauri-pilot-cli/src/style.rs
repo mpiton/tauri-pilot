@@ -74,4 +74,10 @@ mod tests {
         let output = bold("important");
         assert!(output.contains("important"));
     }
+
+    #[test]
+    fn warn_contains_message() {
+        let output = warn("caution");
+        assert!(output.contains("caution"));
+    }
 }

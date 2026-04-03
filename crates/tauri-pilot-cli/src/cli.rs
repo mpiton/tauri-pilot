@@ -91,7 +91,7 @@ pub(crate) enum Command {
     /// Display or stream captured console logs.
     Logs {
         /// Filter by log level (log, info, warn, error).
-        #[arg(long)]
+        #[arg(long, value_parser = ["log", "info", "warn", "error"])]
         level: Option<String>,
 
         /// Show last N log entries.

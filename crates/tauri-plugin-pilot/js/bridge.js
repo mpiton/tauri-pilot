@@ -62,7 +62,7 @@
     try {
       const stack = new Error().stack;
       if (!stack) return null;
-      // Skip: Error, extractSource, captureLog, console.X wrapper
+      // Skip frames: Error constructor, extractSource, console[level] wrapper
       const lines = stack.split('\n');
       for (let i = 3; i < lines.length; i++) {
         const line = lines[i];

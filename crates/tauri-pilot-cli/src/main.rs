@@ -62,7 +62,12 @@ async fn main() -> Result<()> {
                 && !entries.is_empty()
             {
                 if args.json {
-                    output::format_json(&result)?;
+                    // Emit NDJSON: one JSON object per entry for jq compatibility
+                    if let Some(entries) = result.as_array() {
+                        for entry in entries {
+                            println!("{entry}");
+                        }
+                    }
                 } else {
                     print!("{}", output::format_logs(&result));
                 }
@@ -112,7 +117,12 @@ async fn main() -> Result<()> {
     } else if is_snapshot {
         output::format_snapshot(&result);
     } else if is_logs {
-        print!("{}", output::format_logs(&result));
+        // console.clear returns {"cleared": true}, not an array
+        if result.get("cleared").is_some() {
+            output::format_text(&result);
+        } else {
+            print!("{}", output::format_logs(&result));
+        }
     } else {
         output::format_text(&result);
     }
