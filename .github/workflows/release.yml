@@ -43,8 +43,9 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Verify tag matches Cargo.toml versions
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TAG_VERSION="${{ steps.version.outputs.version }}"
           for toml in crates/tauri-plugin-pilot/Cargo.toml crates/tauri-pilot-cli/Cargo.toml; do
             CARGO_VERSION=$(grep '^version' "$toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
             if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
@@ -55,8 +56,9 @@ jobs:
           echo "All Cargo.toml versions match tag v$TAG_VERSION"
 
       - name: Verify CHANGELOG.md has entry for this version
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TAG_VERSION="${{ steps.version.outputs.version }}"
           if ! grep -q "## \[$TAG_VERSION\]" CHANGELOG.md; then
             echo "ERROR: CHANGELOG.md has no entry for version $TAG_VERSION"
             exit 1
@@ -87,8 +89,9 @@ jobs:
 
       - name: Extract changelog for this version
         id: changelog
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          TAG_VERSION="${{ steps.version.outputs.version }}"
           # Extract content between this version header and the next version header (or EOF)
           BODY=$(sed -n "/^## \[$TAG_VERSION\]/,/^## \[/{/^## \[$TAG_VERSION\]/d;/^## \[/d;p}" CHANGELOG.md)
           # Use GitHub Actions multiline output
@@ -103,6 +106,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body: ${{ steps.changelog.outputs.body }}
+          body: "${{ steps.changelog.outputs.body }}"
           draft: false
           prerelease: false
