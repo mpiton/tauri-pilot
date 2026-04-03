@@ -8,6 +8,10 @@
   let _logIdCounter = 0;
   const MAX_LOGS = 500;
 
+  const _networkRequests = [];
+  let _netIdCounter = 0;
+  const MAX_REQUESTS = 200;
+
   const ROLE_MAP = {
     A: "link",
     BUTTON: "button",
@@ -114,6 +118,119 @@
 
   function clearLogs() {
     _logs.length = 0;
+    return { cleared: true };
+  }
+
+  const _originalFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const method = (init && init.method) || (input && input.method) || "GET";
+    const url = (typeof input === "string") ? input : (input && input.url) || String(input);
+    const timestamp = Date.now();
+    const requestSize = (init && init.body && init.body.length) || 0;
+    return _originalFetch(input, init).then(function(response) {
+      const duration_ms = Date.now() - timestamp;
+      const status = response.status;
+      const responseSize = parseInt(response.headers.get("Content-Length") || "0", 10) || 0;
+      const entry = {
+        id: ++_netIdCounter,
+        timestamp: timestamp,
+        method: method,
+        url: url,
+        status: status,
+        duration_ms: duration_ms,
+        error: null,
+        request_size: requestSize,
+        response_size: responseSize,
+      };
+      _networkRequests.push(entry);
+      if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
+      return response;
+    }, function(err) {
+      const duration_ms = Date.now() - timestamp;
+      const entry = {
+        id: ++_netIdCounter,
+        timestamp: timestamp,
+        method: method,
+        url: url,
+        status: 0,
+        duration_ms: duration_ms,
+        error: err ? err.message : "Network error",
+        request_size: requestSize,
+        response_size: 0,
+      };
+      _networkRequests.push(entry);
+      if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
+      throw err;
+    });
+  };
+
+  const _origXhrOpen = XMLHttpRequest.prototype.open;
+  const _origXhrSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this._pilot = { method: method, url: url };
+    return _origXhrOpen.apply(this, arguments);
+  };
+
+  XMLHttpRequest.prototype.send = function(body) {
+    if (this._pilot) {
+      const pilot = this._pilot;
+      const timestamp = Date.now();
+      const requestSize = (body && body.length) || 0;
+      let recorded = false;
+      const pushEntry = (status, error, responseSize) => {
+        if (recorded) return;
+        recorded = true;
+        const entry = {
+          id: ++_netIdCounter,
+          timestamp: timestamp,
+          method: pilot.method,
+          url: pilot.url,
+          status: status,
+          duration_ms: Date.now() - timestamp,
+          error: error,
+          request_size: requestSize,
+          response_size: responseSize,
+        };
+        _networkRequests.push(entry);
+        if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
+      };
+      this.addEventListener("load", () => {
+        const responseSize = (this.response && this.response.length) ||
+          parseInt(this.getResponseHeader("Content-Length") || "0", 10) || 0;
+        pushEntry(this.status, null, responseSize);
+      });
+      this.addEventListener("error", () => {
+        pushEntry(0, "Network error", 0);
+      });
+      this.addEventListener("timeout", () => {
+        pushEntry(0, "Timeout", 0);
+      });
+    }
+    return _origXhrSend.apply(this, arguments);
+  };
+
+  function networkRequests(options) {
+    let result = _networkRequests.slice();
+    if (options) {
+      if (options.filter) {
+        result = result.filter(e => e.url.includes(options.filter));
+      }
+      if (options.failedOnly) {
+        result = result.filter(e => e.status >= 400 || e.status === 0 || e.error);
+      }
+      if (options.sinceId) {
+        result = result.filter(e => e.id > options.sinceId);
+      }
+      if (options.last) {
+        result = result.slice(-options.last);
+      }
+    }
+    return result;
+  }
+
+  function clearNetwork() {
+    _networkRequests.length = 0;
     return { cleared: true };
   }
 
@@ -496,5 +613,7 @@
     screenshot: screenshot,
     consoleLogs: consoleLogs,
     clearLogs: clearLogs,
+    networkRequests: networkRequests,
+    clearNetwork: clearNetwork,
   };
 })();

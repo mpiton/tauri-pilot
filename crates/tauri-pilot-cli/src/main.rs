@@ -30,8 +30,9 @@ async fn main() -> Result<()> {
 
     let is_snapshot = matches!(args.command, Command::Snapshot { .. });
     let is_logs = matches!(args.command, Command::Logs { .. });
+    let is_network = matches!(args.command, Command::Network { .. });
 
-    // Handle --follow mode: loop forever polling for new logs
+    // Handle --follow mode: loop forever polling for new entries
     if let Command::Logs {
         follow: true,
         ref level,
@@ -39,44 +40,16 @@ async fn main() -> Result<()> {
         ..
     } = args.command
     {
-        let mut last_seen_id: u64 = 0;
-        let mut first_poll = true;
-        loop {
-            let mut params = serde_json::Map::new();
-            if last_seen_id > 0 {
-                params.insert("sinceId".into(), json!(last_seen_id));
-            }
-            if let Some(l) = level {
-                params.insert("level".into(), json!(l.clone()));
-            }
-            if first_poll {
-                if let Some(n) = last {
-                    params.insert("last".into(), json!(n));
-                }
-                first_poll = false;
-            }
-            let result = client
-                .call("console.getLogs", Some(Value::Object(params)))
-                .await?;
-            if let Some(entries) = result.as_array()
-                && !entries.is_empty()
-            {
-                if args.json {
-                    // Emit NDJSON: one JSON object per entry for jq compatibility
-                    for entry in entries {
-                        println!("{entry}");
-                    }
-                } else {
-                    print!("{}", output::format_logs(&result));
-                }
-                last_seen_id = entries
-                    .last()
-                    .and_then(|e| e.get("id"))
-                    .and_then(serde_json::Value::as_u64)
-                    .unwrap_or(last_seen_id);
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
+        follow_logs(&mut client, args.json, level.as_deref(), *last).await?;
+    } else if let Command::Network {
+        follow: true,
+        ref filter,
+        ref last,
+        failed,
+        ..
+    } = args.command
+    {
+        follow_network(&mut client, args.json, filter.as_deref(), *last, failed).await?;
     }
 
     let screenshot_path = if let Command::Screenshot { ref path, .. } = args.command {
@@ -121,11 +94,112 @@ async fn main() -> Result<()> {
         } else {
             print!("{}", output::format_logs(&result));
         }
+    } else if is_network {
+        if result.get("cleared").is_some() {
+            output::format_text(&result);
+        } else {
+            print!("{}", output::format_network(&result));
+        }
     } else {
         output::format_text(&result);
     }
 
     Ok(())
+}
+
+async fn follow_logs(
+    client: &mut Client,
+    emit_json: bool,
+    level: Option<&str>,
+    last: Option<usize>,
+) -> Result<()> {
+    let mut last_seen_id: u64 = 0;
+    let mut first_poll = true;
+    loop {
+        let mut params = serde_json::Map::new();
+        if last_seen_id > 0 {
+            params.insert("sinceId".into(), json!(last_seen_id));
+        }
+        if let Some(l) = level {
+            params.insert("level".into(), json!(l));
+        }
+        if first_poll {
+            if let Some(n) = last {
+                params.insert("last".into(), json!(n));
+            }
+            first_poll = false;
+        }
+        let result = client
+            .call("console.getLogs", Some(Value::Object(params)))
+            .await?;
+        if let Some(entries) = result.as_array()
+            && !entries.is_empty()
+        {
+            if emit_json {
+                // Emit NDJSON: one JSON object per entry for jq compatibility
+                for entry in entries {
+                    println!("{entry}");
+                }
+            } else {
+                print!("{}", output::format_logs(&result));
+            }
+            last_seen_id = entries
+                .last()
+                .and_then(|e| e.get("id"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(last_seen_id);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+async fn follow_network(
+    client: &mut Client,
+    emit_json: bool,
+    filter: Option<&str>,
+    last: Option<usize>,
+    failed: bool,
+) -> Result<()> {
+    let mut last_seen_id: u64 = 0;
+    let mut first_poll = true;
+    loop {
+        let mut params = serde_json::Map::new();
+        if last_seen_id > 0 {
+            params.insert("sinceId".into(), json!(last_seen_id));
+        }
+        if let Some(f) = filter {
+            params.insert("filter".into(), json!(f));
+        }
+        if failed {
+            params.insert("failedOnly".into(), json!(true));
+        }
+        if first_poll {
+            if let Some(n) = last {
+                params.insert("last".into(), json!(n));
+            }
+            first_poll = false;
+        }
+        let result = client
+            .call("network.getRequests", Some(Value::Object(params)))
+            .await?;
+        if let Some(entries) = result.as_array()
+            && !entries.is_empty()
+        {
+            if emit_json {
+                for entry in entries {
+                    println!("{entry}");
+                }
+            } else {
+                print!("{}", output::format_network(&result));
+            }
+            last_seen_id = entries
+                .last()
+                .and_then(|e| e.get("id"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(last_seen_id);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 async fn run_command(client: &mut Client, command: Command) -> Result<serde_json::Value> {
@@ -148,6 +222,55 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
                 )
                 .await
         }
+        Command::Ipc { command, args } => run_ipc_command(client, &command, args.as_deref()).await,
+        Command::Screenshot { path, selector } => {
+            client
+                .call(
+                    "screenshot",
+                    Some(json!({"path": path, "selector": selector})),
+                )
+                .await
+        }
+        Command::Navigate { url } => client.call("navigate", Some(json!({"url": url}))).await,
+        Command::Url => client.call("url", None).await,
+        Command::Title => client.call("title", None).await,
+        Command::Wait {
+            target,
+            selector,
+            gone,
+            timeout,
+        } => {
+            client
+                .call(
+                    "wait",
+                    Some(json!({
+                        "target": target,
+                        "selector": selector,
+                        "gone": gone,
+                        "timeout": timeout,
+                    })),
+                )
+                .await
+        }
+        Command::Logs {
+            level,
+            last,
+            clear,
+            follow,
+        } => run_logs_command(client, level, last, clear, follow).await,
+        Command::Network {
+            filter,
+            failed,
+            last,
+            clear,
+            follow,
+        } => run_network_command(client, filter, failed, last, clear, follow).await,
+        cmd => run_dom_command(client, cmd).await,
+    }
+}
+
+async fn run_dom_command(client: &mut Client, command: Command) -> Result<serde_json::Value> {
+    match command {
         Command::Click { target } => client.call("click", Some(target_params(&target))).await,
         Command::Fill { target, value } => {
             let mut p = target_params(&target);
@@ -186,42 +309,7 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
         Command::Value { target } => client.call("value", Some(target_params(&target))).await,
         Command::Attrs { target } => client.call("attrs", Some(target_params(&target))).await,
         Command::Eval { script } => client.call("eval", Some(json!({"script": script}))).await,
-        Command::Ipc { command, args } => run_ipc_command(client, &command, args.as_deref()).await,
-        Command::Screenshot { path, selector } => {
-            client
-                .call(
-                    "screenshot",
-                    Some(json!({"path": path, "selector": selector})),
-                )
-                .await
-        }
-        Command::Navigate { url } => client.call("navigate", Some(json!({"url": url}))).await,
-        Command::Url => client.call("url", None).await,
-        Command::Title => client.call("title", None).await,
-        Command::Wait {
-            target,
-            selector,
-            gone,
-            timeout,
-        } => {
-            client
-                .call(
-                    "wait",
-                    Some(json!({
-                        "target": target,
-                        "selector": selector,
-                        "gone": gone,
-                        "timeout": timeout,
-                    })),
-                )
-                .await
-        }
-        Command::Logs {
-            level,
-            last,
-            clear,
-            follow,
-        } => run_logs_command(client, level, last, clear, follow).await,
+        _ => anyhow::bail!("unexpected command in run_dom_command"),
     }
 }
 
@@ -261,6 +349,38 @@ async fn run_logs_command(
     }
     client
         .call("console.getLogs", Some(serde_json::Value::Object(params)))
+        .await
+}
+
+async fn run_network_command(
+    client: &mut Client,
+    filter: Option<String>,
+    failed: bool,
+    last: Option<usize>,
+    clear: bool,
+    follow: bool,
+) -> Result<serde_json::Value> {
+    if follow {
+        anyhow::bail!("follow mode must be handled before run_command");
+    }
+    if clear {
+        return client.call("network.clear", None).await;
+    }
+    let mut params = serde_json::Map::new();
+    if let Some(f) = filter {
+        params.insert("filter".into(), json!(f));
+    }
+    if failed {
+        params.insert("failedOnly".into(), json!(true));
+    }
+    if let Some(n) = last {
+        params.insert("last".into(), json!(n));
+    }
+    client
+        .call(
+            "network.getRequests",
+            Some(serde_json::Value::Object(params)),
+        )
         .await
 }
 
