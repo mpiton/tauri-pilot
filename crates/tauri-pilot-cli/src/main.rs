@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
     let is_diff = matches!(args.command, Command::Diff { .. });
     let is_logs = matches!(args.command, Command::Logs { .. });
     let is_network = matches!(args.command, Command::Network { .. });
+    let is_watch = matches!(args.command, Command::Watch { .. });
 
     // Handle --follow mode: loop forever polling for new entries
     if let Command::Logs {
@@ -103,6 +104,8 @@ async fn main() -> Result<()> {
         } else {
             print!("{}", output::format_network(&result));
         }
+    } else if is_watch {
+        output::format_watch(&result);
     } else {
         output::format_text(&result);
     }
@@ -267,6 +270,21 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
                         "timeout": timeout,
                     })),
                 )
+                .await
+        }
+        Command::Watch {
+            selector,
+            timeout,
+            stable,
+        } => {
+            let mut params = serde_json::Map::new();
+            params.insert("timeout".into(), json!(timeout));
+            params.insert("stable".into(), json!(stable));
+            if let Some(sel) = selector {
+                params.insert("selector".into(), json!(sel));
+            }
+            client
+                .call("watch", Some(serde_json::Value::Object(params)))
                 .await
         }
         Command::Logs {

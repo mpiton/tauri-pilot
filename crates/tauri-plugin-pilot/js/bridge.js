@@ -630,6 +630,125 @@
     });
   }
 
+  var MAX_WATCH_ENTRIES = 200;
+
+  function summarizeNode(node) {
+    var entry = { tag: node.tagName.toLowerCase() };
+    if (node.id) entry.id = node.id;
+    if (node.className && typeof node.className === 'string' && node.className.trim()) entry.class = node.className.trim();
+    var text = Array.from(node.childNodes)
+      .filter(function(n) { return n.nodeType === Node.TEXT_NODE; })
+      .map(function(n) { return n.textContent || ''; })
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (text) entry.text = text.substring(0, 80);
+    return entry;
+  }
+
+  function watch(options) {
+    var selector = options && options.selector;
+    var timeout = (options && options.timeout != null) ? options.timeout : 10000;
+    var stable = (options && options.stable != null) ? options.stable : 300;
+
+    var root;
+    if (selector) {
+      root = document.querySelector(selector);
+      if (!root) throw new Error("watch: no element matches selector: " + selector);
+    } else {
+      root = document.body;
+    }
+
+    return new Promise(function (res, rej) {
+      var changes = { added: [], removed: [], modified: [], truncated: false };
+      var stableTimer = null;
+      var timeoutTimer = null;
+      var settled = false;
+
+      function finish() {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutTimer);
+        observer.disconnect();
+        res(changes);
+      }
+
+      function resetStableTimer() {
+        clearTimeout(stableTimer);
+        stableTimer = setTimeout(finish, stable);
+      }
+
+      timeoutTimer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        clearTimeout(stableTimer);
+        observer.disconnect();
+        if (changes.added.length > 0 || changes.removed.length > 0 || changes.modified.length > 0) {
+          res(changes);
+        } else {
+          rej(new Error("watch timeout: no DOM changes within " + timeout + "ms"));
+        }
+      }, timeout);
+
+      function pushCapped(arr, entry) {
+        if (arr.length < MAX_WATCH_ENTRIES) {
+          arr.push(entry);
+        } else {
+          changes.truncated = true;
+        }
+      }
+
+      var observer = new MutationObserver(function (mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var mutation = mutations[i];
+          if (mutation.type === 'childList') {
+            for (var j = 0; j < mutation.addedNodes.length; j++) {
+              var node = mutation.addedNodes[j];
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                pushCapped(changes.added, summarizeNode(node));
+              }
+            }
+            for (var k = 0; k < mutation.removedNodes.length; k++) {
+              var removedNode = mutation.removedNodes[k];
+              if (removedNode.nodeType === Node.ELEMENT_NODE) {
+                pushCapped(changes.removed, summarizeNode(removedNode));
+              }
+            }
+          } else if (mutation.type === 'attributes') {
+            var target = mutation.target;
+            var attrValue = target.getAttribute(mutation.attributeName);
+            var entry = {
+              tag: target.tagName.toLowerCase(),
+              attribute: mutation.attributeName,
+            };
+            if (attrValue === null) {
+              entry.removed = true;
+            } else {
+              entry.value = attrValue;
+            }
+            pushCapped(changes.modified, entry);
+          } else if (mutation.type === 'characterData') {
+            var parent = mutation.target.parentElement;
+            if (parent) {
+              pushCapped(changes.modified, {
+                tag: parent.tagName.toLowerCase(),
+                text: (mutation.target.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80),
+              });
+            }
+          }
+        }
+        resetStableTimer();
+      });
+
+      observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
+    });
+  }
+
   async function screenshot(options) {
     var selector = options && options.selector;
     var el = selector ? document.querySelector(selector) : document.documentElement;
@@ -669,5 +788,6 @@
     visible: visible,
     count: count,
     checked: checked,
+    watch: watch,
   };
 })();
