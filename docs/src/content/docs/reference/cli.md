@@ -119,7 +119,7 @@ tauri-pilot diff [OPTIONS]
 ```bash
 + button "Submit" [ref=e8]              # added
 - button "Loading..." [ref=e3]          # removed
-~ textbox "Search" [ref=e2] value: "" → "workspace"  # changed
+~ textbox "Search PRs" [ref=e2] value: "" → "workspace"  # changed
 ```
 
 **Example:**
@@ -127,19 +127,18 @@ tauri-pilot diff [OPTIONS]
 ```bash
 # Take a snapshot, interact, then diff
 $ tauri-pilot snapshot -i
+$ tauri-pilot fill @e2 "workspace"
 $ tauri-pilot click @e3
-$ tauri-pilot diff
-- button "Refresh" [ref=e3]
-+ button "Loading..." [ref=e3]
-~ textbox "Search" [ref=e2] value: "" → "workspace"
+$ tauri-pilot diff -i
+~ textbox "Search PRs" [ref=e2] value: "" → "workspace"
 
 # Save and diff against a file
-$ tauri-pilot snapshot --save before.snap
-$ tauri-pilot click @e3
-$ tauri-pilot diff --ref before.snap
+$ tauri-pilot snapshot -i --save before.snap
+$ tauri-pilot fill @e2 "workspace"
+$ tauri-pilot diff -i --ref before.snap
 
 # No changes
-$ tauri-pilot diff
+$ tauri-pilot diff -i
 No changes detected.
 ```
 
@@ -160,8 +159,8 @@ Elements are matched between snapshots by `(role, name, depth)` — not by ref I
 {"jsonrpc":"2.0","id":1,"result":{
   "added": [{"ref":"e8","role":"button","name":"Submit","depth":1}],
   "removed": [{"ref":"e3","role":"button","name":"Loading...","depth":1}],
-  "changed": [{"old":{"ref":"e2","role":"textbox","name":"Search","value":"","depth":1},
-               "new":{"ref":"e2","role":"textbox","name":"Search","value":"workspace","depth":1},
+  "changed": [{"old":{"ref":"e2","role":"textbox","name":"Search PRs","value":"","depth":1},
+               "new":{"ref":"e2","role":"textbox","name":"Search PRs","value":"workspace","depth":1},
                "changes":["value"]}]
 }}
 ```
@@ -613,6 +612,64 @@ $ tauri-pilot logs --clear
 
 // Clear buffer
 {"jsonrpc":"2.0","id":2,"method":"console.clear"}
+```
+
+---
+
+### `network`
+
+Display or stream captured network requests (`fetch` and `XMLHttpRequest`).
+
+The JS bridge monkey-patches `fetch` and `XMLHttpRequest` and stores entries in a 200-entry ring buffer with timestamp, method, URL, status code, duration, and error details.
+
+```bash
+tauri-pilot network [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--filter <pattern>` | Filter by URL substring match |
+| `--failed` | Show only failed requests (4xx/5xx and network errors) |
+| `--last <n>` | Show only the last N entries |
+| `-f`, `--follow` | Continuously poll for new requests (500ms interval) |
+| `--clear` | Flush the ring buffer |
+
+**Examples:**
+
+```bash
+# Show all captured requests
+$ tauri-pilot network
+[14:32:01.123] GET  https://api.github.com/repos  200  125ms
+[14:32:02.456] POST https://api.github.com/graphql  200  340ms
+[14:32:03.789] GET  https://api.github.com/rate_limit  403  12ms
+
+# Filter by URL
+$ tauri-pilot network --filter graphql
+
+# Show only failures
+$ tauri-pilot network --failed
+
+# Stream requests in real-time
+$ tauri-pilot network --follow
+
+# Stream as NDJSON (compatible with jq)
+$ tauri-pilot network --follow --json
+
+# Clear the buffer
+$ tauri-pilot network --clear
+✓ cleared
+```
+
+**JSON-RPC examples:**
+
+```json
+// Get requests filtered by URL
+{"jsonrpc":"2.0","id":1,"method":"network.getRequests","params":{"filter":"graphql","last":10}}
+
+// Clear buffer
+{"jsonrpc":"2.0","id":2,"method":"network.clear"}
 ```
 
 ---

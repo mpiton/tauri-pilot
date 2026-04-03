@@ -139,7 +139,7 @@ tauri-pilot is designed for AI agent consumption. The workflow is:
 1. `tauri-pilot snapshot -i` — get the accessibility tree with refs
 2. Read the refs in the output (`@e1`, `@e2`, ...)
 3. `tauri-pilot click @e3` — interact using refs
-4. `tauri-pilot diff` — see only what changed (saves tokens vs full re-snapshot)
+4. `tauri-pilot diff -i` — see only what changed (saves tokens vs full re-snapshot)
 5. `tauri-pilot logs --level error` — check for JS errors
 
 Use `--json` for structured output when parsing programmatically.
