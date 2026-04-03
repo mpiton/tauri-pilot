@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Drag & drop support** — simulate drag interactions and file drops for kanban boards, sortable lists, and drop zones ([#11])
+  - `tauri-pilot drag @e5 @e6` — drag element to another element
+  - `tauri-pilot drag @e5 --offset 0,100` — drag by pixel offset
+  - `tauri-pilot drop @e3 --file ./test.png` — simulate file drop on element
+  - Dispatches full HTML5 drag event sequence: `dragstart`, `dragenter`, `dragover`, `drop`, `dragend`
 - **DOM watch command** — observe DOM mutations with MutationObserver, debounce until stable, and return a change summary ([#10])
   - `tauri-pilot watch` — block until any DOM change, print summary
   - `--timeout` timeout in ms, `--selector` scope to subtree, `--stable` debounce duration
