@@ -8,8 +8,12 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
-/// A function that evaluates JS in the webview. `None` if no webview is available.
-pub(crate) type EvalFn = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
+/// A function that evaluates JS in the webview.
+/// The first argument is an optional window label (`None` means "use default window").
+pub(crate) type EvalFn = Arc<dyn Fn(Option<&str>, String) -> Result<(), String> + Send + Sync>;
+
+/// A function that lists all available webview windows and returns their metadata.
+pub(crate) type ListWindowsFn = Arc<dyn Fn() -> serde_json::Value + Send + Sync>;
 
 /// RAII guard that removes the socket file on drop (normal shutdown or panic).
 /// Stores the inode at bind time so it only unlinks its own socket, not one
@@ -103,6 +107,7 @@ pub(crate) async fn run(
     _guard: SocketGuard,
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
+    list_fn: Option<ListWindowsFn>,
 ) {
     let listener = match UnixListener::from_std(std_listener) {
         Ok(l) => l,
@@ -111,7 +116,7 @@ pub(crate) async fn run(
             return;
         }
     };
-    if let Err(e) = accept_loop(listener, engine, eval_fn).await {
+    if let Err(e) = accept_loop(listener, engine, eval_fn, list_fn).await {
         tracing::error!("socket server error: {e}");
     }
 }
@@ -120,8 +125,9 @@ async fn accept_loop(
     listener: UnixListener,
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
+    list_fn: Option<ListWindowsFn>,
 ) -> Result<(), Error> {
-    let ctx = Arc::new((engine, eval_fn));
+    let ctx = Arc::new((engine, eval_fn, list_fn));
 
     loop {
         let (stream, _addr) = match listener.accept().await {
@@ -133,7 +139,8 @@ async fn accept_loop(
         };
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, &ctx.0, ctx.1.as_ref()).await {
+            if let Err(e) = handle_connection(stream, &ctx.0, ctx.1.as_ref(), ctx.2.as_ref()).await
+            {
                 tracing::warn!("connection error: {e}");
             }
         });
@@ -144,6 +151,7 @@ async fn handle_connection(
     stream: UnixStream,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
+    list_fn: Option<&ListWindowsFn>,
 ) -> Result<(), Error> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -167,7 +175,7 @@ async fn handle_connection(
                 -32600,
                 "Invalid JSON-RPC version (expected \"2.0\")",
             ),
-            Ok(req) => dispatch(&req, engine, eval_fn).await,
+            Ok(req) => dispatch(&req, engine, eval_fn, list_fn).await,
             Err(e) => Response::error(0, -32700, format!("Parse error: {e}")),
         };
 
@@ -180,8 +188,13 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn dispatch(req: &Request, engine: &EvalEngine, eval_fn: Option<&EvalFn>) -> Response {
-    match handler::dispatch(&req.method, req.params.as_ref(), engine, eval_fn).await {
+async fn dispatch(
+    req: &Request,
+    engine: &EvalEngine,
+    eval_fn: Option<&EvalFn>,
+    list_fn: Option<&ListWindowsFn>,
+) -> Response {
+    match handler::dispatch(&req.method, req.params.as_ref(), engine, eval_fn, list_fn).await {
         Ok(result) => Response::success(req.id, result),
         Err(rpc_err) => Response {
             jsonrpc: "2.0".to_owned(),
@@ -212,7 +225,7 @@ mod tests {
     async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let (listener, guard) = bind(path).expect("bind test socket");
         let engine = EvalEngine::new();
-        let handle = tokio::spawn(async move { run(listener, guard, engine, None).await });
+        let handle = tokio::spawn(async move { run(listener, guard, engine, None, None).await });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
     }

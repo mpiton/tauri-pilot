@@ -35,11 +35,12 @@ Three target formats, auto-detected:
 
 ## Commands
 
-### Connectivity & State
+### Connectivity & Windows
 
 | Command | Description |
 |---------|-------------|
 | `ping` | Check connectivity |
+| `windows` | List all open windows (label, URL, title) |
 | `state` | Get app state (URL, title, viewport, scroll) |
 | `url` | Get current URL |
 | `title` | Get page title |
@@ -52,6 +53,9 @@ Three target formats, auto-detected:
 | `snapshot -i` | Interactive elements only |
 | `snapshot -s ".panel"` | Scope to CSS selector |
 | `snapshot -d 3` | Limit tree depth |
+| `snapshot --save file.snap` | Save snapshot to file |
+| `diff` | Show changes since last snapshot |
+| `diff --ref file.snap` | Diff against a saved snapshot |
 | `text <target>` | Get text content |
 | `html [target]` | Get innerHTML (page if no target) |
 | `value <target>` | Get input value |
@@ -68,6 +72,8 @@ Three target formats, auto-detected:
 | `select <target> <value>` | `select @e5 "opt1"` |
 | `check <target>` | `check @e6` |
 | `scroll <dir> [amount] [--ref <target>]` | `scroll down 500` |
+| `drag <source> [target] [--offset X,Y]` | `drag @e5 @e8` |
+| `drop <target> --file <path>` | `drop @e3 --file ./img.png` |
 
 ### Assertions
 
@@ -93,6 +99,20 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `ass
 | `wait --selector ".loaded"` | Wait for CSS selector |
 | `wait --gone @e3` | Wait for element to disappear |
 | `wait --timeout 5000` | Custom timeout (default: 10000ms) |
+| `watch [--selector ".el"]` | Watch for DOM mutations (MutationObserver) |
+| `watch --timeout 3000 --stable 500` | Custom timeout and stability window |
+
+### Storage & Forms
+
+| Command | Description |
+|---------|-------------|
+| `storage get <key>` | Read from localStorage |
+| `storage set <key> <value>` | Write to localStorage |
+| `storage list` | Dump all key-value pairs |
+| `storage clear` | Clear all storage |
+| `storage --session <command>` | Use sessionStorage instead (applies to all storage commands) |
+| `forms` | Dump all form fields on the page |
+| `forms --selector "#login"` | Target a specific form |
 
 ### Debugging
 
@@ -118,6 +138,7 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `ass
 | Flag | Description |
 |------|-------------|
 | `--socket <path>` | Explicit socket path (auto-detected by default) |
+| `--window <label>` | Target a specific window (env: `TAURI_PILOT_WINDOW`). Default: `main` or first available |
 | `--json` | Raw JSON output |
 
 ## Socket Auto-Detection
@@ -152,4 +173,10 @@ tauri-pilot logs --level error
 
 # IPC call
 tauri-pilot ipc greet --args '{"name":"World"}'
+
+# Multi-window app
+tauri-pilot windows
+tauri-pilot --window settings snapshot -i
+tauri-pilot --window settings fill @e2 "dark"
+tauri-pilot --window settings click @e3
 ```

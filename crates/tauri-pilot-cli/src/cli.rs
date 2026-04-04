@@ -12,12 +12,18 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Target a specific window by label
+    #[arg(long, env = "TAURI_PILOT_WINDOW", global = true)]
+    pub window: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// List all open windows
+    Windows,
     /// Check connectivity with a running Tauri app.
     Ping,
     /// Get app state (url, title, ready).
@@ -629,6 +635,40 @@ mod tests {
             assert_eq!(selector, Some("#login".to_owned()));
         } else {
             panic!("Expected Forms command with selector");
+        }
+    }
+
+    #[test]
+    fn test_windows_command() {
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "windows"]);
+        assert!(matches!(cli.command, Command::Windows));
+    }
+
+    #[test]
+    fn test_window_flag_with_command() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "--window",
+            "settings",
+            "snapshot",
+        ]);
+        assert_eq!(cli.window, Some("settings".to_owned()));
+        assert!(matches!(cli.command, Command::Snapshot { .. }));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_window_flag_env() {
+        // SAFETY: test is serialized via #[serial] to prevent parallel env access
+        unsafe {
+            std::env::set_var("TAURI_PILOT_WINDOW", "main");
+        }
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "ping"]);
+        assert_eq!(cli.window, Some("main".to_owned()));
+        unsafe {
+            std::env::remove_var("TAURI_PILOT_WINDOW");
         }
     }
 

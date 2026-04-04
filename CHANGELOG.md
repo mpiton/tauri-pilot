@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-window support** — `windows` command lists all windows, `--window` flag targets specific window ([#14])
 - **Form dump** — get all form fields at once instead of calling `value` on each input individually ([#13])
   - `tauri-pilot forms` — dump all forms on the page
   - `tauri-pilot forms --selector "#login-form"` — target a specific form
@@ -101,6 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bridge functions accept params object (not positional arguments)
 - `build.rs` + permissions for `__callback` IPC command
 
+[#14]: https://github.com/mpiton/tauri-pilot/issues/14
 [#13]: https://github.com/mpiton/tauri-pilot/issues/13
 [#12]: https://github.com/mpiton/tauri-pilot/issues/12
 [#11]: https://github.com/mpiton/tauri-pilot/issues/11
