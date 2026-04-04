@@ -1088,6 +1088,25 @@ fn is_replayable(action: &str) -> bool {
     )
 }
 
+/// Extract a CLI target string from a nested source/target object.
+/// Handles `{"ref": "e3"}`, `{"selector": ".foo"}`, and `{"x": N, "y": N}`.
+fn resolve_export_target(val: Option<&Value>) -> Option<String> {
+    let obj = val?;
+    if let Some(r) = obj.get("ref").and_then(|r| r.as_str()) {
+        return Some(format!("@{r}"));
+    }
+    if let Some(s) = obj.get("selector").and_then(|s| s.as_str()) {
+        return Some(shell_escape(s));
+    }
+    if let (Some(x), Some(y)) = (
+        obj.get("x").and_then(serde_json::Value::as_i64),
+        obj.get("y").and_then(serde_json::Value::as_i64),
+    ) {
+        return Some(format!("{x},{y}"));
+    }
+    None
+}
+
 fn entry_to_cli_command(action: &str, entry: &Value) -> String {
     let ref_id = entry.get("ref").and_then(|r| r.as_str());
     let selector = entry.get("selector").and_then(|s| s.as_str());
@@ -1123,21 +1142,28 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 .get("direction")
                 .and_then(|d| d.as_str())
                 .unwrap_or("down");
-            format!("tauri-pilot scroll {dir}")
+            let mut cmd = format!("tauri-pilot scroll {dir}");
+            if let Some(amt) = entry.get("amount").and_then(serde_json::Value::as_i64) {
+                let _ = write!(cmd, " {amt}");
+            }
+            if let Some(r) = entry.get("ref").and_then(|r| r.as_str()) {
+                let _ = write!(cmd, " --ref @{r}");
+            }
+            cmd
         }
         "drag" => {
-            let src = entry
-                .get("source")
-                .and_then(|s| s.get("ref").and_then(|r| r.as_str()))
-                .map(|r| format!("@{r}"));
-            let dst = entry
-                .get("target")
-                .and_then(|t| t.get("ref").and_then(|r| r.as_str()))
-                .map(|r| format!("@{r}"));
-            match (src, dst) {
-                (Some(s), Some(d)) => format!("tauri-pilot drag {s} {d}"),
-                (Some(s), None) => format!("tauri-pilot drag {s}"),
-                _ => "# drag: missing source/target refs".to_string(),
+            let src = resolve_export_target(entry.get("source"));
+            let dst = resolve_export_target(entry.get("target"));
+            let offset = entry.get("offset").and_then(|o| {
+                let x = o.get("x").and_then(serde_json::Value::as_i64)?;
+                let y = o.get("y").and_then(serde_json::Value::as_i64)?;
+                Some(format!("{x},{y}"))
+            });
+            match (src, dst, offset) {
+                (Some(s), Some(d), _) => format!("tauri-pilot drag {s} {d}"),
+                (Some(s), None, Some(off)) => format!("tauri-pilot drag {s} --offset {off}"),
+                (Some(s), None, None) => format!("tauri-pilot drag {s}"),
+                _ => "# drag: missing source ref/selector".to_string(),
             }
         }
         "drop" => {
