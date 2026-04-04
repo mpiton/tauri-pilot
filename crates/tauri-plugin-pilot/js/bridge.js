@@ -526,7 +526,8 @@
     } else if (params.offset) {
       endX = startX + (params.offset.x || 0);
       endY = startY + (params.offset.y || 0);
-      dropTarget = document.elementFromPoint(endX, endY) || source;
+      dropTarget = document.elementFromPoint(endX, endY);
+      if (!dropTarget) throw new Error("No element at offset (" + params.offset.x + "," + params.offset.y + ")");
     } else {
       throw new Error("drag requires target or offset");
     }
@@ -535,9 +536,9 @@
     source.dispatchEvent(new MouseEvent("mousedown", { clientX: startX, clientY: startY, bubbles: true }));
     source.dispatchEvent(new DragEvent("dragstart", { clientX: startX, clientY: startY, dataTransfer: dt, bubbles: true }));
     source.dispatchEvent(new DragEvent("dragleave", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
-    dropTarget.dispatchEvent(new DragEvent("dragenter", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
-    dropTarget.dispatchEvent(new DragEvent("dragover", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
-    dropTarget.dispatchEvent(new DragEvent("drop", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
+    dropTarget.dispatchEvent(new DragEvent("dragenter", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true, cancelable: true }));
+    dropTarget.dispatchEvent(new DragEvent("dragover", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true, cancelable: true }));
+    dropTarget.dispatchEvent(new DragEvent("drop", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true, cancelable: true }));
     source.dispatchEvent(new DragEvent("dragend", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
     return { ok: true };
   }
@@ -560,10 +561,9 @@
       }
     }
 
-    el.dispatchEvent(new DragEvent("dragenter", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
-    el.dispatchEvent(new DragEvent("dragover", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
-    el.dispatchEvent(new DragEvent("drop", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
-    el.dispatchEvent(new DragEvent("dragend", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
+    el.dispatchEvent(new DragEvent("dragenter", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true, cancelable: true }));
+    el.dispatchEvent(new DragEvent("dragover", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true, cancelable: true }));
+    el.dispatchEvent(new DragEvent("drop", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true, cancelable: true }));
     return { ok: true };
   }
 

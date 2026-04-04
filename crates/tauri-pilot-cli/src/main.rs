@@ -584,13 +584,13 @@ async fn run_drop_command(
         let meta = std::fs::metadata(path)
             .with_context(|| format!("Failed to stat file: {}", path.display()))?;
         anyhow::ensure!(meta.is_file(), "Not a regular file: {}", path.display());
-        let data = std::fs::read(path)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
         anyhow::ensure!(
-            data.len() as u64 <= MAX_DROP_FILE_SIZE,
+            meta.len() <= MAX_DROP_FILE_SIZE,
             "File too large (>50 MB): {}",
             path.display()
         );
+        let data = std::fs::read(path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
         total_encoded += encoded.len();
         anyhow::ensure!(
