@@ -1126,15 +1126,25 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
             format!("tauri-pilot scroll {dir}")
         }
         "drag" => {
-            let source = entry.get("source").and_then(|s| s.as_str()).unwrap_or("");
-            let dest = entry.get("target").and_then(|t| t.as_str()).unwrap_or("");
-            format!(
-                "tauri-pilot drag {} {}",
-                shell_escape(source),
-                shell_escape(dest)
-            )
+            let src = entry
+                .get("source")
+                .and_then(|s| s.get("ref").and_then(|r| r.as_str()))
+                .map(|r| format!("@{r}"));
+            let dst = entry
+                .get("target")
+                .and_then(|t| t.get("ref").and_then(|r| r.as_str()))
+                .map(|r| format!("@{r}"));
+            match (src, dst) {
+                (Some(s), Some(d)) => format!("tauri-pilot drag {s} {d}"),
+                (Some(s), None) => format!("tauri-pilot drag {s}"),
+                _ => "# drag: missing source/target refs".to_string(),
+            }
         }
-        "drop" => format!("tauri-pilot drop {target}"),
+        "drop" => {
+            // drop requires --file with file data; cannot be fully exported
+            // as a shell command since recordings store base64 file contents.
+            format!("# drop {target} (requires --file; not exportable)")
+        }
         "navigate" => {
             let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
             format!("tauri-pilot navigate {}", shell_escape(url))

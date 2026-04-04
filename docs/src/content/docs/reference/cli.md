@@ -1115,7 +1115,7 @@ Recordings are stored as JSON arrays:
 ```
 
 :::note
-`replay` and `--export sh` are CLI-only features — they read a JSON file and send individual action calls over the socket.
+`replay` sends recorded actions over the socket for execution. `--export sh` is fully local — it generates a shell script without connecting to the plugin.
 :::
 
 ---
