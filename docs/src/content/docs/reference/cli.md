@@ -369,6 +369,138 @@ tauri-pilot scroll up --ref @e4
 
 ---
 
+### `drag`
+
+Drag an element to another element or by a pixel offset. Dispatches the full HTML5 drag event sequence: `mousedown` → `dragstart` → `dragleave` → `dragenter` → `dragover` → `drop` → `dragend`.
+
+```bash
+tauri-pilot drag <source> [target] [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `<source>` | Element to drag (ref, selector, or coordinates) |
+| `[target]` | Element to drop onto (mutually exclusive with `--offset`) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--offset <X,Y>` | Drag by pixel offset instead of to an element (mutually exclusive with `[target]`) |
+
+**Examples:**
+
+```bash
+# Drag a card to a column (kanban board)
+tauri-pilot drag "#card-1" "#col-done"
+
+# Drag by ref (after snapshot)
+tauri-pilot drag @e5 @e8
+
+# Drag a slider thumb by pixel offset
+tauri-pilot drag "#slider-thumb" --offset "150,0"
+
+# Drag to coordinates
+tauri-pilot drag @e5 "400,200"
+```
+
+**JSON-RPC example:**
+
+```json
+// Element-to-element drag
+{"jsonrpc":"2.0","id":1,"method":"drag","params":{"source":{"ref":"e5"},"target":{"ref":"e8"}}}
+
+// Offset drag
+{"jsonrpc":"2.0","id":1,"method":"drag","params":{"source":{"selector":"#thumb"},"offset":{"x":150,"y":0}}}
+```
+
+---
+
+### `drop`
+
+Simulate a file drop on an element. Reads files from disk, base64-encodes them, and creates `DataTransfer` + `File` objects in the WebView. Useful for testing file upload zones, import features, and drag-from-OS scenarios.
+
+```bash
+tauri-pilot drop <target> --file <path> [--file <path>...]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `<target>` | Element to drop files onto (ref, selector, or coordinates) |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--file <path>` | File to drop (required, can be repeated for multiple files) |
+
+**Limits:** 50 MB per file, 100 MB total payload.
+
+**Examples:**
+
+```bash
+# Drop a single file
+tauri-pilot drop "#file-zone" --file ./photo.png
+
+# Drop multiple files
+tauri-pilot drop @e3 --file ./doc.pdf --file ./data.csv
+```
+
+**JSON-RPC example:**
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"drop","params":{
+  "selector":"#file-zone",
+  "files":[{"name":"photo.png","type":"image/png","data":"iVBORw0KGgo..."}]
+}}
+```
+
+---
+
+### `watch`
+
+Watch for DOM mutations using `MutationObserver`. Blocks until changes are detected (or timeout), then returns a summary of what changed. Useful for waiting on async UI updates without polling snapshots.
+
+```bash
+tauri-pilot watch [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--selector <sel>` | Scope observation to a subtree matching this CSS selector |
+| `--timeout <ms>` | Maximum wait time in milliseconds (default: 10000) |
+| `--stable <ms>` | Wait until DOM is stable (no new mutations) for N ms (default: 300) |
+
+**Examples:**
+
+```bash
+# Wait for any DOM change
+tauri-pilot watch
+
+# Watch a specific subtree
+tauri-pilot watch --selector "#results-list"
+
+# Short timeout
+tauri-pilot watch --timeout 3000
+
+# Wait for DOM to settle after animations
+tauri-pilot watch --stable 500
+```
+
+**JSON-RPC example:**
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"watch","params":{"selector":"#results","timeout":5000,"stable":300}}
+```
+
+---
+
 ### `text`
 
 Get the text content of an element.

@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/mpiton/tauri-pilot/actions/workflows/ci.yml"><img src="https://github.com/mpiton/tauri-pilot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://crates.io/crates/tauri-plugin-pilot"><img src="https://img.shields.io/crates/v/tauri-plugin-pilot.svg" alt="crates.io"></a>
   <a href="https://github.com/mpiton/tauri-pilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/rust-1.94.1+-orange.svg" alt="Rust 1.94.1+">
   <img src="https://img.shields.io/badge/platform-linux-lightgrey.svg" alt="Platform: Linux">
@@ -123,6 +124,8 @@ tauri-pilot wait --selector ".success-message"
 | `select` | Select a dropdown option |
 | `check` | Toggle a checkbox |
 | `scroll` | Scroll page or element |
+| `drag` | Drag element to element or by offset |
+| `drop` | Simulate file drop on element |
 | `text` | Get element text content |
 | `html` | Get element innerHTML |
 | `value` | Get input value |
@@ -134,6 +137,7 @@ tauri-pilot wait --selector ".success-message"
 | `navigate` | Change the WebView URL |
 | `state` | Get URL, title, viewport, scroll |
 | `assert` | One-step verification (text, visible, hidden, value, count, checked, contains, url) |
+| `watch` | Watch for DOM mutations |
 | `logs` | Capture and display console output |
 | `network` | Capture and display network requests |
 
@@ -157,6 +161,13 @@ Use `--json` for structured output when parsing programmatically.
 - **Linux** (WebKitGTK) — macOS/Windows planned
 - **Tauri v2** (v1 not supported)
 - **Rust 1.94.1+** (LTS, edition 2024)
+
+## Who uses this?
+
+Are you using tauri-pilot? [Open a PR](https://github.com/mpiton/tauri-pilot/pulls) to add your project here!
+
+<!-- Add your project below -->
+<!-- | [Project Name](https://github.com/...) | Short description | -->
 
 ## License
 
