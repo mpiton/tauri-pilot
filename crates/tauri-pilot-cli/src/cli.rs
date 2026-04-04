@@ -176,6 +176,8 @@ pub(crate) enum Command {
     /// Assert element state
     #[command(subcommand)]
     Assert(AssertKind),
+    /// Read and write browser storage (localStorage/sessionStorage).
+    Storage(StorageArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -196,6 +198,27 @@ pub(crate) enum AssertKind {
     Contains { target: String, expected: String },
     /// Assert current URL contains string
     Url { expected: String },
+}
+
+#[derive(clap::Args, Debug)]
+pub(crate) struct StorageArgs {
+    /// Use sessionStorage instead of localStorage.
+    #[arg(long)]
+    pub session: bool,
+    #[command(subcommand)]
+    pub action: StorageAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum StorageAction {
+    /// Get a value by key.
+    Get { key: String },
+    /// Set a key-value pair.
+    Set { key: String, value: String },
+    /// List all key-value pairs.
+    List,
+    /// Clear all storage.
+    Clear,
 }
 
 /// Parsed target for element-targeting commands.
@@ -492,6 +515,85 @@ mod tests {
     fn test_parse_drop_requires_file() {
         let result = Cli::try_parse_from(["tauri-pilot", "--socket", "/tmp/t.sock", "drop", "@e3"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_storage_get() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/t.sock",
+            "storage",
+            "get",
+            "auth_token",
+        ]);
+        if let Command::Storage(StorageArgs {
+            session,
+            action: StorageAction::Get { key },
+        }) = cli.command
+        {
+            assert!(!session);
+            assert_eq!(key, "auth_token");
+        } else {
+            panic!("Expected Storage Get command");
+        }
+    }
+
+    #[test]
+    fn test_parse_storage_set() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/t.sock",
+            "storage",
+            "set",
+            "theme",
+            "dark",
+        ]);
+        if let Command::Storage(StorageArgs {
+            session,
+            action: StorageAction::Set { key, value },
+        }) = cli.command
+        {
+            assert!(!session);
+            assert_eq!(key, "theme");
+            assert_eq!(value, "dark");
+        } else {
+            panic!("Expected Storage Set command");
+        }
+    }
+
+    #[test]
+    fn test_parse_storage_list_session() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/t.sock",
+            "storage",
+            "--session",
+            "list",
+        ]);
+        if let Command::Storage(StorageArgs {
+            session,
+            action: StorageAction::List,
+        }) = cli.command
+        {
+            assert!(session);
+        } else {
+            panic!("Expected Storage List command with session flag");
+        }
+    }
+
+    #[test]
+    fn test_parse_storage_clear() {
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/t.sock", "storage", "clear"]);
+        assert!(matches!(
+            cli.command,
+            Command::Storage(StorageArgs {
+                action: StorageAction::Clear,
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -55,6 +55,18 @@ pub(crate) async fn dispatch(
         "network.clear" => {
             handle_eval_method("clearNetwork", params, engine, eval_fn, DEFAULT_TIMEOUT).await
         }
+        "storage.get" => {
+            handle_eval_method("storageGet", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
+        "storage.set" => {
+            handle_eval_method("storageSet", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
+        "storage.list" => {
+            handle_eval_method("storageList", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
+        "storage.clear" => {
+            handle_eval_method("storageClear", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -487,5 +499,77 @@ mod tests {
         let params = json!({"ref": "e3", "files": []});
         let script = build_bridge_call("drop", Some(&params)).unwrap();
         assert!(script.starts_with("window.__PILOT__.drop("));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_storage_get_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("storage.get", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_storage_set_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("storage.set", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_storage_list_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("storage.list", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_storage_clear_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("storage.clear", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_storage_get() {
+        let params = json!({"key": "auth_token", "session": false});
+        let script = build_bridge_call("storageGet", Some(&params)).unwrap();
+        assert_eq!(
+            script,
+            r#"window.__PILOT__.storageGet({"key":"auth_token","session":false})"#
+        );
+    }
+
+    #[test]
+    fn test_build_bridge_call_storage_set() {
+        let params = json!({"key": "theme", "value": "dark", "session": false});
+        let script = build_bridge_call("storageSet", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.storageSet("));
+        assert!(script.contains("\"key\":\"theme\""));
+        assert!(script.contains("\"value\":\"dark\""));
+        assert!(script.contains("\"session\":false"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_storage_list() {
+        let params = json!({"session": true});
+        let script = build_bridge_call("storageList", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.storageList("));
+        assert!(script.contains("\"session\":true"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_storage_clear() {
+        let params = json!({"session": false});
+        let script = build_bridge_call("storageClear", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.storageClear("));
+        assert!(script.contains("\"session\":false"));
     }
 }

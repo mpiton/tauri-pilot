@@ -817,6 +817,50 @@
     return dataUrl;
   }
 
+  function storageGet(params) {
+    if (typeof params.key !== "string") {
+      throw new Error("storageGet requires a string key");
+    }
+    var storage = params.session ? sessionStorage : localStorage;
+    var val = storage.getItem(params.key);
+    if (val === null) {
+      return { found: false };
+    }
+    return { found: true, value: val };
+  }
+
+  function storageSet(params) {
+    if (typeof params.key !== "string" || typeof params.value !== "string") {
+      throw new Error("storageSet requires string key and value");
+    }
+    var storage = params.session ? sessionStorage : localStorage;
+    storage.setItem(params.key, params.value);
+    return { ok: true };
+  }
+
+  var MAX_STORAGE_ENTRIES = 500;
+
+  function storageList(params) {
+    var storage = params.session ? sessionStorage : localStorage;
+    var total = storage.length;
+    var len = Math.min(total, MAX_STORAGE_ENTRIES);
+    var entries = [];
+    for (var i = 0; i < len; i++) {
+      var key = storage.key(i);
+      entries.push({ key: key, value: storage.getItem(key) });
+    }
+    entries.sort(function (a, b) {
+      return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+    });
+    return { entries: entries, truncated: total > MAX_STORAGE_ENTRIES };
+  }
+
+  function storageClear(params) {
+    var storage = params.session ? sessionStorage : localStorage;
+    storage.clear();
+    return { cleared: true };
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
@@ -848,5 +892,9 @@
     watch: watch,
     drag: drag,
     drop: drop,
+    storageGet: storageGet,
+    storageSet: storageSet,
+    storageList: storageList,
+    storageClear: storageClear,
   };
 })();

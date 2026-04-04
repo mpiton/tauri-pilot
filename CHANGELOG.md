@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Storage access** — read and write browser localStorage/sessionStorage from the CLI ([#12])
+  - `tauri-pilot storage get "key"` — read a single key
+  - `tauri-pilot storage set "key" "value"` — write a key-value pair
+  - `tauri-pilot storage list` — dump all key-value pairs
+  - `tauri-pilot storage clear` — clear all storage
+  - `--session` flag to use sessionStorage instead of localStorage
 - **Drag & drop support** — simulate drag interactions and file drops for kanban boards, sortable lists, and drop zones ([#11])
   - `tauri-pilot drag @e5 @e6` — drag element to another element
   - `tauri-pilot drag @e5 --offset 0,100` — drag by pixel offset
@@ -91,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bridge functions accept params object (not positional arguments)
 - `build.rs` + permissions for `__callback` IPC command
 
+[#12]: https://github.com/mpiton/tauri-pilot/issues/12
 [#11]: https://github.com/mpiton/tauri-pilot/issues/11
 [#10]: https://github.com/mpiton/tauri-pilot/issues/10
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...HEAD

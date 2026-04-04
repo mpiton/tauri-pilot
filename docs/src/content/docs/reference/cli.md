@@ -873,6 +873,77 @@ $ tauri-pilot network --clear
 
 ---
 
+### `storage`
+
+Read and write browser storage (`localStorage` or `sessionStorage`) from the CLI. Useful for AI agents inspecting persisted state, auth tokens, or modifying app configuration during testing.
+
+```bash
+tauri-pilot storage <subcommand> [OPTIONS]
+```
+
+**Subcommands:**
+
+| Subcommand | Arguments | Description |
+|------------|-----------|-------------|
+| `get` | `<key>` | Read a single key |
+| `set` | `<key> <value>` | Write a key-value pair |
+| `list` | | Dump all key-value pairs |
+| `clear` | | Clear all storage |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--session` | Use `sessionStorage` instead of `localStorage` |
+
+**Examples:**
+
+```bash
+# Read a key from localStorage
+$ tauri-pilot storage get "auth_token"
+eyJhbGciOiJIUzI1NiJ9...
+
+# Write a key
+$ tauri-pilot storage set "theme" "dark"
+✓ ok
+
+# List all localStorage entries
+$ tauri-pilot storage list
+auth_token = eyJhbGciOiJIUzI1NiJ9...
+theme      = dark
+locale     = en
+
+# Clear localStorage
+$ tauri-pilot storage clear
+✓ cleared
+
+# Use sessionStorage instead
+$ tauri-pilot storage --session list
+$ tauri-pilot storage --session get "csrf_token"
+
+# JSON output
+$ tauri-pilot storage list --json
+[{"key":"auth_token","value":"eyJ..."},{"key":"theme","value":"dark"}]
+```
+
+**JSON-RPC examples:**
+
+```json
+// Get a key
+{"jsonrpc":"2.0","id":1,"method":"storage.get","params":{"key":"auth_token","session":false}}
+
+// Set a key
+{"jsonrpc":"2.0","id":2,"method":"storage.set","params":{"key":"theme","value":"dark","session":false}}
+
+// List all
+{"jsonrpc":"2.0","id":3,"method":"storage.list","params":{"session":false}}
+
+// Clear
+{"jsonrpc":"2.0","id":4,"method":"storage.clear","params":{"session":false}}
+```
+
+---
+
 ## JSON-RPC Protocol
 
 The CLI communicates with the plugin over a Unix socket using a hand-rolled JSON-RPC 2.0 protocol with newline-delimited framing (`\n`).

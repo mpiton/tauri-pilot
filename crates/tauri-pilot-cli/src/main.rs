@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cli::{AssertKind, Cli, Command, Target, parse_target};
+use cli::{AssertKind, Cli, Command, StorageAction, StorageArgs, Target, parse_target};
 use client::Client;
 
 #[tokio::main]
@@ -33,6 +33,7 @@ async fn main() -> Result<()> {
     let is_logs = matches!(args.command, Command::Logs { .. });
     let is_network = matches!(args.command, Command::Network { .. });
     let is_watch = matches!(args.command, Command::Watch { .. });
+    let is_storage = matches!(args.command, Command::Storage(..));
 
     // Handle --follow mode: loop forever polling for new entries
     if let Command::Logs {
@@ -106,6 +107,16 @@ async fn main() -> Result<()> {
         }
     } else if is_watch {
         output::format_watch(&result);
+    } else if is_storage {
+        if result.get("cleared").is_some() {
+            output::format_text(&result);
+        } else if result.get("entries").is_some() {
+            output::format_storage(&result);
+        } else if result.get("found").is_some() {
+            output::format_storage_value(&result);
+        } else {
+            output::format_text(&result);
+        }
     } else {
         output::format_text(&result);
     }
@@ -301,6 +312,7 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
             follow,
         } => run_network_command(client, filter, failed, last, clear, follow).await,
         Command::Assert(kind) => run_assert_command(client, kind).await,
+        Command::Storage(storage_args) => run_storage_command(client, storage_args).await,
         Command::Drop { target, file } => run_drop_command(client, &target, file).await,
         cmd => run_dom_command(client, cmd).await,
     }
@@ -567,6 +579,35 @@ async fn run_network_command(
             Some(serde_json::Value::Object(params)),
         )
         .await
+}
+
+async fn run_storage_command(client: &mut Client, args: StorageArgs) -> Result<serde_json::Value> {
+    let session = args.session;
+    match args.action {
+        StorageAction::Get { key } => {
+            client
+                .call("storage.get", Some(json!({"key": key, "session": session})))
+                .await
+        }
+        StorageAction::Set { key, value } => {
+            client
+                .call(
+                    "storage.set",
+                    Some(json!({"key": key, "value": value, "session": session})),
+                )
+                .await
+        }
+        StorageAction::List => {
+            client
+                .call("storage.list", Some(json!({"session": session})))
+                .await
+        }
+        StorageAction::Clear => {
+            client
+                .call("storage.clear", Some(json!({"session": session})))
+                .await
+        }
+    }
 }
 
 const MAX_DROP_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB per file
