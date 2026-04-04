@@ -276,6 +276,109 @@ pub(crate) fn format_storage(value: &serde_json::Value) {
     }
 }
 
+/// Format form fields dumped from the page.
+///
+/// Expects `{forms: [{id, name, action, method, fields: [{tag, type, name, value, checked}]}]}`
+pub(crate) fn format_forms(value: &serde_json::Value) {
+    let Some(forms) = value.get("forms").and_then(|f| f.as_array()) else {
+        println!("{}", crate::style::dim("(no forms found)"));
+        return;
+    };
+    if forms.is_empty() {
+        println!("{}", crate::style::dim("(no forms found)"));
+        return;
+    }
+    for form in forms {
+        let id = form
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let name = form
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let mut header = String::from("form");
+        if !id.is_empty() {
+            let _ = write!(header, "#{}", strip_ansi(id));
+        } else if !name.is_empty() {
+            let _ = write!(header, "[name=\"{}\"]", strip_ansi(name));
+        }
+        header.push(':');
+        println!("{}", crate::style::bold(&header));
+
+        if let Some(fields) = form.get("fields").and_then(|f| f.as_array()) {
+            for field in fields {
+                let field_name = strip_ansi(
+                    field
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(""),
+                );
+                let display_name = if field_name.is_empty() {
+                    "(unnamed)".to_owned()
+                } else {
+                    field_name
+                };
+                let field_type = strip_ansi(
+                    field
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(""),
+                );
+                let field_value_raw = field.get("value");
+                let field_value = match field_value_raw {
+                    Some(serde_json::Value::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .map(strip_ansi)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    _ => strip_ansi(
+                        field_value_raw
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or(""),
+                    ),
+                };
+                let checked = field
+                    .get("checked")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+
+                let mut line = format!("  {display_name}");
+                if !field_type.is_empty() {
+                    let _ = write!(
+                        line,
+                        " {}",
+                        crate::style::dim(format!("[type={field_type}]"))
+                    );
+                }
+                if field_type == "checkbox" || field_type == "radio" {
+                    if checked {
+                        let _ = write!(line, " = checked");
+                    } else {
+                        let _ = write!(line, " = {}", crate::style::dim("unchecked"));
+                    }
+                } else if field_type == "password" {
+                    if field_value.is_empty() {
+                        let _ = write!(line, " = \"\"");
+                    } else {
+                        let _ = write!(line, " = {}", crate::style::dim("[redacted]"));
+                    }
+                } else {
+                    let _ = write!(line, " = \"{field_value}\"");
+                }
+                println!("{line}");
+            }
+        }
+    }
+    if value.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
+        println!(
+            "{}",
+            crate::style::warn("(output truncated — more forms exist)")
+        );
+    }
+}
+
 /// Format watch result showing DOM mutations grouped by type.
 pub(crate) fn format_watch(value: &serde_json::Value) {
     let added = value.get("added").and_then(|v| v.as_array());
@@ -839,5 +942,33 @@ mod tests {
             }]
         });
         format_diff(&diff);
+    }
+
+    #[test]
+    fn test_format_forms_basic() {
+        let value = json!({
+            "forms": [{
+                "id": "login-form",
+                "name": "",
+                "action": "/login",
+                "method": "post",
+                "fields": [
+                    {"tag": "input", "type": "email", "name": "email", "value": "user@example.com", "checked": false},
+                    {"tag": "input", "type": "password", "name": "password", "value": "", "checked": false},
+                    {"tag": "input", "type": "checkbox", "name": "remember", "value": "", "checked": true},
+                ]
+            }]
+        });
+        format_forms(&value);
+    }
+
+    #[test]
+    fn test_format_forms_empty() {
+        format_forms(&json!({"forms": []}));
+    }
+
+    #[test]
+    fn test_format_forms_no_forms_key() {
+        format_forms(&json!({}));
     }
 }

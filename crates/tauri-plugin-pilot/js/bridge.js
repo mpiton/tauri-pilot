@@ -861,6 +861,74 @@
     return { cleared: true };
   }
 
+  var MAX_FORMS = 100;
+  var MAX_FIELDS_PER_FORM = 500;
+
+  function formDump(params) {
+    var forms;
+    if (params && params.selector) {
+      var found = document.querySelector(params.selector);
+      if (!found) {
+        throw new Error("Form not found: " + params.selector);
+      }
+      forms = [found];
+    } else {
+      var all = document.querySelectorAll("form");
+      forms = [];
+      var formLimit = Math.min(all.length, MAX_FORMS);
+      for (var fi = 0; fi < formLimit; fi++) {
+        forms.push(all[fi]);
+      }
+    }
+
+    var result = [];
+    for (var i = 0; i < forms.length; i++) {
+      var form = forms[i];
+      var fields = [];
+      var elements = form.querySelectorAll("input, select, textarea");
+      var fieldLimit = Math.min(elements.length, MAX_FIELDS_PER_FORM);
+      for (var j = 0; j < fieldLimit; j++) {
+        var el = elements[j];
+        var tag = el.tagName.toLowerCase();
+        var elType = el.type || null;
+        var fieldVal;
+        if (tag === "select" && el.multiple) {
+          var selected = [];
+          for (var k = 0; k < el.options.length; k++) {
+            if (el.options[k].selected) {
+              selected.push(el.options[k].value);
+            }
+          }
+          fieldVal = selected;
+        } else if (elType === "checkbox" || elType === "radio") {
+          fieldVal = el.checked;
+        } else {
+          fieldVal = el.value;
+        }
+        var field = {
+          tag: tag,
+          type: elType,
+          name: el.name || "",
+          value: fieldVal,
+        };
+        if (elType === "checkbox" || elType === "radio") {
+          field.checked = el.checked;
+        }
+        fields.push(field);
+      }
+      result.push({
+        id: form.id || "",
+        name: form.getAttribute("name") || "",
+        action: form.action || "",
+        method: form.method || "get",
+        fields: fields,
+      });
+    }
+    var totalForms = params && params.selector ? 1 : document.querySelectorAll("form").length;
+    var truncated = totalForms > MAX_FORMS;
+    return { forms: result, truncated: truncated };
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
@@ -896,5 +964,6 @@
     storageSet: storageSet,
     storageList: storageList,
     storageClear: storageClear,
+    formDump: formDump,
   };
 })();

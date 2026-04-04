@@ -12,7 +12,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cli::{AssertKind, Cli, Command, StorageAction, StorageArgs, Target, parse_target};
+use cli::{AssertKind, Cli, Command, FormsArgs, StorageAction, StorageArgs, Target, parse_target};
 use client::Client;
 
 #[tokio::main]
@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
     let is_network = matches!(args.command, Command::Network { .. });
     let is_watch = matches!(args.command, Command::Watch { .. });
     let is_storage = matches!(args.command, Command::Storage(..));
+    let is_forms = matches!(args.command, Command::Forms(..));
 
     // Handle --follow mode: loop forever polling for new entries
     if let Command::Logs {
@@ -117,6 +118,8 @@ async fn main() -> Result<()> {
         } else {
             output::format_text(&result);
         }
+    } else if is_forms {
+        output::format_forms(&result);
     } else {
         output::format_text(&result);
     }
@@ -313,6 +316,7 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
         } => run_network_command(client, filter, failed, last, clear, follow).await,
         Command::Assert(kind) => run_assert_command(client, kind).await,
         Command::Storage(storage_args) => run_storage_command(client, storage_args).await,
+        Command::Forms(args) => run_forms_command(client, args).await,
         Command::Drop { target, file } => run_drop_command(client, &target, file).await,
         cmd => run_dom_command(client, cmd).await,
     }
@@ -579,6 +583,11 @@ async fn run_network_command(
             Some(serde_json::Value::Object(params)),
         )
         .await
+}
+
+async fn run_forms_command(client: &mut Client, args: FormsArgs) -> Result<serde_json::Value> {
+    let params = args.selector.map(|s| json!({"selector": s}));
+    client.call("forms.dump", params).await
 }
 
 async fn run_storage_command(client: &mut Client, args: StorageArgs) -> Result<serde_json::Value> {

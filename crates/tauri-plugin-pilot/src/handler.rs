@@ -67,6 +67,9 @@ pub(crate) async fn dispatch(
         "storage.clear" => {
             handle_eval_method("storageClear", params, engine, eval_fn, DEFAULT_TIMEOUT).await
         }
+        "forms.dump" => {
+            handle_eval_method("formDump", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+        }
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
@@ -571,5 +574,28 @@ mod tests {
         let script = build_bridge_call("storageClear", Some(&params)).unwrap();
         assert!(script.starts_with("window.__PILOT__.storageClear("));
         assert!(script.contains("\"session\":false"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_form_dump() {
+        let script = build_bridge_call("formDump", None).unwrap();
+        assert_eq!(script, "window.__PILOT__.formDump({})");
+    }
+
+    #[test]
+    fn test_build_bridge_call_form_dump_with_selector() {
+        let params = json!({"selector": "#login-form"});
+        let script = build_bridge_call("formDump", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.formDump("));
+        assert!(script.contains("\"selector\":\"#login-form\""));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_forms_dump_without_eval_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("forms.dump", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
     }
 }
