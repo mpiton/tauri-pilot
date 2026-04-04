@@ -817,6 +817,43 @@
     return dataUrl;
   }
 
+  function storageGet(params) {
+    var storage = params.session ? sessionStorage : localStorage;
+    var val = storage.getItem(params.key);
+    if (val === null) {
+      return { found: false };
+    }
+    return { found: true, value: val };
+  }
+
+  function storageSet(params) {
+    if (typeof params.key !== "string" || typeof params.value !== "string") {
+      throw new Error("storageSet requires string key and value");
+    }
+    var storage = params.session ? sessionStorage : localStorage;
+    storage.setItem(params.key, params.value);
+    return { ok: true };
+  }
+
+  function storageList(params) {
+    var storage = params.session ? sessionStorage : localStorage;
+    var entries = [];
+    for (var i = 0; i < storage.length; i++) {
+      var key = storage.key(i);
+      entries.push({ key: key, value: storage.getItem(key) });
+    }
+    entries.sort(function (a, b) {
+      return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+    });
+    return entries;
+  }
+
+  function storageClear(params) {
+    var storage = params.session ? sessionStorage : localStorage;
+    storage.clear();
+    return { cleared: true };
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
@@ -848,5 +885,9 @@
     watch: watch,
     drag: drag,
     drop: drop,
+    storageGet: storageGet,
+    storageSet: storageSet,
+    storageList: storageList,
+    storageClear: storageClear,
   };
 })();

@@ -138,6 +138,7 @@ tauri-pilot wait --selector ".success-message"
 | `state` | Get URL, title, viewport, scroll |
 | `assert` | One-step verification (text, visible, hidden, value, count, checked, contains, url) |
 | `watch` | Watch for DOM mutations |
+| `storage` | Read/write localStorage and sessionStorage (`--session`) |
 | `logs` | Capture and display console output |
 | `network` | Capture and display network requests |
 
