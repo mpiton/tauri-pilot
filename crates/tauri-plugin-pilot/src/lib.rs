@@ -4,6 +4,7 @@ mod error;
 pub(crate) mod eval;
 mod handler;
 pub(crate) mod protocol;
+pub(crate) mod recorder;
 #[cfg(unix)]
 pub(crate) mod server;
 
@@ -11,6 +12,8 @@ pub use error::Error;
 
 #[cfg(unix)]
 use eval::EvalEngine;
+#[cfg(unix)]
+use recorder::Recorder;
 #[cfg(unix)]
 use server::{EvalFn, ListWindowsFn};
 #[cfg(unix)]
@@ -57,12 +60,15 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     e
                 })?;
 
+                let recorder = Recorder::new();
+
                 tauri::async_runtime::spawn(server::run(
                     listener,
                     guard,
                     engine,
                     Some(eval_fn),
                     Some(list_fn),
+                    recorder,
                 ));
 
                 Ok(())

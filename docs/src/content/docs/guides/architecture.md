@@ -62,7 +62,7 @@ The protocol is implemented with three hand-rolled serde structs (~50 lines tota
 | `Response` | `jsonrpc`, `id`, `result?`, `error?` |
 | `RpcError` | `code`, `message`, `data?` |
 
-38 methods are available: `ping`, `windows.list`, `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `drag`, `drop`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `visible`, `count`, `checked`, `wait`, `watch`, `navigate`, `url`, `title`, `state`, `ipc`, `console.getLogs`, `console.clear`, `network.getRequests`, `network.clear`, `storage.get`, `storage.set`, `storage.list`, `storage.clear`, `forms.dump`.
+42 methods are available: `ping`, `windows.list`, `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `drag`, `drop`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `visible`, `count`, `checked`, `wait`, `watch`, `navigate`, `url`, `title`, `state`, `ipc`, `console.getLogs`, `console.clear`, `network.getRequests`, `network.clear`, `storage.get`, `storage.set`, `storage.list`, `storage.clear`, `forms.dump`, `record.start`, `record.stop`, `record.status`, `record.add`.
 
 ## Element Reference System
 

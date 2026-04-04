@@ -1,6 +1,7 @@
 use crate::diff;
 use crate::eval::EvalEngine;
 use crate::protocol::RpcError;
+use crate::recorder::{RecordEntry, Recorder};
 use crate::server::{EvalFn, ListWindowsFn};
 
 use std::time::Duration;
@@ -37,18 +38,24 @@ fn extract_window(
 }
 
 /// Dispatch a JSON-RPC method call to the appropriate handler.
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn dispatch(
     method: &str,
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
+    recorder: &Recorder,
 ) -> Result<serde_json::Value, RpcError> {
+    // Save original params before window extraction so the recorder can strip
+    // "window" internally.
+    let original_params = params.cloned();
+
     let (window, owned_params) = extract_window(params);
     let params = owned_params.as_ref().or(params);
     let win = window.as_deref();
 
-    match method {
+    let result = match method {
         "ping" => Ok(serde_json::json!({"status": "ok"})),
         "windows.list" => {
             if let Some(f) = list_fn {
@@ -136,12 +143,40 @@ pub(crate) async fn dispatch(
         "forms.dump" => {
             handle_eval_method("formDump", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
+        "record.start" => {
+            recorder.start();
+            Ok(serde_json::json!({"status": "recording"}))
+        }
+        "record.stop" => {
+            let entries = recorder.stop();
+            let count = entries.len();
+            Ok(serde_json::json!({"entries": entries, "count": count}))
+        }
+        "record.status" => Ok(recorder.status()),
+        "record.add" => {
+            let entry: RecordEntry =
+                serde_json::from_value(params.cloned().unwrap_or(serde_json::Value::Null))
+                    .map_err(|e| RpcError {
+                        code: -32602,
+                        message: e.to_string(),
+                        data: None,
+                    })?;
+            recorder.add_entry(entry);
+            Ok(serde_json::json!({"status": "ok"}))
+        }
         _ => Err(RpcError {
             code: -32601,
             message: format!("Method not found: {method}"),
             data: None,
         }),
+    };
+
+    // Auto-record on successful dispatches
+    if result.is_ok() && recorder.is_active() {
+        recorder.record(method, original_params.as_ref());
     }
+
+    result
 }
 
 /// Handle the "diff" method: take a new snapshot, compare with the reference, and return `DiffResult`.
@@ -349,14 +384,14 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_ping_returns_ok() {
         let engine = EvalEngine::new();
-        let result = dispatch("ping", None, &engine, None, None).await;
+        let result = dispatch("ping", None, &engine, None, None, &Recorder::new()).await;
         assert_eq!(result.unwrap(), json!({"status": "ok"}));
     }
 
     #[tokio::test]
     async fn test_dispatch_unknown_method_returns_error() {
         let engine = EvalEngine::new();
-        let result = dispatch("nonexistent", None, &engine, None, None).await;
+        let result = dispatch("nonexistent", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32601);
     }
@@ -364,7 +399,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_snapshot_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("snapshot", None, &engine, None, None).await;
+        let result = dispatch("snapshot", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -373,7 +408,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_diff_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("diff", None, &engine, None, None).await;
+        let result = dispatch("diff", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -393,7 +428,15 @@ mod tests {
         // eval_fn present + no reference in params + no last_snapshot → -32602
         let eval_fn: crate::server::EvalFn =
             std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(()));
-        let result = dispatch("diff", None, &engine, Some(&eval_fn), None).await;
+        let result = dispatch(
+            "diff",
+            None,
+            &engine,
+            Some(&eval_fn),
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("No previous snapshot"));
@@ -441,7 +484,15 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_console_get_logs_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("console.getLogs", None, &engine, None, None).await;
+        let result = dispatch(
+            "console.getLogs",
+            None,
+            &engine,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -450,7 +501,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_console_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("console.clear", None, &engine, None, None).await;
+        let result = dispatch("console.clear", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -473,7 +524,15 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_network_get_requests_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("network.getRequests", None, &engine, None, None).await;
+        let result = dispatch(
+            "network.getRequests",
+            None,
+            &engine,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -482,7 +541,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_network_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("network.clear", None, &engine, None, None).await;
+        let result = dispatch("network.clear", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -529,7 +588,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_watch_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("watch", None, &engine, None, None).await;
+        let result = dispatch("watch", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -546,7 +605,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drag_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drag", None, &engine, None, None).await;
+        let result = dispatch("drag", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_ne!(err.code, -32601);
     }
@@ -554,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drop_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drop", None, &engine, None, None).await;
+        let result = dispatch("drop", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_ne!(err.code, -32601);
     }
@@ -576,7 +635,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_get_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.get", None, &engine, None, None).await;
+        let result = dispatch("storage.get", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -585,7 +644,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_set_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.set", None, &engine, None, None).await;
+        let result = dispatch("storage.set", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -594,7 +653,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_list_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.list", None, &engine, None, None).await;
+        let result = dispatch("storage.list", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -603,7 +662,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.clear", None, &engine, None, None).await;
+        let result = dispatch("storage.clear", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -662,7 +721,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_forms_dump_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("forms.dump", None, &engine, None, None).await;
+        let result = dispatch("forms.dump", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -671,7 +730,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_windows_list_without_list_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("windows.list", None, &engine, None, None).await;
+        let result = dispatch("windows.list", None, &engine, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No window manager"));
@@ -683,7 +742,15 @@ mod tests {
         let list_fn: crate::server::ListWindowsFn = std::sync::Arc::new(
             || serde_json::json!({"windows": [{"label": "main", "url": "http://localhost", "title": "Test"}]}),
         );
-        let result = dispatch("windows.list", None, &engine, None, Some(&list_fn)).await;
+        let result = dispatch(
+            "windows.list",
+            None,
+            &engine,
+            None,
+            Some(&list_fn),
+            &Recorder::new(),
+        )
+        .await;
         let val = result.unwrap();
         let windows = val.get("windows").unwrap().as_array().unwrap();
         assert_eq!(windows.len(), 1);
@@ -708,10 +775,70 @@ mod tests {
                 Ok(())
             });
         let params = serde_json::json!({"ref": "el-1", "window": "settings"});
-        let _ = dispatch("click", Some(&params), &engine, Some(&eval_fn), None).await;
+        let _ = dispatch(
+            "click",
+            Some(&params),
+            &engine,
+            Some(&eval_fn),
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let script = captured.lock().unwrap().clone();
         // "window" param must not appear in the JS call args
         assert!(!script.contains("\"window\""));
         assert!(script.contains("\"ref\""));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_record_start_returns_recording() {
+        let engine = EvalEngine::new();
+        let recorder = Recorder::new();
+        let result = dispatch("record.start", None, &engine, None, None, &recorder)
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "recording");
+        assert!(recorder.is_active());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_record_stop_returns_entries() {
+        let engine = EvalEngine::new();
+        let recorder = Recorder::new();
+        recorder.start();
+        recorder.record("click", Some(&json!({"ref": "e1"})));
+        let result = dispatch("record.stop", None, &engine, None, None, &recorder)
+            .await
+            .unwrap();
+        assert_eq!(result["count"], 1);
+        assert!(result["entries"].as_array().is_some());
+        assert!(!recorder.is_active());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_record_status() {
+        let engine = EvalEngine::new();
+        let recorder = Recorder::new();
+        recorder.start();
+        let result = dispatch("record.status", None, &engine, None, None, &recorder)
+            .await
+            .unwrap();
+        assert_eq!(result["active"], true);
+        assert_eq!(result["count"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_record_add_entry() {
+        let engine = EvalEngine::new();
+        let recorder = Recorder::new();
+        recorder.start();
+        let params = json!({"action": "navigate", "timestamp": 100, "url": "/home"});
+        let result = dispatch("record.add", Some(&params), &engine, None, None, &recorder)
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "ok");
+        let entries = recorder.stop();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].action, "navigate");
     }
 }

@@ -1035,6 +1035,91 @@ $ tauri-pilot forms --json
 
 ---
 
+### `record`
+
+Record user interactions for later replay.
+
+#### `record start`
+
+Start recording interactions. All subsequent actions (click, fill, type, etc.) will be captured.
+
+```bash
+tauri-pilot record start
+```
+
+#### `record stop`
+
+Stop recording and save captured interactions to a JSON file.
+
+```bash
+tauri-pilot record stop --output test.json
+```
+
+| Option | Description |
+|--------|-------------|
+| `--output`, `-o` | Output file path (JSON format, required) |
+
+#### `record status`
+
+Check if recording is currently active.
+
+```bash
+tauri-pilot record status
+```
+
+---
+
+### `replay`
+
+Replay a previously recorded session.
+
+```bash
+tauri-pilot replay test.json
+```
+
+Export as a shell script instead of replaying:
+
+```bash
+tauri-pilot replay test.json --export sh
+```
+
+| Option | Description |
+|--------|-------------|
+| `--export` | Export format instead of replaying (supported: `sh`) |
+
+#### Output format
+
+Recordings are stored as JSON arrays:
+
+```json
+[
+  {"action": "click", "ref": "e3", "timestamp": 0},
+  {"action": "fill", "ref": "e2", "value": "test", "timestamp": 1200}
+]
+```
+
+#### JSON-RPC examples
+
+```json
+// Start recording
+{"jsonrpc":"2.0","id":1,"method":"record.start","params":{}}
+
+// Stop recording
+{"jsonrpc":"2.0","id":2,"method":"record.stop","params":{}}
+
+// Check recording status
+{"jsonrpc":"2.0","id":3,"method":"record.status","params":{}}
+
+// Add an explicit entry (e.g., assertion from CLI)
+{"jsonrpc":"2.0","id":4,"method":"record.add","params":{"action":"click","ref":"e3","timestamp":0}}
+```
+
+:::note
+`replay` sends recorded actions over the socket for execution. `--export sh` is fully local — it generates a shell script without connecting to the plugin.
+:::
+
+---
+
 ## JSON-RPC Protocol
 
 The CLI communicates with the plugin over a Unix socket using a hand-rolled JSON-RPC 2.0 protocol with newline-delimited framing (`\n`).
