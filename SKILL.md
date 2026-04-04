@@ -133,6 +133,16 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `ass
 | `network -f` | Stream requests (follow) |
 | `network --clear` | Flush request buffer |
 
+### Record & Replay
+
+| Command | Description |
+|---------|-------------|
+| `record start` | Start recording interactions |
+| `record stop --output <file>` | Save recorded interactions to JSON |
+| `record status` | Check if recording is active |
+| `replay <file>` | Replay recorded session with original timing |
+| `replay <file> --export sh` | Export recording as executable shell script |
+
 ## Global Flags
 
 | Flag | Description |

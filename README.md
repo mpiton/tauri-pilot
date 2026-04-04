@@ -141,6 +141,8 @@ tauri-pilot wait --selector ".success-message"
 | `storage` | Read/write localStorage and sessionStorage (`--session`) |
 | `logs` | Capture and display console output |
 | `network` | Capture and display network requests |
+| `record` | Record interactions (`start`, `stop --output`, `status`) |
+| `replay` | Replay recorded session (`--export sh` for shell script) |
 
 ## For AI Agents
 

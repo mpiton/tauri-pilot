@@ -69,11 +69,19 @@ tauri-pilot press Enter
 tauri-pilot assert text @e1 "Expected text"
 tauri-pilot assert visible @e3
 tauri-pilot wait --selector ".success-message"
+
+# Record and replay
+tauri-pilot record start
+tauri-pilot click @e3
+tauri-pilot fill @e2 "test"
+tauri-pilot record stop --output test.json
+tauri-pilot replay test.json
+tauri-pilot replay test.json --export sh    # generate shell script
 ```
 
 ## Basic Usage Flow
 
-tauri-pilot follows a **ping → snapshot → interact → verify** workflow:
+tauri-pilot follows a **ping → snapshot → interact → verify** workflow (optionally wrapped in **record** for replay):
 
 1. **Ping** — verify the plugin is running and the socket is reachable.
 2. **Snapshot** — capture the current state of the UI. This assigns stable refs (`@e1`, `@e2`, …) to every element. Refs are reset on each snapshot, so always snapshot before interacting.
