@@ -97,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bridge functions accept params object (not positional arguments)
 - `build.rs` + permissions for `__callback` IPC command
 
+[#12]: https://github.com/mpiton/tauri-pilot/issues/12
 [#11]: https://github.com/mpiton/tauri-pilot/issues/11
 [#10]: https://github.com/mpiton/tauri-pilot/issues/10
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...HEAD

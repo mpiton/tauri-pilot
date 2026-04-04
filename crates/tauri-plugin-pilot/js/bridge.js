@@ -818,6 +818,9 @@
   }
 
   function storageGet(params) {
+    if (typeof params.key !== "string") {
+      throw new Error("storageGet requires a string key");
+    }
     var storage = params.session ? sessionStorage : localStorage;
     var val = storage.getItem(params.key);
     if (val === null) {
@@ -835,10 +838,13 @@
     return { ok: true };
   }
 
+  var MAX_STORAGE_ENTRIES = 500;
+
   function storageList(params) {
     var storage = params.session ? sessionStorage : localStorage;
+    var len = Math.min(storage.length, MAX_STORAGE_ENTRIES);
     var entries = [];
-    for (var i = 0; i < storage.length; i++) {
+    for (var i = 0; i < len; i++) {
       var key = storage.key(i);
       entries.push({ key: key, value: storage.getItem(key) });
     }

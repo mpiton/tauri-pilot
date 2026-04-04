@@ -894,7 +894,7 @@ tauri-pilot storage <subcommand> [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--session` | Use `sessionStorage` instead of `localStorage` (default) |
+| `--session` | Use `sessionStorage` instead of `localStorage` |
 
 **Examples:**
 
