@@ -944,6 +944,51 @@ $ tauri-pilot storage list --json
 
 ---
 
+### `forms`
+
+Dump all form fields on the page in a single command. Useful for AI agents inspecting form state, pre-filled values, or verifying form structure without calling `value` on each input individually.
+
+```bash
+tauri-pilot forms [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--selector <css>` | Target a specific form by CSS selector |
+
+**Notes:**
+
+- Password fields display `[redacted]` in human-readable output (raw values are available in `--json` mode)
+- Output is limited to 100 forms and 500 fields per form; a truncation warning appears if exceeded
+- The `--selector` must match a `<form>` element; other elements are rejected with an error
+
+**Examples:**
+
+```bash
+# Dump all forms on the page
+$ tauri-pilot forms
+
+# Target a specific form
+$ tauri-pilot forms --selector "#login-form"
+
+# JSON output
+$ tauri-pilot forms --json
+```
+
+**JSON-RPC:**
+
+```jsonc
+// Dump all forms
+{"jsonrpc":"2.0","id":1,"method":"forms.dump"}
+
+// Dump specific form
+{"jsonrpc":"2.0","id":2,"method":"forms.dump","params":{"selector":"#login-form"}}
+```
+
+---
+
 ## JSON-RPC Protocol
 
 The CLI communicates with the plugin over a Unix socket using a hand-rolled JSON-RPC 2.0 protocol with newline-delimited framing (`\n`).

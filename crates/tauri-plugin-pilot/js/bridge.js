@@ -861,6 +861,81 @@
     return { cleared: true };
   }
 
+  var MAX_FORMS = 100;
+  var MAX_FIELDS_PER_FORM = 500;
+
+  function formDump(params) {
+    var forms;
+    var totalForms;
+    if (params && params.selector) {
+      var found = document.querySelector(params.selector);
+      if (!found) {
+        throw new Error("Form not found: " + params.selector);
+      }
+      if (found.tagName.toLowerCase() !== "form") {
+        throw new Error("Selector matched a <" + found.tagName.toLowerCase() + ">, expected a <form>");
+      }
+      forms = [found];
+      totalForms = 1;
+    } else {
+      var all = document.querySelectorAll("form");
+      totalForms = all.length;
+      forms = [];
+      var formLimit = Math.min(totalForms, MAX_FORMS);
+      for (var fi = 0; fi < formLimit; fi++) {
+        forms.push(all[fi]);
+      }
+    }
+
+    var result = [];
+    for (var i = 0; i < forms.length; i++) {
+      var form = forms[i];
+      var fields = [];
+      var elements = form.querySelectorAll("input, select, textarea");
+      var fieldLimit = Math.min(elements.length, MAX_FIELDS_PER_FORM);
+      for (var j = 0; j < fieldLimit; j++) {
+        var el = elements[j];
+        var tag = el.tagName.toLowerCase();
+        var elType = el.type || null;
+        var fieldVal;
+        if (tag === "select" && el.multiple) {
+          var selected = [];
+          for (var k = 0; k < el.options.length; k++) {
+            if (el.options[k].selected) {
+              selected.push(el.options[k].value);
+            }
+          }
+          fieldVal = selected;
+        } else {
+          fieldVal = el.value;
+        }
+        var field = {
+          tag: tag,
+          type: elType,
+          name: el.name || "",
+          value: fieldVal,
+        };
+        if (elType === "checkbox" || elType === "radio") {
+          field.checked = el.checked;
+        }
+        fields.push(field);
+      }
+      var formEntry = {
+        id: form.id || "",
+        name: form.getAttribute("name") || "",
+        action: form.action || "",
+        method: form.method || "get",
+        fields: fields,
+      };
+      if (elements.length > MAX_FIELDS_PER_FORM) {
+        formEntry.fieldsTruncated = true;
+      }
+      result.push(formEntry);
+    }
+    var truncated = totalForms > MAX_FORMS;
+    return { forms: result, truncated: truncated };
+  }
+
   window.__PILOT__ = {
     snapshot: snapshot,
     resolve: resolve,
@@ -896,5 +971,6 @@
     storageSet: storageSet,
     storageList: storageList,
     storageClear: storageClear,
+    formDump: formDump,
   };
 })();

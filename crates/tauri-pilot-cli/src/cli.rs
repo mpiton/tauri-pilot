@@ -178,6 +178,8 @@ pub(crate) enum Command {
     Assert(AssertKind),
     /// Read and write browser storage (localStorage/sessionStorage).
     Storage(StorageArgs),
+    /// Dump all form fields on the page.
+    Forms(FormsArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -207,6 +209,13 @@ pub(crate) struct StorageArgs {
     pub session: bool,
     #[command(subcommand)]
     pub action: StorageAction,
+}
+
+#[derive(clap::Args, Debug)]
+pub(crate) struct FormsArgs {
+    /// Target a specific form by CSS selector.
+    #[arg(long)]
+    pub selector: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -594,6 +603,33 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn test_parse_forms_command() {
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "forms"]);
+        if let Command::Forms(FormsArgs { selector }) = cli.command {
+            assert_eq!(selector, None);
+        } else {
+            panic!("Expected Forms command");
+        }
+    }
+
+    #[test]
+    fn test_parse_forms_with_selector() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "forms",
+            "--selector",
+            "#login",
+        ]);
+        if let Command::Forms(FormsArgs { selector }) = cli.command {
+            assert_eq!(selector, Some("#login".to_owned()));
+        } else {
+            panic!("Expected Forms command with selector");
+        }
     }
 
     #[test]
