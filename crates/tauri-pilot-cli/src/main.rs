@@ -963,6 +963,7 @@ async fn run_replay_command(
     let total = entries.len();
     let mut prev_ts: u64 = 0;
     let mut passed = 0;
+    let mut skipped = 0;
 
     for (i, entry) in entries.iter().enumerate() {
         let action = entry
@@ -980,6 +981,15 @@ async fn run_replay_command(
         }
         prev_ts = timestamp;
 
+        if !is_replayable(action) {
+            skipped += 1;
+            eprintln!(
+                "{}",
+                crate::output::format_replay_step(i + 1, total, action, "SKIP")
+            );
+            continue;
+        }
+
         let mut params = serde_json::Map::new();
         if let Some(obj) = entry.as_object() {
             for (k, v) in obj {
@@ -991,14 +1001,6 @@ async fn run_replay_command(
 
         if let Some(w) = window {
             params.insert("window".to_string(), Value::String(w.to_string()));
-        }
-
-        if !is_replayable(action) {
-            eprintln!(
-                "{}",
-                crate::output::format_replay_step(i + 1, total, action, "SKIP")
-            );
-            continue;
         }
 
         let result = client.call(action, Some(Value::Object(params))).await;
@@ -1015,12 +1017,14 @@ async fn run_replay_command(
         );
     }
 
-    let status = if passed == total { "ok" } else { "failed" };
+    let executed = total - skipped;
+    let status = if passed == executed { "ok" } else { "failed" };
     Ok(serde_json::json!({
         "status": status,
         "total": total,
         "passed": passed,
-        "failed": total - passed
+        "skipped": skipped,
+        "failed": executed - passed
     }))
 }
 
@@ -1142,7 +1146,7 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 .get("direction")
                 .and_then(|d| d.as_str())
                 .unwrap_or("down");
-            let mut cmd = format!("tauri-pilot scroll {dir}");
+            let mut cmd = format!("tauri-pilot scroll {}", shell_escape(dir));
             if let Some(amt) = entry.get("amount").and_then(serde_json::Value::as_i64) {
                 let _ = write!(cmd, " {amt}");
             }
@@ -1175,7 +1179,10 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
             let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
             format!("tauri-pilot navigate {}", shell_escape(url))
         }
-        _ => format!("# unknown action: {action}"),
+        _ => {
+            let safe = action.replace(['\n', '\r'], " ");
+            format!("# unknown action: {safe}")
+        }
     }
 }
 
