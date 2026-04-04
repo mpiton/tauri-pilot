@@ -62,7 +62,7 @@ The protocol is implemented with three hand-rolled serde structs (~50 lines tota
 | `Response` | `jsonrpc`, `id`, `result?`, `error?` |
 | `RpcError` | `code`, `message`, `data?` |
 
-29 methods are available: `ping`, `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `visible`, `count`, `checked`, `wait`, `navigate`, `url`, `title`, `state`, `ipc`, `console.getLogs`, `console.clear`, `network.getRequests`, `network.clear`.
+38 methods are available: `ping`, `windows.list`, `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`, `drag`, `drop`, `eval`, `screenshot`, `text`, `html`, `value`, `attrs`, `visible`, `count`, `checked`, `wait`, `watch`, `navigate`, `url`, `title`, `state`, `ipc`, `console.getLogs`, `console.clear`, `network.getRequests`, `network.clear`, `storage.get`, `storage.set`, `storage.list`, `storage.clear`, `forms.dump`.
 
 ## Element Reference System
 
@@ -80,6 +80,12 @@ tauri-pilot click @e3         # clicks the element with ref e3
 tauri-pilot fill @e5 "hello"  # fills the input at e5
 ```
 
+## Multi-Window Support
+
+The plugin supports Tauri apps with multiple windows. When a JSON-RPC request includes a `"window"` parameter, the plugin resolves the target window by label via `AppHandle::get_webview_window(label)`. Without the parameter, it falls back to `"main"` then the first available window.
+
+The `windows.list` method enumerates all open windows (label, URL, title), sorted by label for deterministic output. From the CLI, use `--window <label>` to target a specific window, or `tauri-pilot windows` to list them.
+
 ## Eval + Callback Pattern (ADR-001)
 
 `webview.eval()` in Tauri v2 is **fire-and-forget** — it dispatches JS into the WebView but provides no return value. All methods that read from the page require a response, so a callback pattern is used:
@@ -92,6 +98,8 @@ tauri-pilot fill @e5 "hello"  # fills the input at e5
 The `EvalEngine` maintains:
 - A `HashMap<u64, oneshot::Sender<Result<Value, String>>>` for in-flight requests
 - An `AtomicU64` counter for request IDs
+
+The eval function dynamically resolves the target window on each call — it captures the `AppHandle` and looks up the window by label at eval time, rather than binding to a single window at startup. This allows targeting different windows across requests.
 
 This makes every eval effectively async and type-safe from the Rust side.
 

@@ -100,6 +100,27 @@ tauri-pilot assert url "/dashboard"                # URL substring
 tauri-pilot snapshot -i -s "#main-content"
 ```
 
+## Multi-window apps
+
+For Tauri apps with multiple windows, use `tauri-pilot windows` to discover available windows and `--window <label>` to target a specific one:
+
+```bash
+# List all windows
+tauri-pilot windows
+# main      http://localhost:1420/        My App
+# settings  http://localhost:1420/settings Settings
+
+# Target a specific window
+tauri-pilot --window settings snapshot -i
+tauri-pilot --window settings fill @e2 "new-value"
+
+# Or set via environment variable
+export TAURI_PILOT_WINDOW=settings
+tauri-pilot snapshot -i
+```
+
+Without `--window`, all commands target the `main` window (or the first available). The window flag works with every command including `--follow` mode and `ipc`.
+
 ## Integration with Claude Code
 
 tauri-pilot is designed to be used as a tool by Claude Code directly:

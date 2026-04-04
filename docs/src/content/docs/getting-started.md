@@ -50,9 +50,15 @@ cargo install tauri-pilot-cli
 # Check connection
 tauri-pilot ping
 
+# List open windows (multi-window apps)
+tauri-pilot windows
+
 # Inspect the UI
 tauri-pilot snapshot -i          # interactive elements only
 tauri-pilot snapshot -s "#sidebar"  # scoped to a CSS selector
+
+# Target a specific window
+tauri-pilot --window settings snapshot -i
 
 # Interact
 tauri-pilot click @e3
