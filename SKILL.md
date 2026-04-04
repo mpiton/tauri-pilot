@@ -110,7 +110,7 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `ass
 | `storage set <key> <value>` | Write to localStorage |
 | `storage list` | Dump all key-value pairs |
 | `storage clear` | Clear all storage |
-| `storage --session get <key>` | Use sessionStorage instead |
+| `storage --session <command>` | Use sessionStorage instead (applies to all storage commands) |
 | `forms` | Dump all form fields on the page |
 | `forms --selector "#login"` | Target a specific form |
 

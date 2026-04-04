@@ -659,14 +659,14 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_window_flag_env() {
-        // SAFETY: single-threaded test, no concurrent env access
+        // SAFETY: test is serialized via #[serial] to prevent parallel env access
         unsafe {
             std::env::set_var("TAURI_PILOT_WINDOW", "main");
         }
         let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "ping"]);
         assert_eq!(cli.window, Some("main".to_owned()));
-        // SAFETY: single-threaded test, no concurrent env access
         unsafe {
             std::env::remove_var("TAURI_PILOT_WINDOW");
         }

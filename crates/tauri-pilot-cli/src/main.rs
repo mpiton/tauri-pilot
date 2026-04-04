@@ -353,14 +353,14 @@ async fn run_command(
             last,
             clear,
             follow,
-        } => run_logs_command(client, level, last, clear, follow).await,
+        } => run_logs_command(client, level, last, clear, follow, window).await,
         Command::Network {
             filter,
             failed,
             last,
             clear,
             follow,
-        } => run_network_command(client, filter, failed, last, clear, follow).await,
+        } => run_network_command(client, filter, failed, last, clear, follow, window).await,
         Command::Assert(kind) => run_assert_command(client, kind, window).await,
         Command::Storage(storage_args) => run_storage_command(client, storage_args, window).await,
         Command::Forms(args) => run_forms_command(client, args, window).await,
@@ -687,12 +687,15 @@ async fn run_logs_command(
     last: Option<usize>,
     clear: bool,
     follow: bool,
+    window: Option<&str>,
 ) -> Result<serde_json::Value> {
     if follow {
         anyhow::bail!("follow mode must be handled before run_command");
     }
     if clear {
-        return client.call("console.clear", None).await;
+        return client
+            .call("console.clear", with_window(None, window))
+            .await;
     }
     let mut params = serde_json::Map::new();
     if let Some(l) = level {
@@ -702,7 +705,10 @@ async fn run_logs_command(
         params.insert("last".into(), json!(n));
     }
     client
-        .call("console.getLogs", Some(serde_json::Value::Object(params)))
+        .call(
+            "console.getLogs",
+            with_window(Some(serde_json::Value::Object(params)), window),
+        )
         .await
 }
 
@@ -713,12 +719,15 @@ async fn run_network_command(
     last: Option<usize>,
     clear: bool,
     follow: bool,
+    window: Option<&str>,
 ) -> Result<serde_json::Value> {
     if follow {
         anyhow::bail!("follow mode must be handled before run_command");
     }
     if clear {
-        return client.call("network.clear", None).await;
+        return client
+            .call("network.clear", with_window(None, window))
+            .await;
     }
     let mut params = serde_json::Map::new();
     if let Some(f) = filter {
@@ -733,7 +742,7 @@ async fn run_network_command(
     client
         .call(
             "network.getRequests",
-            Some(serde_json::Value::Object(params)),
+            with_window(Some(serde_json::Value::Object(params)), window),
         )
         .await
 }

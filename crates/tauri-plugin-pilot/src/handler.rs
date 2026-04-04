@@ -698,13 +698,16 @@ mod tests {
         let captured: std::sync::Arc<std::sync::Mutex<String>> =
             std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let captured_clone = captured.clone();
+        let engine_clone = engine.clone();
         let eval_fn: crate::server::EvalFn =
             std::sync::Arc::new(move |_w: Option<&str>, script: String| {
                 *captured_clone.lock().unwrap() = script;
+                // Resolve the callback immediately to avoid blocking for the default 10s timeout.
+                // ID 1 is the first registered callback on a fresh EvalEngine.
+                engine_clone.resolve(1, Ok(serde_json::json!({"ok": true})));
                 Ok(())
             });
         let params = serde_json::json!({"ref": "el-1", "window": "settings"});
-        // snapshot will try to eval — it won't complete (no callback), but the script is captured.
         let _ = dispatch("click", Some(&params), &engine, Some(&eval_fn), None).await;
         let script = captured.lock().unwrap().clone();
         // "window" param must not appear in the JS call args

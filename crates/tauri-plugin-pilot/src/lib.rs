@@ -125,9 +125,8 @@ fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
     let handle = app.clone();
     Arc::new(move || {
         let windows = handle.webview_windows();
-        let mut entries: Vec<_> = windows.iter().collect();
-        entries.sort_by_key(|(label, _)| (*label).clone());
-        let list: Vec<serde_json::Value> = entries
+        // BTreeMap iterates in sorted key order — no explicit sort needed
+        let list: Vec<serde_json::Value> = windows
             .iter()
             .map(|(label, wv)| {
                 serde_json::json!({

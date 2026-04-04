@@ -647,10 +647,12 @@ pub(crate) fn format_windows(value: &serde_json::Value) {
     let max_label = windows
         .iter()
         .map(|w| {
-            w.get("label")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .len()
+            strip_ansi(
+                w.get("label")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(""),
+            )
+            .len()
         })
         .max()
         .unwrap_or(0);
@@ -658,10 +660,12 @@ pub(crate) fn format_windows(value: &serde_json::Value) {
     let max_url = windows
         .iter()
         .map(|w| {
-            w.get("url")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .len()
+            strip_ansi(
+                w.get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(""),
+            )
+            .len()
         })
         .max()
         .unwrap_or(0);
@@ -696,7 +700,8 @@ pub(crate) fn format_windows(value: &serde_json::Value) {
     }
 }
 
-/// Strip ANSI escape sequences from a string to prevent terminal injection.
+/// Strip ANSI escape sequences and C0 control characters from a string
+/// to prevent terminal injection.
 fn strip_ansi(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
@@ -729,6 +734,8 @@ fn strip_ansi(input: &str) -> String {
                 // Skip single-char escape (ESC + one char)
                 chars.next();
             }
+        } else if c.is_control() && c != '\n' && c != '\t' && c != '\r' {
+            // Strip C0/C1 control characters (except common whitespace)
         } else {
             result.push(c);
         }

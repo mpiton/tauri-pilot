@@ -82,7 +82,7 @@ tauri-pilot fill @e5 "hello"  # fills the input at e5
 
 ## Multi-Window Support
 
-The plugin supports Tauri apps with multiple windows. When a JSON-RPC request includes a `"window"` parameter, the plugin resolves the target window by label via `AppHandle::get_webview_window(label)`. Without the parameter, it falls back to `"main"` then the first available window.
+The plugin supports Tauri apps with multiple windows. When a JSON-RPC request includes a `"window"` parameter, the plugin resolves the target window by label via `AppHandle::get_webview_window(label)`. If the label is present but invalid or doesn't match any open window, the request returns a "Window '{label}' not found" error — it does **not** fall back to the default. Without the parameter, it falls back to `"main"` then the first available window.
 
 The `windows.list` method enumerates all open windows (label, URL, title), sorted by label for deterministic output. From the CLI, use `--window <label>` to target a specific window, or `tauri-pilot windows` to list them.
 

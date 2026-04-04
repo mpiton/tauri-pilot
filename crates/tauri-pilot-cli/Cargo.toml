@@ -34,3 +34,4 @@ indicatif = "0.17"
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 assert_cmd = "2"
+serial_test = "3.4.0"
