@@ -704,6 +704,18 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_record_stop_requires_output() {
+        let result = Cli::try_parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "record",
+            "stop",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_parse_replay_with_export() {
         let cli = Cli::parse_from([
             "tauri-pilot",

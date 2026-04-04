@@ -953,8 +953,11 @@ async fn run_replay_command(
     let entries: Vec<serde_json::Value> =
         serde_json::from_str(&content).context("Invalid recording file format")?;
 
-    if let Some("sh") = export {
-        return Ok(Value::String(export_shell_script(&entries)));
+    if let Some(fmt) = export {
+        if fmt == "sh" {
+            return Ok(Value::String(export_shell_script(&entries)));
+        }
+        anyhow::bail!("unsupported export format: {fmt}; supported: sh");
     }
 
     let total = entries.len();
@@ -990,6 +993,14 @@ async fn run_replay_command(
             params.insert("window".to_string(), Value::String(w.to_string()));
         }
 
+        if !is_replayable(action) {
+            eprintln!(
+                "{}",
+                crate::output::format_replay_step(i + 1, total, action, "SKIP")
+            );
+            continue;
+        }
+
         let result = client.call(action, Some(Value::Object(params))).await;
 
         let status = if result.is_ok() {
@@ -1004,8 +1015,9 @@ async fn run_replay_command(
         );
     }
 
+    let status = if passed == total { "ok" } else { "failed" };
     Ok(serde_json::json!({
-        "status": "ok",
+        "status": status,
         "total": total,
         "passed": passed,
         "failed": total - passed
@@ -1041,13 +1053,48 @@ fn export_shell_script(entries: &[Value]) -> String {
     script
 }
 
+/// Wrap a string in single quotes with proper escaping for shell safety.
+fn shell_escape(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len() + 2);
+    escaped.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            escaped.push_str("'\\''");
+        } else {
+            escaped.push(c);
+        }
+    }
+    escaped.push('\'');
+    escaped
+}
+
+/// Returns `true` for actions that are safe to replay.
+fn is_replayable(action: &str) -> bool {
+    matches!(
+        action,
+        "click"
+            | "fill"
+            | "type"
+            | "press"
+            | "select"
+            | "check"
+            | "scroll"
+            | "drag"
+            | "drop"
+            | "navigate"
+            | "snapshot"
+            | "wait"
+            | "eval"
+    )
+}
+
 fn entry_to_cli_command(action: &str, entry: &Value) -> String {
     let ref_id = entry.get("ref").and_then(|r| r.as_str());
     let selector = entry.get("selector").and_then(|s| s.as_str());
     let target = if let Some(r) = ref_id {
         format!("@{r}")
     } else if let Some(s) = selector {
-        format!("\"{s}\"")
+        shell_escape(s)
     } else {
         String::new()
     };
@@ -1056,19 +1103,19 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
         "click" => format!("tauri-pilot click {target}"),
         "fill" => {
             let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            format!("tauri-pilot fill {target} \"{value}\"")
+            format!("tauri-pilot fill {target} {}", shell_escape(value))
         }
         "type" => {
             let text = entry.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            format!("tauri-pilot type {target} \"{text}\"")
+            format!("tauri-pilot type {target} {}", shell_escape(text))
         }
         "press" => {
             let key = entry.get("key").and_then(|k| k.as_str()).unwrap_or("");
-            format!("tauri-pilot press \"{key}\"")
+            format!("tauri-pilot press {}", shell_escape(key))
         }
         "select" => {
             let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            format!("tauri-pilot select {target} \"{value}\"")
+            format!("tauri-pilot select {target} {}", shell_escape(value))
         }
         "check" => format!("tauri-pilot check {target}"),
         "scroll" => {
@@ -1078,9 +1125,19 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 .unwrap_or("down");
             format!("tauri-pilot scroll {dir}")
         }
+        "drag" => {
+            let source = entry.get("source").and_then(|s| s.as_str()).unwrap_or("");
+            let dest = entry.get("target").and_then(|t| t.as_str()).unwrap_or("");
+            format!(
+                "tauri-pilot drag {} {}",
+                shell_escape(source),
+                shell_escape(dest)
+            )
+        }
+        "drop" => format!("tauri-pilot drop {target}"),
         "navigate" => {
             let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
-            format!("tauri-pilot navigate \"{url}\"")
+            format!("tauri-pilot navigate {}", shell_escape(url))
         }
         _ => format!("# unknown action: {action}"),
     }

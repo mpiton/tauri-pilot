@@ -1098,6 +1098,26 @@ Recordings are stored as JSON arrays:
 ]
 ```
 
+#### JSON-RPC examples
+
+```json
+// Start recording
+{"jsonrpc":"2.0","id":1,"method":"record.start","params":{}}
+
+// Stop recording
+{"jsonrpc":"2.0","id":2,"method":"record.stop","params":{}}
+
+// Check recording status
+{"jsonrpc":"2.0","id":3,"method":"record.status","params":{}}
+
+// Add an explicit entry (e.g., assertion from CLI)
+{"jsonrpc":"2.0","id":4,"method":"record.add","params":{"action":"click","ref":"e3","timestamp":0}}
+```
+
+:::note
+`replay` and `--export sh` are CLI-only features — they read a JSON file and send individual action calls over the socket.
+:::
+
 ---
 
 ## JSON-RPC Protocol

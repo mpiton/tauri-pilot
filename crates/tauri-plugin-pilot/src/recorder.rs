@@ -48,6 +48,7 @@ impl Recorder {
     pub fn stop(&self) -> Vec<RecordEntry> {
         let mut s = self.state.lock().expect("recorder lock poisoned");
         s.active = false;
+        s.start_time = None;
         std::mem::take(&mut s.entries)
     }
 
@@ -230,6 +231,12 @@ mod tests {
         let status = rec.status();
         assert_eq!(status["active"], true);
         assert_eq!(status["count"], 1);
+
+        rec.stop();
+        let status = rec.status();
+        assert_eq!(status["active"], false);
+        assert_eq!(status["count"], 0);
+        assert_eq!(status["elapsed_ms"], 0);
     }
 
     #[test]

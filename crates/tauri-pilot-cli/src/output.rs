@@ -746,7 +746,8 @@ pub(crate) fn format_record(value: &serde_json::Value) -> String {
         }
         return format!("{} Not recording", crate::style::dim("\u{25cb}"));
     }
-    // Fallback
+    // Fallback: format_text prints directly to stdout; return empty so the
+    // caller (which only prints non-empty strings) does not double-print.
     format_text(value);
     String::new()
 }
