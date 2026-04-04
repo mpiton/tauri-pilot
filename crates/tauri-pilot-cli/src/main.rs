@@ -569,7 +569,8 @@ async fn run_network_command(
         .await
 }
 
-const MAX_DROP_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+const MAX_DROP_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB per file
+const MAX_TOTAL_DROP_SIZE: usize = 100 * 1024 * 1024; // 100 MB total base64 payload
 
 async fn run_drop_command(
     client: &mut Client,
@@ -578,17 +579,24 @@ async fn run_drop_command(
 ) -> Result<serde_json::Value> {
     let mut p = target_params(target);
     let mut files = Vec::new();
+    let mut total_encoded = 0usize;
     for path in &file {
         let meta = std::fs::metadata(path)
             .with_context(|| format!("Failed to stat file: {}", path.display()))?;
+        anyhow::ensure!(meta.is_file(), "Not a regular file: {}", path.display());
+        let data = std::fs::read(path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
         anyhow::ensure!(
-            meta.len() <= MAX_DROP_FILE_SIZE,
+            data.len() as u64 <= MAX_DROP_FILE_SIZE,
             "File too large (>50 MB): {}",
             path.display()
         );
-        let data = std::fs::read(path)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+        total_encoded += encoded.len();
+        anyhow::ensure!(
+            total_encoded <= MAX_TOTAL_DROP_SIZE,
+            "Total drop payload exceeds 100 MB limit"
+        );
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -609,7 +617,11 @@ fn target_params(raw: &str) -> serde_json::Value {
 }
 
 fn mime_from_ext(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()) {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext.as_deref() {
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
@@ -709,6 +721,19 @@ mod tests {
         assert_eq!(
             mime_from_ext(std::path::Path::new("Makefile")),
             "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn test_mime_from_ext_case_insensitive() {
+        assert_eq!(
+            mime_from_ext(std::path::Path::new("PHOTO.PNG")),
+            "image/png"
+        );
+        assert_eq!(mime_from_ext(std::path::Path::new("file.PnG")), "image/png");
+        assert_eq!(
+            mime_from_ext(std::path::Path::new("doc.PDF")),
+            "application/pdf"
         );
     }
 }

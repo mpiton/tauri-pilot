@@ -70,16 +70,17 @@ pub(crate) enum Command {
     /// Drag an element to another element or by offset.
     Drag {
         source: String,
+        #[arg(conflicts_with = "offset")]
         target: Option<String>,
         /// Pixel offset as X,Y (e.g., "0,100").
-        #[arg(long, value_name = "X,Y")]
+        #[arg(long, value_name = "X,Y", conflicts_with = "target")]
         offset: Option<String>,
     },
     /// Simulate a file drop on an element.
     Drop {
         target: String,
         /// File(s) to drop. Can be repeated.
-        #[arg(long)]
+        #[arg(long, required = true)]
         file: Vec<std::path::PathBuf>,
     },
     /// Get text content of an element.
@@ -470,6 +471,27 @@ mod tests {
         } else {
             panic!("expected Drop command");
         }
+    }
+
+    #[test]
+    fn test_parse_drag_rejects_both_target_and_offset() {
+        let result = Cli::try_parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/t.sock",
+            "drag",
+            "@e5",
+            "@e6",
+            "--offset",
+            "0,100",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_drop_requires_file() {
+        let result = Cli::try_parse_from(["tauri-pilot", "--socket", "/tmp/t.sock", "drop", "@e3"]);
+        assert!(result.is_err());
     }
 
     #[test]

@@ -531,13 +531,14 @@
       throw new Error("drag requires target or offset");
     }
 
-    var dt = new DataTransfer();
+    var dt = typeof DataTransfer === "function" ? new DataTransfer() : new ClipboardEvent("").clipboardData;
     source.dispatchEvent(new MouseEvent("mousedown", { clientX: startX, clientY: startY, bubbles: true }));
     source.dispatchEvent(new DragEvent("dragstart", { clientX: startX, clientY: startY, dataTransfer: dt, bubbles: true }));
+    source.dispatchEvent(new DragEvent("dragleave", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
     dropTarget.dispatchEvent(new DragEvent("dragenter", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
     dropTarget.dispatchEvent(new DragEvent("dragover", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
     dropTarget.dispatchEvent(new DragEvent("drop", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
-    source.dispatchEvent(new DragEvent("dragend", { clientX: startX, clientY: startY, dataTransfer: dt, bubbles: true }));
+    source.dispatchEvent(new DragEvent("dragend", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
     return { ok: true };
   }
 
@@ -546,7 +547,7 @@
     var rect = el.getBoundingClientRect();
     var x = rect.left + rect.width / 2;
     var y = rect.top + rect.height / 2;
-    var dt = new DataTransfer();
+    var dt = typeof DataTransfer === "function" ? new DataTransfer() : new ClipboardEvent("").clipboardData;
 
     if (params.files) {
       for (var i = 0; i < params.files.length; i++) {
@@ -562,6 +563,7 @@
     el.dispatchEvent(new DragEvent("dragenter", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
     el.dispatchEvent(new DragEvent("dragover", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
     el.dispatchEvent(new DragEvent("drop", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
+    el.dispatchEvent(new DragEvent("dragend", { clientX: x, clientY: y, dataTransfer: dt, bubbles: true }));
     return { ok: true };
   }
 
