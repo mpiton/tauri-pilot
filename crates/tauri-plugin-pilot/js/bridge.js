@@ -842,7 +842,8 @@
 
   function storageList(params) {
     var storage = params.session ? sessionStorage : localStorage;
-    var len = Math.min(storage.length, MAX_STORAGE_ENTRIES);
+    var total = storage.length;
+    var len = Math.min(total, MAX_STORAGE_ENTRIES);
     var entries = [];
     for (var i = 0; i < len; i++) {
       var key = storage.key(i);
@@ -851,7 +852,7 @@
     entries.sort(function (a, b) {
       return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
     });
-    return entries;
+    return { entries: entries, truncated: total > MAX_STORAGE_ENTRIES };
   }
 
   function storageClear(params) {

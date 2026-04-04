@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
     } else if is_storage {
         if result.get("cleared").is_some() {
             output::format_text(&result);
-        } else if result.as_array().is_some() {
+        } else if result.get("entries").is_some() {
             output::format_storage(&result);
         } else if result.get("found").is_some() {
             output::format_storage_value(&result);
