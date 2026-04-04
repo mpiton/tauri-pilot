@@ -12,7 +12,7 @@ pub use error::Error;
 #[cfg(unix)]
 use eval::EvalEngine;
 #[cfg(unix)]
-use server::EvalFn;
+use server::{EvalFn, ListWindowsFn};
 #[cfg(unix)]
 use std::sync::Arc;
 #[cfg(unix)]
@@ -50,13 +50,20 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     std::path::PathBuf::from(format!("/tmp/tauri-pilot-{identifier}.sock"));
 
                 let eval_fn = make_eval_fn(app);
+                let list_fn = make_list_fn(app);
 
                 let (listener, guard) = server::bind(&socket_path).map_err(|e| {
                     tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
                     e
                 })?;
 
-                tauri::async_runtime::spawn(server::run(listener, guard, engine, Some(eval_fn)));
+                tauri::async_runtime::spawn(server::run(
+                    listener,
+                    guard,
+                    engine,
+                    Some(eval_fn),
+                    Some(list_fn),
+                ));
 
                 Ok(())
             })
@@ -88,21 +95,49 @@ fn sanitize_identifier(raw: &str) -> String {
 
 /// Create an eval function from the app handle that evaluates JS in a webview.
 ///
-/// Tries the "main" window label first for deterministic targeting,
-/// falls back to the first available window if "main" doesn't exist.
+/// If `window` is `Some(label)`, targets that specific window (error if not found).
+/// If `window` is `None`, tries "main" first then falls back to the first available window.
 #[cfg(all(unix, debug_assertions))]
 fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
     let handle = app.clone();
-    Arc::new(move |script| {
+    Arc::new(move |window: Option<&str>, script: String| {
+        if let Some(label) = window {
+            return handle
+                .get_webview_window(label)
+                .ok_or_else(|| format!("Window '{label}' not found"))
+                .and_then(|w| w.eval(&script).map_err(|e| e.to_string()));
+        }
         if let Some(w) = handle.get_webview_window("main") {
             return w.eval(&script).map_err(|e| e.to_string());
         }
         let windows = handle.webview_windows();
-        let window = windows
+        windows
             .values()
             .next()
-            .ok_or_else(|| "No webview window available".to_owned())?;
-        window.eval(&script).map_err(|e| e.to_string())
+            .ok_or_else(|| "No webview available".to_owned())
+            .and_then(|w| w.eval(&script).map_err(|e| e.to_string()))
+    })
+}
+
+/// Create a list function that enumerates all available webview windows.
+#[cfg(all(unix, debug_assertions))]
+fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
+    let handle = app.clone();
+    Arc::new(move || {
+        let windows = handle.webview_windows();
+        let mut entries: Vec<_> = windows.iter().collect();
+        entries.sort_by_key(|(label, _)| (*label).clone());
+        let list: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|(label, wv)| {
+                serde_json::json!({
+                    "label": label,
+                    "url": wv.url().map(|u| u.to_string()).unwrap_or_default(),
+                    "title": wv.title().unwrap_or_default(),
+                })
+            })
+            .collect();
+        serde_json::json!({"windows": list})
     })
 }
 

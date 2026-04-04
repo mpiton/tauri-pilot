@@ -1,7 +1,7 @@
 use crate::diff;
 use crate::eval::EvalEngine;
 use crate::protocol::RpcError;
-use crate::server::EvalFn;
+use crate::server::{EvalFn, ListWindowsFn};
 
 use std::time::Duration;
 
@@ -11,26 +11,68 @@ const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(30);
 /// doesn't expire before the JS `MutationObserver` can resolve/reject.
 const WATCH_BUFFER_MS: u64 = 2_000;
 
+/// Extract and remove the optional `"window"` key from params.
+///
+/// Returns `(window_label, cleaned_params)`:
+/// - When `"window"` is present: `cleaned_params` is `Some(...)` with the key stripped.
+/// - When `"window"` is absent: `cleaned_params` is `None` — the caller must fall back
+///   to the original `params` reference (e.g. via `.as_ref().or(params)`).
+fn extract_window(
+    params: Option<&serde_json::Value>,
+) -> (Option<String>, Option<serde_json::Value>) {
+    let window = params
+        .and_then(|o| o.get("window"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    match (window, params) {
+        (Some(w), Some(p)) => {
+            let mut cleaned = p.clone();
+            if let Some(obj) = cleaned.as_object_mut() {
+                obj.remove("window");
+            }
+            (Some(w), Some(cleaned))
+        }
+        (w, _) => (w, None),
+    }
+}
+
 /// Dispatch a JSON-RPC method call to the appropriate handler.
 pub(crate) async fn dispatch(
     method: &str,
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
+    list_fn: Option<&ListWindowsFn>,
 ) -> Result<serde_json::Value, RpcError> {
+    let (window, owned_params) = extract_window(params);
+    let params = owned_params.as_ref().or(params);
+    let win = window.as_deref();
+
     match method {
         "ping" => Ok(serde_json::json!({"status": "ok"})),
+        "windows.list" => {
+            if let Some(f) = list_fn {
+                Ok(f())
+            } else {
+                Err(RpcError {
+                    code: -32603,
+                    message: "No window manager available".to_owned(),
+                    data: None,
+                })
+            }
+        }
         "snapshot" => {
             let result =
-                handle_eval_method("snapshot", params, engine, eval_fn, DEFAULT_TIMEOUT).await?;
+                handle_eval_method("snapshot", params, engine, eval_fn, win, DEFAULT_TIMEOUT)
+                    .await?;
             engine.store_snapshot(&result);
             Ok(result)
         }
-        "diff" => handle_diff(params, engine, eval_fn).await,
+        "diff" => handle_diff(params, engine, eval_fn, win).await,
         "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" | "drag" | "drop"
         | "text" | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title"
         | "state" | "wait" | "visible" | "count" | "checked" => {
-            handle_eval_method(method, params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method(method, params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         "watch" => {
             let timeout_ms = params
@@ -38,37 +80,61 @@ pub(crate) async fn dispatch(
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(10_000);
             let timeout = Duration::from_millis(timeout_ms.saturating_add(WATCH_BUFFER_MS));
-            handle_eval_method(method, params, engine, eval_fn, timeout).await
+            handle_eval_method(method, params, engine, eval_fn, win, timeout).await
         }
         "screenshot" => {
-            handle_eval_method(method, params, engine, eval_fn, SCREENSHOT_TIMEOUT).await
+            handle_eval_method(method, params, engine, eval_fn, win, SCREENSHOT_TIMEOUT).await
         }
         "console.getLogs" => {
-            handle_eval_method("consoleLogs", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method("consoleLogs", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         "console.clear" => {
-            handle_eval_method("clearLogs", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method("clearLogs", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         "network.getRequests" => {
-            handle_eval_method("networkRequests", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method(
+                "networkRequests",
+                params,
+                engine,
+                eval_fn,
+                win,
+                DEFAULT_TIMEOUT,
+            )
+            .await
         }
         "network.clear" => {
-            handle_eval_method("clearNetwork", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method(
+                "clearNetwork",
+                params,
+                engine,
+                eval_fn,
+                win,
+                DEFAULT_TIMEOUT,
+            )
+            .await
         }
         "storage.get" => {
-            handle_eval_method("storageGet", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method("storageGet", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         "storage.set" => {
-            handle_eval_method("storageSet", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method("storageSet", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         "storage.list" => {
-            handle_eval_method("storageList", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method("storageList", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         "storage.clear" => {
-            handle_eval_method("storageClear", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method(
+                "storageClear",
+                params,
+                engine,
+                eval_fn,
+                win,
+                DEFAULT_TIMEOUT,
+            )
+            .await
         }
         "forms.dump" => {
-            handle_eval_method("formDump", params, engine, eval_fn, DEFAULT_TIMEOUT).await
+            handle_eval_method("formDump", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         _ => Err(RpcError {
             code: -32601,
@@ -83,6 +149,7 @@ async fn handle_diff(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
+    window: Option<&str>,
 ) -> Result<serde_json::Value, RpcError> {
     let eval_fn = eval_fn.ok_or_else(|| RpcError {
         code: -32603,
@@ -121,7 +188,7 @@ async fn handle_diff(
     let (id, rx) = engine.register();
     let wrapped = EvalEngine::wrap_script(id, &script);
 
-    if let Err(e) = eval_fn(wrapped) {
+    if let Err(e) = eval_fn(window, wrapped) {
         engine.resolve(id, Err(format!("Eval failed: {e}")));
         return Err(RpcError {
             code: -32603,
@@ -180,6 +247,7 @@ async fn handle_eval_method(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
+    window: Option<&str>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
     let eval_fn = eval_fn.ok_or_else(|| RpcError {
@@ -196,7 +264,7 @@ async fn handle_eval_method(
     let (id, rx) = engine.register();
     let wrapped = EvalEngine::wrap_script(id, &script);
 
-    if let Err(e) = eval_fn(wrapped) {
+    if let Err(e) = eval_fn(window, wrapped) {
         // Clean up pending entry on eval_fn failure
         engine.resolve(id, Err(format!("Eval failed: {e}")));
         return Err(RpcError {
@@ -281,14 +349,14 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_ping_returns_ok() {
         let engine = EvalEngine::new();
-        let result = dispatch("ping", None, &engine, None).await;
+        let result = dispatch("ping", None, &engine, None, None).await;
         assert_eq!(result.unwrap(), json!({"status": "ok"}));
     }
 
     #[tokio::test]
     async fn test_dispatch_unknown_method_returns_error() {
         let engine = EvalEngine::new();
-        let result = dispatch("nonexistent", None, &engine, None).await;
+        let result = dispatch("nonexistent", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32601);
     }
@@ -296,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_snapshot_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("snapshot", None, &engine, None).await;
+        let result = dispatch("snapshot", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -305,7 +373,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_diff_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("diff", None, &engine, None).await;
+        let result = dispatch("diff", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -323,8 +391,9 @@ mod tests {
         // Let's use a sync eval_fn and resolve manually.
         // Actually the reference check happens BEFORE the eval call, so we can check:
         // eval_fn present + no reference in params + no last_snapshot → -32602
-        let eval_fn: crate::server::EvalFn = std::sync::Arc::new(|_script| Ok(()));
-        let result = dispatch("diff", None, &engine, Some(&eval_fn)).await;
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(()));
+        let result = dispatch("diff", None, &engine, Some(&eval_fn), None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("No previous snapshot"));
@@ -372,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_console_get_logs_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("console.getLogs", None, &engine, None).await;
+        let result = dispatch("console.getLogs", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -381,7 +450,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_console_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("console.clear", None, &engine, None).await;
+        let result = dispatch("console.clear", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -404,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_network_get_requests_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("network.getRequests", None, &engine, None).await;
+        let result = dispatch("network.getRequests", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -413,7 +482,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_network_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("network.clear", None, &engine, None).await;
+        let result = dispatch("network.clear", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -460,7 +529,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_watch_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("watch", None, &engine, None).await;
+        let result = dispatch("watch", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -477,7 +546,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drag_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drag", None, &engine, None).await;
+        let result = dispatch("drag", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_ne!(err.code, -32601);
     }
@@ -485,7 +554,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drop_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drop", None, &engine, None).await;
+        let result = dispatch("drop", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_ne!(err.code, -32601);
     }
@@ -507,7 +576,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_get_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.get", None, &engine, None).await;
+        let result = dispatch("storage.get", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -516,7 +585,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_set_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.set", None, &engine, None).await;
+        let result = dispatch("storage.set", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -525,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_list_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.list", None, &engine, None).await;
+        let result = dispatch("storage.list", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -534,7 +603,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.clear", None, &engine, None).await;
+        let result = dispatch("storage.clear", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -593,9 +662,53 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_forms_dump_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("forms.dump", None, &engine, None).await;
+        let result = dispatch("forms.dump", None, &engine, None, None).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_windows_list_without_list_fn() {
+        let engine = EvalEngine::new();
+        let result = dispatch("windows.list", None, &engine, None, None).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No window manager"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_windows_list_with_list_fn() {
+        let engine = EvalEngine::new();
+        let list_fn: crate::server::ListWindowsFn = std::sync::Arc::new(
+            || serde_json::json!({"windows": [{"label": "main", "url": "http://localhost", "title": "Test"}]}),
+        );
+        let result = dispatch("windows.list", None, &engine, None, Some(&list_fn)).await;
+        let val = result.unwrap();
+        let windows = val.get("windows").unwrap().as_array().unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].get("label").unwrap(), "main");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_window_param_extracted_from_params() {
+        let engine = EvalEngine::new();
+        // The "window" key must be stripped before being forwarded to the bridge.
+        // We verify this by inspecting the script received by eval_fn.
+        let captured: std::sync::Arc<std::sync::Mutex<String>> =
+            std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let captured_clone = captured.clone();
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(move |_w: Option<&str>, script: String| {
+                *captured_clone.lock().unwrap() = script;
+                Ok(())
+            });
+        let params = serde_json::json!({"ref": "el-1", "window": "settings"});
+        // snapshot will try to eval — it won't complete (no callback), but the script is captured.
+        let _ = dispatch("click", Some(&params), &engine, Some(&eval_fn), None).await;
+        let script = captured.lock().unwrap().clone();
+        // "window" param must not appear in the JS call args
+        assert!(!script.contains("\"window\""));
+        assert!(script.contains("\"ref\""));
     }
 }
