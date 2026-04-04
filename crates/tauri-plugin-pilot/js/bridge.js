@@ -866,16 +866,22 @@
 
   function formDump(params) {
     var forms;
+    var totalForms;
     if (params && params.selector) {
       var found = document.querySelector(params.selector);
       if (!found) {
         throw new Error("Form not found: " + params.selector);
       }
+      if (found.tagName.toLowerCase() !== "form") {
+        throw new Error("Selector matched a <" + found.tagName.toLowerCase() + ">, expected a <form>");
+      }
       forms = [found];
+      totalForms = 1;
     } else {
       var all = document.querySelectorAll("form");
+      totalForms = all.length;
       forms = [];
-      var formLimit = Math.min(all.length, MAX_FORMS);
+      var formLimit = Math.min(totalForms, MAX_FORMS);
       for (var fi = 0; fi < formLimit; fi++) {
         forms.push(all[fi]);
       }
@@ -900,8 +906,6 @@
             }
           }
           fieldVal = selected;
-        } else if (elType === "checkbox" || elType === "radio") {
-          fieldVal = el.checked;
         } else {
           fieldVal = el.value;
         }
@@ -916,15 +920,18 @@
         }
         fields.push(field);
       }
-      result.push({
+      var formEntry = {
         id: form.id || "",
         name: form.getAttribute("name") || "",
         action: form.action || "",
         method: form.method || "get",
         fields: fields,
-      });
+      };
+      if (elements.length > MAX_FIELDS_PER_FORM) {
+        formEntry.fieldsTruncated = true;
+      }
+      result.push(formEntry);
     }
-    var totalForms = params && params.selector ? 1 : document.querySelectorAll("form").length;
     var truncated = totalForms > MAX_FORMS;
     return { forms: result, truncated: truncated };
   }

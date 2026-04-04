@@ -958,6 +958,12 @@ tauri-pilot forms [OPTIONS]
 |--------|-------------|
 | `--selector <css>` | Target a specific form by CSS selector |
 
+**Notes:**
+
+- Password fields display `[redacted]` in human-readable output (raw values are available in `--json` mode)
+- Output is limited to 100 forms and 500 fields per form; a truncation warning appears if exceeded
+- The `--selector` must match a `<form>` element; other elements are rejected with an error
+
 **Examples:**
 
 ```bash

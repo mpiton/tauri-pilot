@@ -276,6 +276,68 @@ pub(crate) fn format_storage(value: &serde_json::Value) {
     }
 }
 
+/// Format a single form field for display.
+fn format_form_field(field: &serde_json::Value) {
+    let field_name = strip_ansi(
+        field
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+    );
+    let display_name = if field_name.is_empty() {
+        "(unnamed)".to_owned()
+    } else {
+        field_name
+    };
+    let field_type = strip_ansi(
+        field
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+    );
+    let field_value_raw = field.get("value");
+    let field_value = match field_value_raw {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(strip_ansi)
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => strip_ansi(
+            field_value_raw
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(""),
+        ),
+    };
+    let checked = field.get("checked").and_then(serde_json::Value::as_bool);
+
+    let mut line = format!("  {display_name}");
+    if !field_type.is_empty() {
+        let _ = write!(
+            line,
+            " {}",
+            crate::style::dim(format!("[type={field_type}]"))
+        );
+    }
+    if field_type == "password" {
+        if field_value.is_empty() {
+            let _ = write!(line, " = \"\"");
+        } else {
+            let _ = write!(line, " = {}", crate::style::dim("[redacted]"));
+        }
+    } else if let Some(is_checked) = checked {
+        let _ = write!(line, " = \"{field_value}\"");
+        if is_checked {
+            let _ = write!(line, " {}", crate::style::success("checked"));
+        } else {
+            let _ = write!(line, " {}", crate::style::dim("unchecked"));
+        }
+    } else {
+        let _ = write!(line, " = \"{field_value}\"");
+    }
+    println!("{line}");
+}
+
 /// Format form fields dumped from the page.
 ///
 /// Expects `{forms: [{id, name, action, method, fields: [{tag, type, name, value, checked}]}]}`
@@ -308,66 +370,17 @@ pub(crate) fn format_forms(value: &serde_json::Value) {
 
         if let Some(fields) = form.get("fields").and_then(|f| f.as_array()) {
             for field in fields {
-                let field_name = strip_ansi(
-                    field
-                        .get("name")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or(""),
+                format_form_field(field);
+            }
+            if form
+                .get("fieldsTruncated")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                println!(
+                    "  {}",
+                    crate::style::warn("(fields truncated — more fields exist)")
                 );
-                let display_name = if field_name.is_empty() {
-                    "(unnamed)".to_owned()
-                } else {
-                    field_name
-                };
-                let field_type = strip_ansi(
-                    field
-                        .get("type")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or(""),
-                );
-                let field_value_raw = field.get("value");
-                let field_value = match field_value_raw {
-                    Some(serde_json::Value::Array(arr)) => arr
-                        .iter()
-                        .filter_map(|v| v.as_str())
-                        .map(strip_ansi)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    _ => strip_ansi(
-                        field_value_raw
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or(""),
-                    ),
-                };
-                let checked = field
-                    .get("checked")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false);
-
-                let mut line = format!("  {display_name}");
-                if !field_type.is_empty() {
-                    let _ = write!(
-                        line,
-                        " {}",
-                        crate::style::dim(format!("[type={field_type}]"))
-                    );
-                }
-                if field_type == "checkbox" || field_type == "radio" {
-                    if checked {
-                        let _ = write!(line, " = checked");
-                    } else {
-                        let _ = write!(line, " = {}", crate::style::dim("unchecked"));
-                    }
-                } else if field_type == "password" {
-                    if field_value.is_empty() {
-                        let _ = write!(line, " = \"\"");
-                    } else {
-                        let _ = write!(line, " = {}", crate::style::dim("[redacted]"));
-                    }
-                } else {
-                    let _ = write!(line, " = \"{field_value}\"");
-                }
-                println!("{line}");
             }
         }
     }
