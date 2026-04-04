@@ -4,6 +4,8 @@ mod output;
 mod protocol;
 mod style;
 
+use std::fmt::Write as _;
+
 use anyhow::{Context, Result};
 use base64::Engine;
 use clap::Parser;
@@ -12,7 +14,10 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use cli::{AssertKind, Cli, Command, FormsArgs, StorageAction, StorageArgs, Target, parse_target};
+use cli::{
+    AssertKind, Cli, Command, FormsArgs, RecordAction, StorageAction, StorageArgs, Target,
+    parse_target,
+};
 use client::Client;
 
 #[tokio::main]
@@ -110,6 +115,8 @@ enum OutputKind {
     Storage,
     Forms,
     Windows,
+    Record,
+    Replay,
     Text,
 }
 
@@ -124,6 +131,8 @@ impl From<&Command> for OutputKind {
             Command::Storage(..) => OutputKind::Storage,
             Command::Forms(..) => OutputKind::Forms,
             Command::Windows => OutputKind::Windows,
+            Command::Record { .. } => OutputKind::Record,
+            Command::Replay { .. } => OutputKind::Replay,
             _ => OutputKind::Text,
         }
     }
@@ -164,7 +173,13 @@ fn format_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) 
         }
         OutputKind::Forms => output::format_forms(result),
         OutputKind::Windows => output::format_windows(result),
-        OutputKind::Text => output::format_text(result),
+        OutputKind::Record => {
+            let formatted = output::format_record(result);
+            if !formatted.is_empty() {
+                println!("{formatted}");
+            }
+        }
+        OutputKind::Replay | OutputKind::Text => output::format_text(result),
     }
     Ok(())
 }
@@ -365,6 +380,10 @@ async fn run_command(
         Command::Storage(storage_args) => run_storage_command(client, storage_args, window).await,
         Command::Forms(args) => run_forms_command(client, args, window).await,
         Command::Drop { target, file } => run_drop_command(client, &target, file, window).await,
+        Command::Record { action } => run_record_command(client, action, window).await,
+        Command::Replay { path, export } => {
+            run_replay_command(client, &path, export.as_deref(), window).await
+        }
         cmd => run_dom_command(client, cmd, window).await,
     }
 }
@@ -889,6 +908,182 @@ fn save_screenshot(result: &serde_json::Value, path: &std::path::Path) -> Result
 
     std::fs::write(path, bytes)?;
     Ok(())
+}
+
+async fn run_record_command(
+    client: &mut Client,
+    action: RecordAction,
+    window: Option<&str>,
+) -> Result<Value> {
+    match action {
+        RecordAction::Start => client.call("record.start", with_window(None, window)).await,
+        RecordAction::Stop { output } => {
+            let result = client
+                .call("record.stop", with_window(None, window))
+                .await?;
+            let entries = result
+                .get("entries")
+                .and_then(|e| e.as_array())
+                .ok_or_else(|| anyhow::anyhow!("no entries in response"))?;
+            let json = serde_json::to_string_pretty(entries)?;
+            std::fs::write(&output, &json)
+                .with_context(|| format!("Failed to write recording to {}", output.display()))?;
+            Ok(serde_json::json!({
+                "status": "saved",
+                "path": output.display().to_string(),
+                "count": entries.len()
+            }))
+        }
+        RecordAction::Status => {
+            client
+                .call("record.status", with_window(None, window))
+                .await
+        }
+    }
+}
+
+async fn run_replay_command(
+    client: &mut Client,
+    path: &std::path::Path,
+    export: Option<&str>,
+    window: Option<&str>,
+) -> Result<Value> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read recording file: {}", path.display()))?;
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(&content).context("Invalid recording file format")?;
+
+    if let Some("sh") = export {
+        return Ok(Value::String(export_shell_script(&entries)));
+    }
+
+    let total = entries.len();
+    let mut prev_ts: u64 = 0;
+    let mut passed = 0;
+
+    for (i, entry) in entries.iter().enumerate() {
+        let action = entry
+            .get("action")
+            .and_then(|a| a.as_str())
+            .unwrap_or("unknown");
+        let timestamp = entry
+            .get("timestamp")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+
+        let delta = timestamp.saturating_sub(prev_ts);
+        if delta > 0 && i > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delta)).await;
+        }
+        prev_ts = timestamp;
+
+        let mut params = serde_json::Map::new();
+        if let Some(obj) = entry.as_object() {
+            for (k, v) in obj {
+                if k != "action" && k != "timestamp" {
+                    params.insert(k.clone(), v.clone());
+                }
+            }
+        }
+
+        if let Some(w) = window {
+            params.insert("window".to_string(), Value::String(w.to_string()));
+        }
+
+        let result = client.call(action, Some(Value::Object(params))).await;
+
+        let status = if result.is_ok() {
+            passed += 1;
+            "ok"
+        } else {
+            "FAIL"
+        };
+        eprintln!(
+            "{}",
+            crate::output::format_replay_step(i + 1, total, action, status)
+        );
+    }
+
+    Ok(serde_json::json!({
+        "status": "ok",
+        "total": total,
+        "passed": passed,
+        "failed": total - passed
+    }))
+}
+
+fn export_shell_script(entries: &[Value]) -> String {
+    let mut script = String::from("#!/bin/bash\n# Generated by tauri-pilot record/replay\n\n");
+    let mut prev_ts: u64 = 0;
+
+    for entry in entries {
+        let action = entry
+            .get("action")
+            .and_then(|a| a.as_str())
+            .unwrap_or("unknown");
+        let timestamp = entry
+            .get("timestamp")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+
+        let delta = timestamp.saturating_sub(prev_ts);
+        if delta > 0 && prev_ts > 0 {
+            #[allow(clippy::cast_precision_loss)]
+            let secs = delta as f64 / 1000.0;
+            let _ = writeln!(script, "sleep {secs:.1}");
+        }
+        prev_ts = timestamp;
+
+        script.push_str(&entry_to_cli_command(action, entry));
+        script.push('\n');
+    }
+
+    script
+}
+
+fn entry_to_cli_command(action: &str, entry: &Value) -> String {
+    let ref_id = entry.get("ref").and_then(|r| r.as_str());
+    let selector = entry.get("selector").and_then(|s| s.as_str());
+    let target = if let Some(r) = ref_id {
+        format!("@{r}")
+    } else if let Some(s) = selector {
+        format!("\"{s}\"")
+    } else {
+        String::new()
+    };
+
+    match action {
+        "click" => format!("tauri-pilot click {target}"),
+        "fill" => {
+            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            format!("tauri-pilot fill {target} \"{value}\"")
+        }
+        "type" => {
+            let text = entry.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            format!("tauri-pilot type {target} \"{text}\"")
+        }
+        "press" => {
+            let key = entry.get("key").and_then(|k| k.as_str()).unwrap_or("");
+            format!("tauri-pilot press \"{key}\"")
+        }
+        "select" => {
+            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            format!("tauri-pilot select {target} \"{value}\"")
+        }
+        "check" => format!("tauri-pilot check {target}"),
+        "scroll" => {
+            let dir = entry
+                .get("direction")
+                .and_then(|d| d.as_str())
+                .unwrap_or("down");
+            format!("tauri-pilot scroll {dir}")
+        }
+        "navigate" => {
+            let url = entry.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            format!("tauri-pilot navigate \"{url}\"")
+        }
+        _ => format!("# unknown action: {action}"),
+    }
 }
 
 /// Resolve the socket path from explicit arg, env var, or auto-detection.

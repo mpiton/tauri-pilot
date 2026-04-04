@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::eval::EvalEngine;
 use crate::handler;
 use crate::protocol::{Request, Response};
+use crate::recorder::Recorder;
 
 use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
@@ -108,6 +109,7 @@ pub(crate) async fn run(
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
     list_fn: Option<ListWindowsFn>,
+    recorder: Recorder,
 ) {
     let listener = match UnixListener::from_std(std_listener) {
         Ok(l) => l,
@@ -116,7 +118,7 @@ pub(crate) async fn run(
             return;
         }
     };
-    if let Err(e) = accept_loop(listener, engine, eval_fn, list_fn).await {
+    if let Err(e) = accept_loop(listener, engine, eval_fn, list_fn, recorder).await {
         tracing::error!("socket server error: {e}");
     }
 }
@@ -126,8 +128,9 @@ async fn accept_loop(
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
     list_fn: Option<ListWindowsFn>,
+    recorder: Recorder,
 ) -> Result<(), Error> {
-    let ctx = Arc::new((engine, eval_fn, list_fn));
+    let ctx = Arc::new((engine, eval_fn, list_fn, recorder));
 
     loop {
         let (stream, _addr) = match listener.accept().await {
@@ -139,7 +142,8 @@ async fn accept_loop(
         };
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, &ctx.0, ctx.1.as_ref(), ctx.2.as_ref()).await
+            if let Err(e) =
+                handle_connection(stream, &ctx.0, ctx.1.as_ref(), ctx.2.as_ref(), &ctx.3).await
             {
                 tracing::warn!("connection error: {e}");
             }
@@ -152,6 +156,7 @@ async fn handle_connection(
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
+    recorder: &Recorder,
 ) -> Result<(), Error> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -175,7 +180,7 @@ async fn handle_connection(
                 -32600,
                 "Invalid JSON-RPC version (expected \"2.0\")",
             ),
-            Ok(req) => dispatch(&req, engine, eval_fn, list_fn).await,
+            Ok(req) => dispatch_request(&req, engine, eval_fn, list_fn, recorder).await,
             Err(e) => Response::error(0, -32700, format!("Parse error: {e}")),
         };
 
@@ -188,13 +193,23 @@ async fn handle_connection(
     Ok(())
 }
 
-async fn dispatch(
+async fn dispatch_request(
     req: &Request,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
+    recorder: &Recorder,
 ) -> Response {
-    match handler::dispatch(&req.method, req.params.as_ref(), engine, eval_fn, list_fn).await {
+    match handler::dispatch(
+        &req.method,
+        req.params.as_ref(),
+        engine,
+        eval_fn,
+        list_fn,
+        recorder,
+    )
+    .await
+    {
         Ok(result) => Response::success(req.id, result),
         Err(rpc_err) => Response {
             jsonrpc: "2.0".to_owned(),
@@ -225,7 +240,10 @@ mod tests {
     async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let (listener, guard) = bind(path).expect("bind test socket");
         let engine = EvalEngine::new();
-        let handle = tokio::spawn(async move { run(listener, guard, engine, None, None).await });
+        let handle =
+            tokio::spawn(
+                async move { run(listener, guard, engine, None, None, Recorder::new()).await },
+            );
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
     }

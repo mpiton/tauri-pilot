@@ -186,6 +186,19 @@ pub(crate) enum Command {
     Storage(StorageArgs),
     /// Dump all form fields on the page.
     Forms(FormsArgs),
+    /// Record interactions for replay
+    Record {
+        #[command(subcommand)]
+        action: RecordAction,
+    },
+    /// Replay a recorded session
+    Replay {
+        /// Path to recording file (JSON)
+        path: PathBuf,
+        /// Export format instead of replaying (e.g., "sh")
+        #[arg(long)]
+        export: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -234,6 +247,20 @@ pub(crate) enum StorageAction {
     List,
     /// Clear all storage.
     Clear,
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum RecordAction {
+    /// Start recording interactions
+    Start,
+    /// Stop recording and save to file
+    Stop {
+        /// Output file path (JSON)
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Show recording status
+    Status,
 }
 
 /// Parsed target for element-targeting commands.
@@ -635,6 +662,63 @@ mod tests {
             assert_eq!(selector, Some("#login".to_owned()));
         } else {
             panic!("Expected Forms command with selector");
+        }
+    }
+
+    #[test]
+    fn test_parse_record_start() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "record",
+            "start",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Command::Record {
+                action: RecordAction::Start
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_record_stop_with_output() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "record",
+            "stop",
+            "--output",
+            "test.json",
+        ]);
+        if let Command::Record {
+            action: RecordAction::Stop { output },
+        } = cli.command
+        {
+            assert_eq!(output, std::path::PathBuf::from("test.json"));
+        } else {
+            panic!("Expected Record Stop command with output");
+        }
+    }
+
+    #[test]
+    fn test_parse_replay_with_export() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "replay",
+            "test.json",
+            "--export",
+            "sh",
+        ]);
+        if let Command::Replay { path, export } = cli.command {
+            assert_eq!(path, std::path::PathBuf::from("test.json"));
+            assert_eq!(export, Some("sh".to_owned()));
+        } else {
+            panic!("Expected Replay command with export");
         }
     }
 

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Record/replay** — capture user interactions as replayable test scripts (`record start`, `record stop --output`, `record status`, `replay`, `replay --export sh`)
 - **Multi-window support** — `windows` command lists all windows, `--window` flag targets specific window ([#14])
 - **Form dump** — get all form fields at once instead of calling `value` on each input individually ([#13])
   - `tauri-pilot forms` — dump all forms on the page
