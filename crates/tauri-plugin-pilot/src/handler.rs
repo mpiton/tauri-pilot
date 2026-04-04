@@ -27,9 +27,9 @@ pub(crate) async fn dispatch(
             Ok(result)
         }
         "diff" => handle_diff(params, engine, eval_fn).await,
-        "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" | "text" | "html"
-        | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state" | "wait"
-        | "visible" | "count" | "checked" => {
+        "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" | "drag" | "drop"
+        | "text" | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title"
+        | "state" | "wait" | "visible" | "count" | "checked" => {
             handle_eval_method(method, params, engine, eval_fn, DEFAULT_TIMEOUT).await
         }
         "watch" => {
@@ -457,5 +457,35 @@ mod tests {
         let script = build_bridge_call("watch", Some(&params)).unwrap();
         assert!(script.starts_with("window.__PILOT__.watch("));
         assert!(script.contains("\"timeout\":5000"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_drag_routes_to_eval() {
+        let engine = EvalEngine::new();
+        let result = dispatch("drag", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_ne!(err.code, -32601);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_drop_routes_to_eval() {
+        let engine = EvalEngine::new();
+        let result = dispatch("drop", None, &engine, None).await;
+        let err = result.unwrap_err();
+        assert_ne!(err.code, -32601);
+    }
+
+    #[test]
+    fn test_build_bridge_call_drag() {
+        let params = json!({"source": {"ref": "e5"}, "target": {"ref": "e6"}});
+        let script = build_bridge_call("drag", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.drag("));
+    }
+
+    #[test]
+    fn test_build_bridge_call_drop() {
+        let params = json!({"ref": "e3", "files": []});
+        let script = build_bridge_call("drop", Some(&params)).unwrap();
+        assert!(script.starts_with("window.__PILOT__.drop("));
     }
 }

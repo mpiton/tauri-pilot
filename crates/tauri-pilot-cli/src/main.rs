@@ -301,6 +301,7 @@ async fn run_command(client: &mut Client, command: Command) -> Result<serde_json
             follow,
         } => run_network_command(client, filter, failed, last, clear, follow).await,
         Command::Assert(kind) => run_assert_command(client, kind).await,
+        Command::Drop { target, file } => run_drop_command(client, &target, file).await,
         cmd => run_dom_command(client, cmd).await,
     }
 }
@@ -378,6 +379,25 @@ async fn run_dom_command(client: &mut Client, command: Command) -> Result<serde_
         Command::Value { target } => client.call("value", Some(target_params(&target))).await,
         Command::Attrs { target } => client.call("attrs", Some(target_params(&target))).await,
         Command::Eval { script } => client.call("eval", Some(json!({"script": script}))).await,
+        Command::Drag {
+            source,
+            target,
+            offset,
+        } => {
+            let mut p = json!({"source": target_params(&source)});
+            if let Some(t) = target {
+                p["target"] = target_params(&t);
+            } else if let Some(off) = offset {
+                let parts: Vec<&str> = off.split(',').collect();
+                anyhow::ensure!(parts.len() == 2, "offset must be X,Y (e.g., '0,100')");
+                let x: f64 = parts[0].trim().parse().context("invalid offset X value")?;
+                let y: f64 = parts[1].trim().parse().context("invalid offset Y value")?;
+                p["offset"] = json!({"x": x, "y": y});
+            } else {
+                anyhow::bail!("drag requires either a target element or --offset");
+            }
+            client.call("drag", Some(p)).await
+        }
         _ => anyhow::bail!("unexpected command in run_dom_command"),
     }
 }
@@ -549,11 +569,74 @@ async fn run_network_command(
         .await
 }
 
+const MAX_DROP_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB per file
+const MAX_TOTAL_DROP_SIZE: usize = 100 * 1024 * 1024; // 100 MB total base64 payload
+
+async fn run_drop_command(
+    client: &mut Client,
+    target: &str,
+    file: Vec<std::path::PathBuf>,
+) -> Result<serde_json::Value> {
+    let mut p = target_params(target);
+    let mut files = Vec::new();
+    let mut total_encoded = 0usize;
+    for path in &file {
+        let meta = std::fs::metadata(path)
+            .with_context(|| format!("Failed to stat file: {}", path.display()))?;
+        anyhow::ensure!(meta.is_file(), "Not a regular file: {}", path.display());
+        anyhow::ensure!(
+            meta.len() <= MAX_DROP_FILE_SIZE,
+            "File too large (>50 MB): {}",
+            path.display()
+        );
+        let data = std::fs::read(path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+        total_encoded += encoded.len();
+        anyhow::ensure!(
+            total_encoded <= MAX_TOTAL_DROP_SIZE,
+            "Total drop payload exceeds 100 MB limit"
+        );
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let mime = mime_from_ext(path);
+        files.push(json!({"name": name, "type": mime, "data": encoded}));
+    }
+    p["files"] = json!(files);
+    client.call("drop", Some(p)).await
+}
+
 fn target_params(raw: &str) -> serde_json::Value {
     match parse_target(raw) {
         Target::Ref(r) => json!({"ref": r}),
         Target::Selector(s) => json!({"selector": s}),
         Target::Coords(x, y) => json!({"x": x, "y": y}),
+    }
+}
+
+fn mime_from_ext(path: &std::path::Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext.as_deref() {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("webp") => "image/webp",
+        Some("pdf") => "application/pdf",
+        Some("json") => "application/json",
+        Some("txt") => "text/plain",
+        Some("html" | "htm") => "text/html",
+        Some("css") => "text/css",
+        Some("js") => "application/javascript",
+        Some("csv") => "text/csv",
+        Some("xml") => "application/xml",
+        Some("zip") => "application/zip",
+        _ => "application/octet-stream",
     }
 }
 
@@ -605,4 +688,52 @@ fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
     candidates
         .pop()
         .ok_or_else(|| anyhow::anyhow!("No tauri-pilot socket found. Is a Tauri app running?"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mime_from_ext_png() {
+        assert_eq!(
+            mime_from_ext(std::path::Path::new("photo.png")),
+            "image/png"
+        );
+    }
+
+    #[test]
+    fn test_mime_from_ext_jpeg_variants() {
+        assert_eq!(mime_from_ext(std::path::Path::new("a.jpg")), "image/jpeg");
+        assert_eq!(mime_from_ext(std::path::Path::new("b.jpeg")), "image/jpeg");
+    }
+
+    #[test]
+    fn test_mime_from_ext_unknown_defaults_to_octet_stream() {
+        assert_eq!(
+            mime_from_ext(std::path::Path::new("data.bin")),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn test_mime_from_ext_no_extension() {
+        assert_eq!(
+            mime_from_ext(std::path::Path::new("Makefile")),
+            "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn test_mime_from_ext_case_insensitive() {
+        assert_eq!(
+            mime_from_ext(std::path::Path::new("PHOTO.PNG")),
+            "image/png"
+        );
+        assert_eq!(mime_from_ext(std::path::Path::new("file.PnG")), "image/png");
+        assert_eq!(
+            mime_from_ext(std::path::Path::new("doc.PDF")),
+            "application/pdf"
+        );
+    }
 }
