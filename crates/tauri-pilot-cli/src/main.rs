@@ -1193,9 +1193,17 @@ fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    // Auto-detect: find the most recent tauri-pilot-*.sock in /tmp
-    let mut candidates: Vec<PathBuf> = std::fs::read_dir("/tmp")
-        .map_err(|e| anyhow::anyhow!("Failed to read /tmp: {e}"))?
+    // Directories to scan: prefer XDG_RUNTIME_DIR, always include /tmp as fallback.
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+        dirs.push(PathBuf::from(xdg));
+    }
+    dirs.push(PathBuf::from("/tmp"));
+
+    let mut candidates: Vec<PathBuf> = dirs
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flatten()
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {
@@ -1205,6 +1213,14 @@ fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
                         .extension()
                         .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
             })
+        })
+        .filter(|p| {
+            use std::os::unix::fs::MetadataExt;
+            // SAFETY: getuid() has no preconditions.
+            let my_uid = unsafe { libc::getuid() };
+            std::fs::metadata(p)
+                .map(|m| m.uid() == my_uid)
+                .unwrap_or(false)
         })
         .collect();
 
@@ -1222,6 +1238,7 @@ fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_mime_from_ext_png() {
@@ -1293,5 +1310,62 @@ mod tests {
     fn test_with_window_none_params_creates_object() {
         let result = with_window(None, Some("main"));
         assert_eq!(result, Some(json!({"window": "main"})));
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_socket_finds_socket_in_xdg_runtime_dir() {
+        let dir =
+            std::env::temp_dir().join(format!("tauri-pilot-xdg-cli-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let sock = dir.join("tauri-pilot-myapp.sock");
+        // Create a dummy file that looks like a socket name.
+        std::fs::write(&sock, b"").expect("create dummy socket file");
+
+        // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
+        unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
+        let result = resolve_socket(None);
+        unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
+
+        let _ = std::fs::remove_file(&sock);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(result.expect("socket found"), sock);
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_socket_falls_back_to_tmp_when_xdg_unset() {
+        let tmp_sock = std::path::PathBuf::from(format!(
+            "/tmp/tauri-pilot-fallback-test-{}.sock",
+            std::process::id()
+        ));
+        // Remove then recreate to ensure this file has the newest mtime.
+        let _ = std::fs::remove_file(&tmp_sock);
+        std::fs::write(&tmp_sock, b"").expect("create dummy socket in /tmp");
+
+        unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
+        let result = resolve_socket(None);
+
+        let _ = std::fs::remove_file(&tmp_sock);
+
+        // Assert the result is a valid tauri-pilot socket path, not an exact path,
+        // to avoid flakiness if other sockets exist in /tmp with newer mtime.
+        let found = result.expect("socket found in /tmp");
+        let name = found
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("socket has a filename");
+        assert!(
+            name.starts_with("tauri-pilot-") && name.ends_with(".sock"),
+            "expected a tauri-pilot-*.sock path, got: {found:?}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_socket_returns_explicit_path() {
+        let explicit = std::path::PathBuf::from("/tmp/my-explicit.sock");
+        let result = resolve_socket(Some(explicit.clone()));
+        assert_eq!(result.expect("explicit path returned"), explicit);
     }
 }
