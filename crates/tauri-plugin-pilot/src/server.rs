@@ -59,7 +59,7 @@ fn is_private_dir(path: &std::path::Path) -> bool {
         Ok(m) => {
             // SAFETY: getuid() has no preconditions.
             let my_uid = unsafe { libc::getuid() };
-            m.uid() == my_uid && m.mode().trailing_zeros() >= 6
+            m.is_dir() && m.uid() == my_uid && m.mode().trailing_zeros() >= 6
         }
         Err(_) => false,
     }
