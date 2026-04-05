@@ -4,6 +4,7 @@ use crate::handler;
 use crate::protocol::{Request, Response};
 use crate::recorder::Recorder;
 
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -51,6 +52,47 @@ fn inode_from_raw_fd(fd: std::os::unix::io::RawFd) -> u64 {
     }
 }
 
+/// Returns true if `path` is a directory owned by the current user with no group/world permissions.
+fn is_private_dir(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match std::fs::metadata(path) {
+        Ok(m) => {
+            // SAFETY: getuid() has no preconditions.
+            let my_uid = unsafe { libc::getuid() };
+            m.uid() == my_uid && m.mode().trailing_zeros() >= 6
+        }
+        Err(_) => false,
+    }
+}
+
+/// Core implementation — accepts the XDG value directly so tests can call it without mutating
+/// the process environment.
+fn socket_dir_from(xdg: Option<std::ffi::OsString>) -> std::path::PathBuf {
+    if let Some(val) = xdg.filter(|v| !v.is_empty()) {
+        let path = std::path::PathBuf::from(&val);
+        if is_private_dir(&path) {
+            return path;
+        }
+        tracing::warn!(
+            path = %path.display(),
+            "XDG_RUNTIME_DIR is not a private directory, falling back to /tmp"
+        );
+    }
+    std::path::PathBuf::from("/tmp")
+}
+
+/// Returns the directory for the socket file.
+/// Prefers `$XDG_RUNTIME_DIR` when it is a private directory (owned by current user, no
+/// group/world access). Falls back to `/tmp` with a warning if the directory is not private.
+fn socket_dir() -> std::path::PathBuf {
+    socket_dir_from(std::env::var_os("XDG_RUNTIME_DIR"))
+}
+
+/// Build the full socket path for the given app identifier.
+pub(crate) fn socket_path(identifier: &str) -> std::path::PathBuf {
+    socket_dir().join(format!("tauri-pilot-{identifier}.sock"))
+}
+
 /// Bind the socket using the **std** (sync) listener so this can be called
 /// outside a tokio runtime (e.g. from Tauri plugin `setup`).
 ///
@@ -60,7 +102,13 @@ fn inode_from_raw_fd(fd: std::os::unix::io::RawFd) -> u64 {
 pub(crate) fn bind(
     socket_path: &std::path::Path,
 ) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
-    let listener = match std::os::unix::net::UnixListener::bind(socket_path) {
+    // SAFETY: umask is always safe to call; we restore the old mask immediately.
+    let old_mask = unsafe { libc::umask(0o177) };
+    let first_bind = std::os::unix::net::UnixListener::bind(socket_path);
+    // SAFETY: restoring the umask we just saved.
+    unsafe { libc::umask(old_mask) };
+
+    let listener = match first_bind {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             // Probe: if a live server answers, the socket is truly in use.
@@ -76,7 +124,12 @@ pub(crate) fn bind(
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
                     // Stale socket from a crashed process — safe to remove and retry.
                     let _ = std::fs::remove_file(socket_path);
-                    std::os::unix::net::UnixListener::bind(socket_path)?
+                    // SAFETY: umask is always safe to call; we restore the old mask immediately.
+                    let old_mask = unsafe { libc::umask(0o177) };
+                    let retry_bind = std::os::unix::net::UnixListener::bind(socket_path);
+                    // SAFETY: restoring the umask we just saved.
+                    unsafe { libc::umask(old_mask) };
+                    retry_bind?
                 }
                 Err(e) => {
                     return Err(Error::Io(e));
@@ -85,6 +138,9 @@ pub(crate) fn bind(
         }
         Err(e) => return Err(Error::Io(e)),
     };
+
+    // Restrict socket to owner-only access (defense-in-depth alongside XDG_RUNTIME_DIR).
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
 
     // Must be non-blocking for tokio conversion
     listener.set_nonblocking(true)?;
@@ -140,6 +196,25 @@ async fn accept_loop(
                 continue;
             }
         };
+        // Verify the connecting process belongs to the same user.
+        match stream.peer_cred() {
+            Ok(cred) => {
+                // SAFETY: getuid() is always safe to call; it has no preconditions.
+                let my_uid = unsafe { libc::getuid() };
+                if cred.uid() != my_uid {
+                    tracing::warn!(
+                        peer_uid = cred.uid(),
+                        expected_uid = my_uid,
+                        "rejected connection from different user"
+                    );
+                    continue;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("failed to get peer credentials: {e}");
+                continue;
+            }
+        }
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
             if let Err(e) =
@@ -321,5 +396,44 @@ mod tests {
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);
+    }
+
+    #[test]
+    fn test_socket_dir_from_returns_xdg_runtime_dir_when_set_and_private() {
+        use std::os::unix::fs::PermissionsExt;
+        // Create a private temp dir (0o700) to simulate a valid XDG_RUNTIME_DIR.
+        let dir = std::env::temp_dir().join(format!("tauri-pilot-xdg-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let result = socket_dir_from(Some(dir.as_os_str().to_owned()));
+        let _ = std::fs::remove_dir(&dir);
+        assert_eq!(result, dir);
+    }
+
+    #[test]
+    fn test_socket_dir_from_falls_back_to_tmp_when_none() {
+        let result = socket_dir_from(None);
+        assert_eq!(result, std::path::PathBuf::from("/tmp"));
+    }
+
+    #[test]
+    fn test_socket_dir_from_falls_back_to_tmp_when_empty() {
+        let result = socket_dir_from(Some(std::ffi::OsString::new()));
+        assert_eq!(result, std::path::PathBuf::from("/tmp"));
+    }
+
+    #[tokio::test]
+    async fn test_bind_socket_has_mode_0o600() {
+        use std::os::unix::fs::PermissionsExt;
+        let socket = unique_socket_path();
+        let (listener, guard) = bind(&socket).expect("bind test socket");
+        let meta = std::fs::metadata(&socket).expect("socket metadata");
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "socket must be owner-only (0o600), got {mode:#o}"
+        );
+        drop(listener);
+        drop(guard);
     }
 }

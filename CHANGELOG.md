@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Socket hardening** — three layers of defense against local privilege escalation ([#31])
+  - Socket permissions set to `0o600` (owner-only) immediately after bind
+  - `umask(0o177)` guard around bind to eliminate TOCTOU race window
+  - Peer credential (UID) verification rejects connections from other local users
+  - Socket placed in `$XDG_RUNTIME_DIR` (user-private `0o700` directory) with `/tmp` fallback
+  - `XDG_RUNTIME_DIR` validated for ownership and permissions before use
+  - CLI `resolve_socket()` filters candidates by UID ownership
+
 ## [0.2.0] - 2026-04-05
 
 ### Added
