@@ -52,13 +52,11 @@ if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
   echo "Error: CHANGELOG.md is missing '## [Unreleased]' header"
   exit 1
 fi
-perl -i -pe "s/^## \\[Unreleased\\]/## [Unreleased]\n\n## [$VERSION] - $TODAY/" CHANGELOG.md
-
-# Verify the version section was created
-if ! grep -q "## \[$VERSION\] - " CHANGELOG.md; then
-  echo "Error: failed to create version section in CHANGELOG.md"
+if grep -q "## \[$VERSION\]" CHANGELOG.md; then
+  echo "Error: CHANGELOG.md already has an entry for $VERSION"
   exit 1
 fi
+perl -i -pe "s/^## \\[Unreleased\\]/## [Unreleased]\n\n## [$VERSION] - $TODAY/" CHANGELOG.md
 
 # Update comparison links at bottom of CHANGELOG
 # Add new unreleased comparison link and version link

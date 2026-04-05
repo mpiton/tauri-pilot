@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-05
+
 ### Added
 
 - **Record/replay** — capture user interactions as replayable test scripts (`record start`, `record stop --output`, `record status`, `replay`, `replay --export sh`) ([#15])
@@ -109,7 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#12]: https://github.com/mpiton/tauri-pilot/issues/12
 [#11]: https://github.com/mpiton/tauri-pilot/issues/11
 [#10]: https://github.com/mpiton/tauri-pilot/issues/10
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mpiton/tauri-pilot/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mpiton/tauri-pilot/releases/tag/v0.1.0
 [#9]: https://github.com/mpiton/tauri-pilot/issues/9
 [#1]: https://github.com/mpiton/tauri-pilot/pull/1
