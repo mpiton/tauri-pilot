@@ -89,6 +89,12 @@ fn main() {
 cargo install tauri-pilot
 ```
 
+Optionally, make it available to your Agent:
+
+```bash
+npx skills add https://github.com/mpiton/tauri-pilot
+```
+
 ### 3. Use it
 
 ```bash
