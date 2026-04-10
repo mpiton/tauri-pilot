@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-10
+
 ### Added
 
 - **macOS support** — CI verification on macOS, updated documentation and platform requirements ([#37])
@@ -128,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#11]: https://github.com/mpiton/tauri-pilot/issues/11
 [#10]: https://github.com/mpiton/tauri-pilot/issues/10
 [#37]: https://github.com/mpiton/tauri-pilot/issues/37
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...HEAD
 [0.2.1]: https://github.com/mpiton/tauri-pilot/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mpiton/tauri-pilot/releases/tag/v0.1.0
@@ -142,3 +144,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#8]: https://github.com/mpiton/tauri-pilot/issues/8
 [#17]: https://github.com/mpiton/tauri-pilot/pull/17
 [#31]: https://github.com/mpiton/tauri-pilot/issues/31
+[0.3.0]: https://github.com/mpiton/tauri-pilot/releases/tag/v0.3.0
