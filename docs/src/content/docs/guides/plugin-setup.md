@@ -62,15 +62,15 @@ The CLI auto-discovers this socket when you run commands.
 
 ## 5. Permissions
 
-The plugin operates through the standard Plugin API and WebView eval. It ships a default permission (`allow-callback`) for its internal `__callback` IPC command. If your app enforces Tauri capabilities, add the plugin's permission set to your `tauri.conf.json`:
+The plugin requires the `pilot:default` permission for its internal `__callback` IPC command. Add it to your capability file (e.g. `src-tauri/capabilities/default.json`):
 
 ```json
 {
-  "permissions": ["pilot:default"]
+  "permissions": ["core:default", "pilot:default"]
 }
 ```
 
-Most apps using the default Tauri capability configuration will not need any manual permission entries.
+Without this permission, eval commands will time out with "eval timed out after 10s".
 
 ## 6. Verify the setup
 
