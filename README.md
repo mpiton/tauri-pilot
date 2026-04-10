@@ -91,6 +91,8 @@ fn main() {
 >   "permissions": ["core:default", "pilot:default"]
 > }
 > ```
+>
+> Without `pilot:default`, eval commands fail with: `eval timed out after 10s`.
 
 ### 2. Install the CLI
 

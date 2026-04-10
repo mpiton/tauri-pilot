@@ -38,7 +38,19 @@ fn main() {
 }
 ```
 
-### 3. Install the CLI
+### 3. Add the required capability
+
+Add `pilot:default` to your app's capability file (e.g. `src-tauri/capabilities/default.json`):
+
+```json
+{
+  "permissions": ["core:default", "pilot:default"]
+}
+```
+
+Without this permission, eval commands fail with: `eval timed out after 10s`.
+
+### 4. Install the CLI
 
 ```bash
 cargo install tauri-pilot-cli
