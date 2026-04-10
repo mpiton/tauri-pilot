@@ -16,7 +16,7 @@ This page explains how the different components of tauri-pilot fit together and 
                                    │  │  JS Bridge (injected)│   │
                                    │  │  window.__PILOT__    │   │
                                    │  └─────────────────────┘   │
-                                   │  WebView (WebKitGTK)        │
+                                   │  WebView                    │
                                    └─────────────────────────────┘
 ```
 

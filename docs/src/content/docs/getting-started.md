@@ -5,7 +5,7 @@ description: Install tauri-pilot and start testing your Tauri v2 app interactive
 
 ## Requirements
 
-- Linux (WebKitGTK) — macOS/Windows planned
+- Linux (WebKitGTK) or macOS (WebKit) — Windows planned
 - Tauri v2 (v1 not supported)
 - Rust 1.94.0+ (edition 2024)
 
@@ -38,7 +38,19 @@ fn main() {
 }
 ```
 
-### 3. Install the CLI
+### 3. Add the required capability
+
+Add `pilot:default` to your app's capability file (e.g. `src-tauri/capabilities/default.json`):
+
+```json
+{
+  "permissions": ["core:default", "pilot:default"]
+}
+```
+
+Without this permission, eval commands fail with: `eval timed out after 10s`.
+
+### 4. Install the CLI
 
 ```bash
 cargo install tauri-pilot-cli

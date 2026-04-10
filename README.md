@@ -7,7 +7,7 @@
   <a href="https://crates.io/crates/tauri-plugin-pilot"><img src="https://img.shields.io/crates/v/tauri-plugin-pilot.svg" alt="crates.io"></a>
   <a href="https://github.com/mpiton/tauri-pilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/rust-1.94.1+-orange.svg" alt="Rust 1.94.1+">
-  <img src="https://img.shields.io/badge/platform-linux-lightgrey.svg" alt="Platform: Linux">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS-lightgrey.svg" alt="Platform: Linux | macOS">
   <img src="https://img.shields.io/badge/tauri-v2-24C8D8.svg" alt="Tauri v2">
 </p>
 
@@ -38,7 +38,7 @@ ok
 
 ## Why?
 
-There's no tool for AI agents to interact with Tauri app UIs. Playwright doesn't work (Tauri uses WebKitGTK, not Chromium). tauri-pilot bridges this gap with a lightweight plugin + CLI that speaks a protocol optimized for LLM consumption.
+There's no tool for AI agents to interact with Tauri app UIs. Playwright doesn't work (Tauri uses system WebViews — WebKitGTK on Linux, WebKit on macOS — not Chromium). tauri-pilot bridges this gap with a lightweight plugin + CLI that speaks a protocol optimized for LLM consumption.
 
 ## How it works
 
@@ -51,7 +51,7 @@ There's no tool for AI agents to interact with Tauri app UIs. Playwright doesn't
                                    │  │  JS Bridge (injected)│   │
                                    │  │  window.__PILOT__    │   │
                                    │  └─────────────────────┘   │
-                                   │  WebView (WebKitGTK)        │
+                                   │  WebView                    │
                                    └─────────────────────────────┘
 ```
 
@@ -82,6 +82,17 @@ fn main() {
     builder.run(tauri::generate_context!()).expect("error running app");
 }
 ```
+
+> **Required capability** — add `pilot:default` to your app's capability file
+> (e.g. `src-tauri/capabilities/default.json`):
+>
+> ```json
+> {
+>   "permissions": ["core:default", "pilot:default"]
+> }
+> ```
+>
+> Without `pilot:default`, eval commands fail with: `eval timed out after 10s`.
 
 ### 2. Install the CLI
 
@@ -167,7 +178,7 @@ Use `--json` for structured output when parsing programmatically.
 
 ## Requirements
 
-- **Linux** (WebKitGTK) — macOS/Windows planned
+- **Linux** (WebKitGTK) or **macOS** (WebKit) — Windows planned
 - **Tauri v2** (v1 not supported)
 - **Rust 1.94.1+** (LTS, edition 2024)
 
