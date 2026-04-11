@@ -471,8 +471,13 @@ async fn run_diff_command(
 
 fn read_script(reader: &mut impl std::io::Read) -> Result<String> {
     let mut s = String::new();
-    reader.read_to_string(&mut s).context("reading script from stdin")?;
-    anyhow::ensure!(!s.trim().is_empty(), "script read from stdin is empty or blank");
+    reader
+        .read_to_string(&mut s)
+        .context("reading script from stdin")?;
+    anyhow::ensure!(
+        !s.trim().is_empty(),
+        "script read from stdin is empty or blank"
+    );
     Ok(s)
 }
 
@@ -548,7 +553,13 @@ async fn run_dom_command(
         }
         Command::Eval { script } => {
             let script = match script.as_deref() {
-                None | Some("-") => read_script(&mut std::io::stdin())?,
+                None | Some("-") => {
+                    anyhow::ensure!(
+                        !std::io::stdin().is_terminal(),
+                        "stdin is a terminal: pass a script as argument or pipe it in"
+                    );
+                    read_script(&mut std::io::stdin())?
+                }
                 Some(s) => s.to_owned(),
             };
             client

@@ -777,13 +777,7 @@ mod tests {
         // Scripts with double quotes are the primary motivation for stdin support —
         // the shell would mangle them if passed as a CLI argument.
         let script = r#"document.querySelector('[data-id="main"]').textContent"#;
-        let cli = Cli::parse_from([
-            "tauri-pilot",
-            "--socket",
-            "/tmp/test.sock",
-            "eval",
-            script,
-        ]);
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "eval", script]);
         if let Command::Eval { script: parsed } = cli.command {
             assert_eq!(parsed, Some(script.to_owned()));
         } else {
@@ -793,13 +787,7 @@ mod tests {
 
     #[test]
     fn test_parse_eval_dash_reads_stdin() {
-        let cli = Cli::parse_from([
-            "tauri-pilot",
-            "--socket",
-            "/tmp/test.sock",
-            "eval",
-            "-",
-        ]);
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "eval", "-"]);
         if let Command::Eval { script } = cli.command {
             assert_eq!(script, Some("-".to_owned()));
         } else {
