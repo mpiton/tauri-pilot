@@ -98,7 +98,11 @@ pub(crate) enum Command {
     /// Get all attributes of an element.
     Attrs { target: String },
     /// Evaluate arbitrary JavaScript.
-    Eval { script: String },
+    /// Pass `-` as the script or omit it to read from stdin.
+    Eval {
+        /// JavaScript to evaluate. Use `-` or omit to read from stdin.
+        script: Option<String>,
+    },
     /// Invoke a Tauri IPC command.
     Ipc {
         command: String,
@@ -765,6 +769,51 @@ mod tests {
         assert_eq!(cli.window, Some("main".to_owned()));
         unsafe {
             std::env::remove_var("TAURI_PILOT_WINDOW");
+        }
+    }
+
+    #[test]
+    fn test_parse_eval_with_script_containing_quotes() {
+        // Scripts with double quotes are the primary motivation for stdin support —
+        // the shell would mangle them if passed as a CLI argument.
+        let script = r#"document.querySelector('[data-id="main"]').textContent"#;
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "eval",
+            script,
+        ]);
+        if let Command::Eval { script: parsed } = cli.command {
+            assert_eq!(parsed, Some(script.to_owned()));
+        } else {
+            panic!("Expected Eval command");
+        }
+    }
+
+    #[test]
+    fn test_parse_eval_dash_reads_stdin() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "eval",
+            "-",
+        ]);
+        if let Command::Eval { script } = cli.command {
+            assert_eq!(script, Some("-".to_owned()));
+        } else {
+            panic!("Expected Eval command with dash");
+        }
+    }
+
+    #[test]
+    fn test_parse_eval_no_arg_reads_stdin() {
+        let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "eval"]);
+        if let Command::Eval { script } = cli.command {
+            assert_eq!(script, None);
+        } else {
+            panic!("Expected Eval command with no script");
         }
     }
 
