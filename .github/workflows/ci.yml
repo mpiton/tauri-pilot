@@ -61,3 +61,18 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+  ci:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: check
+    if: always()
+    steps:
+      - name: Verify matrix result
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+        run: |
+          if [[ "$CHECK_RESULT" != "success" ]]; then
+            echo "One or more matrix jobs failed or were cancelled (result=$CHECK_RESULT)"
+            exit 1
+          fi
