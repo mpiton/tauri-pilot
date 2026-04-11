@@ -540,6 +540,15 @@ async fn run_dom_command(
                 .await
         }
         Command::Eval { script } => {
+            let script = match script.as_deref() {
+                None | Some("-") => {
+                    use std::io::Read;
+                    let mut s = String::new();
+                    std::io::stdin().read_to_string(&mut s).context("reading script from stdin")?;
+                    s
+                }
+                Some(s) => s.to_owned(),
+            };
             client
                 .call("eval", with_window(Some(json!({"script": script})), window))
                 .await
