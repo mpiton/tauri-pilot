@@ -481,6 +481,26 @@ fn read_script(reader: &mut impl std::io::Read) -> Result<String> {
     Ok(s)
 }
 
+async fn handle_eval(
+    client: &mut Client,
+    script: Option<String>,
+    window: Option<&str>,
+) -> Result<Value> {
+    let script = match script.as_deref() {
+        None | Some("-") => {
+            anyhow::ensure!(
+                !std::io::stdin().is_terminal(),
+                "stdin is a terminal: pass a script as argument or pipe it in"
+            );
+            read_script(&mut std::io::stdin())?
+        }
+        Some(s) => s.to_owned(),
+    };
+    client
+        .call("eval", with_window(Some(json!({"script": script})), window))
+        .await
+}
+
 async fn run_dom_command(
     client: &mut Client,
     command: Command,
@@ -551,21 +571,7 @@ async fn run_dom_command(
                 .call("attrs", with_window(Some(target_params(&target)), window))
                 .await
         }
-        Command::Eval { script } => {
-            let script = match script.as_deref() {
-                None | Some("-") => {
-                    anyhow::ensure!(
-                        !std::io::stdin().is_terminal(),
-                        "stdin is a terminal: pass a script as argument or pipe it in"
-                    );
-                    read_script(&mut std::io::stdin())?
-                }
-                Some(s) => s.to_owned(),
-            };
-            client
-                .call("eval", with_window(Some(json!({"script": script})), window))
-                .await
-        }
+        Command::Eval { script } => handle_eval(client, script, window).await,
         Command::Drag {
             source,
             target,
