@@ -469,6 +469,38 @@ async fn run_diff_command(
     client.call("diff", with_window(Some(params), window)).await
 }
 
+fn read_script(reader: &mut impl std::io::Read) -> Result<String> {
+    let mut s = String::new();
+    reader
+        .read_to_string(&mut s)
+        .context("reading script from stdin")?;
+    anyhow::ensure!(
+        !s.trim().is_empty(),
+        "script read from stdin is empty or blank"
+    );
+    Ok(s)
+}
+
+async fn handle_eval(
+    client: &mut Client,
+    script: Option<String>,
+    window: Option<&str>,
+) -> Result<Value> {
+    let script = match script.as_deref() {
+        None | Some("-") => {
+            anyhow::ensure!(
+                !std::io::stdin().is_terminal(),
+                "stdin is a terminal: pass a script as argument or pipe it in"
+            );
+            read_script(&mut std::io::stdin())?
+        }
+        Some(s) => s.to_owned(),
+    };
+    client
+        .call("eval", with_window(Some(json!({"script": script})), window))
+        .await
+}
+
 async fn run_dom_command(
     client: &mut Client,
     command: Command,
@@ -539,11 +571,7 @@ async fn run_dom_command(
                 .call("attrs", with_window(Some(target_params(&target)), window))
                 .await
         }
-        Command::Eval { script } => {
-            client
-                .call("eval", with_window(Some(json!({"script": script})), window))
-                .await
-        }
+        Command::Eval { script } => handle_eval(client, script, window).await,
         Command::Drag {
             source,
             target,
@@ -1367,5 +1395,25 @@ mod tests {
         let explicit = std::path::PathBuf::from("/tmp/my-explicit.sock");
         let result = resolve_socket(Some(explicit.clone()));
         assert_eq!(result.expect("explicit path returned"), explicit);
+    }
+
+    #[test]
+    fn test_read_script_valid() {
+        let mut reader = std::io::Cursor::new(b"document.title");
+        assert_eq!(read_script(&mut reader).unwrap(), "document.title");
+    }
+
+    #[test]
+    fn test_read_script_empty_errors() {
+        let mut reader = std::io::Cursor::new(b"");
+        let err = read_script(&mut reader).unwrap_err();
+        assert!(err.to_string().contains("empty or blank"), "got: {err}");
+    }
+
+    #[test]
+    fn test_read_script_blank_errors() {
+        let mut reader = std::io::Cursor::new(b"   \n  ");
+        let err = read_script(&mut reader).unwrap_err();
+        assert!(err.to_string().contains("empty or blank"), "got: {err}");
     }
 }
