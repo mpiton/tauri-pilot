@@ -97,7 +97,7 @@ fn main() {
 ### 2. Install the CLI
 
 ```bash
-cargo install tauri-pilot
+cargo install tauri-pilot-cli
 ```
 
 Optionally, make it available to your Agent:
