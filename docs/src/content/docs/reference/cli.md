@@ -624,7 +624,7 @@ type      = button
 Execute arbitrary JavaScript in the WebView context and return the result.
 
 ```bash
-tauri-pilot eval <script>
+tauri-pilot eval [script|-]
 ```
 
 **Example:**
@@ -636,6 +636,25 @@ PR Dashboard
 $ tauri-pilot eval "window.location.pathname"
 /dashboard
 ```
+
+Use `-` to read JavaScript from stdin. This is useful for complex selectors,
+quotes, Panda CSS class names, or multi-line scripts:
+
+```bash
+$ tauri-pilot eval - <<'EOF'
+document.querySelector('[data-id="main"]').textContent
+EOF
+# (output depends on your app)
+Main content
+
+$ echo 'document.title' | tauri-pilot eval -
+# (output depends on your app)
+PR Dashboard
+```
+
+Prefer `<<'EOF'` with quotes around the heredoc delimiter. It disables shell
+variable and command expansion, so `$` and backticks inside the script do not
+need escaping.
 
 ---
 
