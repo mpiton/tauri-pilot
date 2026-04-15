@@ -133,6 +133,20 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `ass
 | `network -f` | Stream requests (follow) |
 | `network --clear` | Flush request buffer |
 
+Use stdin for complex or multi-line JavaScript so selectors, quotes, `$`, and
+backticks do not need shell escaping:
+
+```bash
+tauri-pilot eval - <<'EOF'
+document.querySelector('[data-id="main"]').textContent
+EOF
+
+echo 'document.title' | tauri-pilot eval -
+```
+
+Prefer the single-quoted heredoc delimiter (`<<'EOF'`) because it disables shell
+variable and command expansion inside the script.
+
 ### Record & Replay
 
 | Command | Description |

@@ -125,7 +125,18 @@ tauri-pilot press Enter
 tauri-pilot assert text @e1 "Expected text"
 tauri-pilot assert visible @e3
 tauri-pilot wait --selector ".success-message"
+
+# Debug with JavaScript
+tauri-pilot eval "document.title"
+tauri-pilot eval - <<'EOF'
+document.querySelector('[data-id="main"]').textContent
+EOF
+echo 'window.location.pathname' | tauri-pilot eval -
 ```
+
+Use `tauri-pilot eval -` for complex or multi-line scripts. The single-quoted heredoc
+delimiter (`<<'EOF'`) disables shell expansion, so `$`, backticks, and quotes inside
+the JavaScript do not need escaping.
 
 ## Commands
 
