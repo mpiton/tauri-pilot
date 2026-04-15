@@ -1563,17 +1563,57 @@ mod tests {
     };
 
     #[test]
-    fn tool_list_contains_core_commands_sorted() {
+    fn tool_list_matches_cli_command_surface() {
         let tools = tools();
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-        assert!(names.contains(&"snapshot"));
-        assert!(names.contains(&"click"));
-        assert!(names.contains(&"logs"));
-        assert!(names.contains(&"record_stop"));
-        assert!(names.contains(&"replay"));
-        let mut sorted = names.clone();
-        sorted.sort_unstable();
-        assert_eq!(names, sorted);
+        let expected = vec![
+            "assert_checked",
+            "assert_contains",
+            "assert_count",
+            "assert_hidden",
+            "assert_text",
+            "assert_url",
+            "assert_value",
+            "assert_visible",
+            "attrs",
+            "check",
+            "click",
+            "diff",
+            "drag",
+            "drop",
+            "eval",
+            "fill",
+            "forms",
+            "html",
+            "ipc",
+            "logs",
+            "navigate",
+            "network",
+            "ping",
+            "press",
+            "record_start",
+            "record_status",
+            "record_stop",
+            "replay",
+            "screenshot",
+            "scroll",
+            "select",
+            "snapshot",
+            "state",
+            "storage_clear",
+            "storage_get",
+            "storage_list",
+            "storage_set",
+            "text",
+            "title",
+            "type",
+            "url",
+            "value",
+            "wait",
+            "watch",
+            "windows",
+        ];
+        assert_eq!(names, expected);
     }
 
     #[test]
