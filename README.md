@@ -160,6 +160,7 @@ tauri-pilot wait --selector ".success-message"
 | `network` | Capture and display network requests |
 | `record` | Record interactions (`start`, `stop --output`, `status`) |
 | `replay` | Replay recorded session (`--export sh` for shell script) |
+| `mcp` | Start a Model Context Protocol server over stdio |
 
 ## For AI Agents
 
@@ -175,6 +176,38 @@ tauri-pilot is designed for AI agent consumption. The workflow is:
 The `assert` command replaces the manual `text @ref` + parse + compare pattern, reducing round-trips and token usage.
 
 Use `--json` for structured output when parsing programmatically.
+
+### MCP server
+
+For agents with native MCP support, run tauri-pilot as a stdio MCP server instead
+of shelling out for each command:
+
+```json
+{
+  "mcpServers": {
+    "tauri-pilot": {
+      "command": "tauri-pilot",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes the same app-inspection and interaction surface as the CLI:
+`snapshot`, `click`, `fill`, `logs`, `network`, `eval`, `ipc`, `assert_*`, and the
+other testing tools. Use global flags before `mcp` to pin a specific app socket or
+window:
+
+```json
+{
+  "mcpServers": {
+    "tauri-pilot": {
+      "command": "tauri-pilot",
+      "args": ["--socket", "/tmp/tauri-pilot-myapp.sock", "--window", "main", "mcp"]
+    }
+  }
+}
+```
 
 ## Requirements
 

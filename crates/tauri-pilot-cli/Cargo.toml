@@ -31,6 +31,7 @@ base64 = "0.22.1"
 owo-colors = { version = "4.3.0", features = ["supports-colors"] }
 indicatif = "0.17"
 libc = "0.2.184"
+rmcp = { version = "1.4.0", default-features = false, features = ["server", "transport-io"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

@@ -145,3 +145,38 @@ tauri-pilot assert text @e1 "Results"     # verify in one step
 ```
 
 No custom integration code is needed — tauri-pilot is a CLI that Claude Code can invoke directly.
+
+## MCP Server
+
+Agents with native Model Context Protocol support can use tauri-pilot as a stdio
+MCP server:
+
+```json
+{
+  "mcpServers": {
+    "tauri-pilot": {
+      "command": "tauri-pilot",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes the same app-facing commands as structured tools:
+`snapshot`, `click`, `fill`, `logs`, `network`, `eval`, `ipc`, `assert_*`, and
+more. Tool calls return structured JSON content, so agents do not need to parse
+terminal output.
+
+Use global flags before `mcp` when an agent should target a specific app socket or
+window:
+
+```json
+{
+  "mcpServers": {
+    "tauri-pilot": {
+      "command": "tauri-pilot",
+      "args": ["--socket", "/tmp/tauri-pilot-myapp.sock", "--window", "main", "mcp"]
+    }
+  }
+}
+```

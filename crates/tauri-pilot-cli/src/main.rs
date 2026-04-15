@@ -1,5 +1,6 @@
 mod cli;
 mod client;
+mod mcp;
 mod output;
 mod protocol;
 mod style;
@@ -22,14 +23,24 @@ use client::Client;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
-
     let args = Cli::parse();
+    let is_mcp = matches!(args.command, Command::Mcp);
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+
+    if is_mcp {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    }
+
+    if is_mcp {
+        return mcp::run_mcp_server(args.socket, args.window).await;
+    }
+
     let socket = resolve_socket(args.socket)?;
     let mut client = Client::connect(&socket).await?;
 
@@ -287,7 +298,7 @@ async fn follow_network(
     }
 }
 
-fn with_window(params: Option<Value>, window: Option<&str>) -> Option<Value> {
+pub(crate) fn with_window(params: Option<Value>, window: Option<&str>) -> Option<Value> {
     match (params, window) {
         (Some(Value::Object(mut map)), Some(w)) => {
             map.insert("window".to_string(), json!(w));
@@ -304,6 +315,7 @@ async fn run_command(
     window: Option<&str>,
 ) -> Result<serde_json::Value> {
     match command {
+        Command::Mcp => anyhow::bail!("mcp must be handled before run_command"),
         Command::Windows => client.call("windows.list", None).await,
         Command::Ping => client.call("ping", with_window(None, window)).await,
         Command::State => client.call("state", with_window(None, window)).await,
@@ -851,7 +863,7 @@ async fn run_storage_command(
 const MAX_DROP_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB per file
 const MAX_TOTAL_DROP_SIZE: usize = 100 * 1024 * 1024; // 100 MB total base64 payload
 
-async fn run_drop_command(
+pub(crate) async fn run_drop_command(
     client: &mut Client,
     target: &str,
     file: Vec<std::path::PathBuf>,
@@ -888,7 +900,7 @@ async fn run_drop_command(
     client.call("drop", with_window(Some(p), window)).await
 }
 
-fn target_params(raw: &str) -> serde_json::Value {
+pub(crate) fn target_params(raw: &str) -> serde_json::Value {
     match parse_target(raw) {
         Target::Ref(r) => json!({"ref": r}),
         Target::Selector(s) => json!({"selector": s}),
@@ -970,22 +982,16 @@ async fn run_record_command(
     }
 }
 
-async fn run_replay_command(
+pub(crate) async fn run_replay_command(
     client: &mut Client,
     path: &std::path::Path,
     export: Option<&str>,
     window: Option<&str>,
 ) -> Result<Value> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read recording file: {}", path.display()))?;
-    let entries: Vec<serde_json::Value> =
-        serde_json::from_str(&content).context("Invalid recording file format")?;
+    let entries = read_replay_entries(path)?;
 
     if let Some(fmt) = export {
-        if fmt == "sh" {
-            return Ok(Value::String(export_shell_script(&entries)));
-        }
-        anyhow::bail!("unsupported export format: {fmt}; supported: sh");
+        return export_replay_command(&entries, fmt);
     }
 
     let total = entries.len();
@@ -1054,6 +1060,24 @@ async fn run_replay_command(
         "skipped": skipped,
         "failed": executed - passed
     }))
+}
+
+fn read_replay_entries(path: &std::path::Path) -> Result<Vec<serde_json::Value>> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read recording file: {}", path.display()))?;
+    serde_json::from_str(&content).context("Invalid recording file format")
+}
+
+pub(crate) fn export_replay_file(path: &std::path::Path, export: &str) -> Result<Value> {
+    let entries = read_replay_entries(path)?;
+    export_replay_command(&entries, export)
+}
+
+fn export_replay_command(entries: &[Value], export: &str) -> Result<Value> {
+    if export == "sh" {
+        return Ok(Value::String(export_shell_script(entries)));
+    }
+    anyhow::bail!("unsupported export format: {export}; supported: sh")
 }
 
 fn export_shell_script(entries: &[Value]) -> String {
@@ -1216,7 +1240,7 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
 }
 
 /// Resolve the socket path from explicit arg, env var, or auto-detection.
-fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
+pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(path) = explicit {
         return Ok(path);
     }

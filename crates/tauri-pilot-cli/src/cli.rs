@@ -22,6 +22,8 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Start a Model Context Protocol server over stdio.
+    Mcp,
     /// List all open windows
     Windows,
     /// Check connectivity with a running Tauri app.
@@ -742,6 +744,12 @@ mod tests {
     fn test_windows_command() {
         let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "windows"]);
         assert!(matches!(cli.command, Command::Windows));
+    }
+
+    #[test]
+    fn test_mcp_command() {
+        let cli = Cli::parse_from(["tauri-pilot", "mcp"]);
+        assert!(matches!(cli.command, Command::Mcp));
     }
 
     #[test]
