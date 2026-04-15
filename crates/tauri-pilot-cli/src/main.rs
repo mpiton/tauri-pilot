@@ -12,7 +12,7 @@ use base64::Engine;
 use clap::Parser;
 use serde_json::{Value, json};
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use cli::{
@@ -1245,17 +1245,20 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    // Directories to scan: prefer XDG_RUNTIME_DIR, always include /tmp as fallback.
-    let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
-        dirs.push(PathBuf::from(xdg));
+        let xdg = PathBuf::from(xdg);
+        if let Some(socket) = newest_socket_in_dir(&xdg) {
+            return Ok(socket);
+        }
     }
-    dirs.push(PathBuf::from("/tmp"));
 
-    let mut candidates: Vec<PathBuf> = dirs
-        .iter()
-        .filter_map(|dir| std::fs::read_dir(dir).ok())
-        .flatten()
+    newest_socket_in_dir(Path::new("/tmp"))
+        .ok_or_else(|| anyhow::anyhow!("No tauri-pilot socket found. Is a Tauri app running?"))
+}
+
+fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| {
@@ -1282,9 +1285,7 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
 
-    candidates
-        .pop()
-        .ok_or_else(|| anyhow::anyhow!("No tauri-pilot socket found. Is a Tauri app running?"))
+    candidates.pop()
 }
 
 #[cfg(test)]
@@ -1383,6 +1384,35 @@ mod tests {
         let _ = std::fs::remove_dir(&dir);
 
         assert_eq!(result.expect("socket found"), sock);
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_socket_prefers_xdg_runtime_dir_over_tmp() {
+        let dir = std::env::temp_dir().join(format!(
+            "tauri-pilot-xdg-precedence-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let xdg_sock = dir.join("tauri-pilot-xdg.sock");
+        let tmp_sock = std::path::PathBuf::from(format!(
+            "/tmp/tauri-pilot-newer-tmp-test-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&tmp_sock);
+        std::fs::write(&xdg_sock, b"").expect("create xdg socket file");
+        std::fs::write(&tmp_sock, b"").expect("create newer tmp socket file");
+
+        // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
+        unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
+        let result = resolve_socket(None);
+        unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
+
+        let _ = std::fs::remove_file(&xdg_sock);
+        let _ = std::fs::remove_file(&tmp_sock);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(result.expect("socket found"), xdg_sock);
     }
 
     #[test]

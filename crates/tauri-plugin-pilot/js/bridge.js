@@ -428,12 +428,75 @@
     throw new Error("No ref, selector, or coordinates provided");
   }
 
+  function dispatchPointerEvent(el, type, options) {
+    const init = Object.assign({
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+      button: 0,
+      buttons: type === "pointerdown" ? 1 : 0,
+      view: window,
+      clientX: 0,
+      clientY: 0,
+    }, options || {});
+
+    if (typeof PointerEvent === "function") {
+      return el.dispatchEvent(new PointerEvent(type, init));
+    }
+
+    const event = new MouseEvent(type, init);
+    try {
+      Object.defineProperty(event, "pointerId", { value: init.pointerId });
+      Object.defineProperty(event, "pointerType", { value: init.pointerType });
+      Object.defineProperty(event, "isPrimary", { value: init.isPrimary });
+    } catch (_) {}
+    return el.dispatchEvent(event);
+  }
+
   function click(params) {
     const el = resolveTarget(params);
-    el.focus();
-    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const rect = el.getBoundingClientRect();
+    const x = params.x != null ? params.x : rect.left + rect.width / 2;
+    const y = params.y != null ? params.y : rect.top + rect.height / 2;
+    const downInit = {
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: 1,
+      detail: 1,
+      view: window,
+    };
+    const upInit = {
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: 0,
+      detail: 1,
+      view: window,
+    };
+    const mouseInit = function(options) {
+      return Object.assign({
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      }, options);
+    };
+
+    const pointerDownOk = dispatchPointerEvent(el, "pointerdown", downInit);
+    if (pointerDownOk) {
+      const mouseDownOk = el.dispatchEvent(new MouseEvent("mousedown", mouseInit(downInit)));
+      if (mouseDownOk && typeof el.focus === "function") {
+        el.focus();
+      }
+    }
+    dispatchPointerEvent(el, "pointerup", upInit);
+    if (pointerDownOk) {
+      el.dispatchEvent(new MouseEvent("mouseup", mouseInit(upInit)));
+    }
+    dispatchPointerEvent(el, "click", upInit);
     return { ok: true };
   }
 

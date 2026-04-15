@@ -168,4 +168,47 @@ mod tests {
             "html-to-image must be injected before pilot bridge code"
         );
     }
+
+    #[cfg(all(unix, debug_assertions))]
+    #[test]
+    fn bridge_click_dispatches_pointer_sequence() {
+        let js = super::BRIDGE_JS;
+        let pointer_down_idx = js
+            .find(r#"dispatchPointerEvent(el, "pointerdown""#)
+            .expect("click must dispatch pointerdown for Radix triggers");
+        let mouse_down_idx = js
+            .find(r#"MouseEvent("mousedown""#)
+            .expect("click must keep mousedown compatibility");
+        let pointer_up_idx = js
+            .find(r#"dispatchPointerEvent(el, "pointerup""#)
+            .expect("click must dispatch pointerup for Radix triggers");
+        let mouse_up_idx = js
+            .find(r#"MouseEvent("mouseup""#)
+            .expect("click must keep mouseup compatibility");
+        let click_idx = js
+            .find(r#"dispatchPointerEvent(el, "click""#)
+            .expect("click must dispatch as a pointer event");
+
+        assert!(
+            pointer_down_idx < mouse_down_idx
+                && mouse_down_idx < pointer_up_idx
+                && pointer_up_idx < mouse_up_idx
+                && mouse_up_idx < click_idx,
+            "click must dispatch pointerdown -> mousedown -> pointerup -> mouseup -> click"
+        );
+        assert!(
+            js.contains(r#"pointerType: "mouse""#),
+            "pointer events must include mouse pointer metadata"
+        );
+        assert!(
+            js.contains(
+                "if (pointerDownOk) {\n      const mouseDownOk = el.dispatchEvent(new MouseEvent(\"mousedown\""
+            ),
+            "mousedown must only dispatch when pointerdown was not canceled"
+        );
+        assert!(
+            js.contains("if (pointerDownOk) {\n      el.dispatchEvent(new MouseEvent(\"mouseup\""),
+            "mouseup must only dispatch when pointerdown was not canceled"
+        );
+    }
 }
