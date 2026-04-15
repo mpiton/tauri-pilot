@@ -644,9 +644,11 @@ quotes, Panda CSS class names, or multi-line scripts:
 $ tauri-pilot eval - <<'EOF'
 document.querySelector('[data-id="main"]').textContent
 EOF
+# (output depends on your app)
 Main content
 
 $ echo 'document.title' | tauri-pilot eval -
+# (output depends on your app)
 PR Dashboard
 ```
 
