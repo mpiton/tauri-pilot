@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `eval` command now reads the script from stdin when the argument is `-` or omitted ([#41])
 - Stdin heredoc and pipe examples for `eval -` in README, SKILL.md, and CLI reference ([#50])
+- MCP server mode for exposing tauri-pilot commands as structured tools over stdio ([#51])
 
 ## [0.3.0] - 2026-04-10
 
@@ -137,6 +138,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#37]: https://github.com/mpiton/tauri-pilot/issues/37
 [#41]: https://github.com/mpiton/tauri-pilot/pull/41
 [#50]: https://github.com/mpiton/tauri-pilot/pull/50
+[#51]: https://github.com/mpiton/tauri-pilot/pull/51
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...HEAD
 [0.2.1]: https://github.com/mpiton/tauri-pilot/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...v0.2.0

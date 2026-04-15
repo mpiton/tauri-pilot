@@ -285,40 +285,40 @@ impl PilotMcpServer {
             "logs" => self.call_logs_tool(&args, window).await,
             "network" => self.call_network_tool(&args, window).await,
             "storage_get" => {
-                self.call_storage_tool(
+                self.call_app_tool(
                     "storage.get",
-                    json!({
+                    Some(json!({
                         "key": required_string(&args, "key")?,
                         "session": optional_bool(&args, "session")?.unwrap_or(false),
-                    }),
+                    })),
                     window,
                 )
                 .await
             }
             "storage_set" => {
-                self.call_storage_tool(
+                self.call_app_tool(
                     "storage.set",
-                    json!({
+                    Some(json!({
                         "key": required_string(&args, "key")?,
                         "value": required_string(&args, "value")?,
                         "session": optional_bool(&args, "session")?.unwrap_or(false),
-                    }),
+                    })),
                     window,
                 )
                 .await
             }
             "storage_list" => {
-                self.call_storage_tool(
+                self.call_app_tool(
                     "storage.list",
-                    json!({"session": optional_bool(&args, "session")?.unwrap_or(false)}),
+                    Some(json!({"session": optional_bool(&args, "session")?.unwrap_or(false)})),
                     window,
                 )
                 .await
             }
             "storage_clear" => {
-                self.call_storage_tool(
+                self.call_app_tool(
                     "storage.clear",
-                    json!({"session": optional_bool(&args, "session")?.unwrap_or(false)}),
+                    Some(json!({"session": optional_bool(&args, "session")?.unwrap_or(false)})),
                     window,
                 )
                 .await
@@ -392,15 +392,6 @@ impl PilotMcpServer {
             .await
     }
 
-    async fn call_storage_tool(
-        &self,
-        method: &'static str,
-        params: Value,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        self.call_app_tool(method, Some(params), window).await
-    }
-
     async fn call_drop_tool(
         &self,
         args: JsonObject,
@@ -444,8 +435,7 @@ impl PilotMcpServer {
             Err(err) => return Ok(tool_error(err)),
         };
         Ok(
-            match run_replay_command(&mut client, &path, export.as_deref(), window.as_deref()).await
-            {
+            match run_replay_command(&mut client, &path, None, window.as_deref()).await {
                 Ok(result) => tool_success(result),
                 Err(err) => tool_error(err),
             },
@@ -542,6 +532,10 @@ impl PilotMcpServer {
             Ok(tool_error_msg("element is not visible"))
         } else if method == "visible" {
             Ok(tool_error_msg("element is visible"))
+        } else if method == "checked" && expected {
+            Ok(tool_error_msg("element is not checked"))
+        } else if method == "checked" {
+            Ok(tool_error_msg("element is checked"))
         } else {
             Ok(tool_error_msg(format!(
                 "element '{method}' state mismatch: expected {expected}"
