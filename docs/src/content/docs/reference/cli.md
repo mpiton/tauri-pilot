@@ -68,6 +68,54 @@ $ tauri-pilot ping
 
 ---
 
+### `mcp`
+
+Start a Model Context Protocol server over stdio. MCP-compatible agents can use
+this server to call tauri-pilot tools natively instead of spawning a CLI process
+for each interaction.
+
+```bash
+tauri-pilot mcp
+```
+
+**Configuration:**
+
+```json
+{
+  "mcpServers": {
+    "tauri-pilot": {
+      "command": "tauri-pilot",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Use global flags before `mcp` to pin the server to a socket or default window:
+
+```json
+{
+  "mcpServers": {
+    "tauri-pilot": {
+      "command": "tauri-pilot",
+      "args": ["--socket", "/tmp/tauri-pilot-myapp.sock", "--window", "main", "mcp"]
+    }
+  }
+}
+```
+
+The MCP server exposes tools for the CLI's app-facing commands, including
+`snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`,
+`drag`, `drop`, `text`, `html`, `value`, `attrs`, `eval`, `ipc`, `screenshot`,
+`navigate`, `url`, `title`, `wait`, `watch`, `logs`, `network`, `storage_*`,
+`forms`, `assert_*`, `record_*`, and `replay`.
+
+The server starts even if no Tauri app is currently running. Each tool call
+resolves and connects to the tauri-pilot Unix socket lazily, using `--socket`,
+`TAURI_PILOT_SOCKET`, or the normal socket auto-detection rules.
+
+---
+
 ### `windows`
 
 List all open windows with their label, URL, and title.
