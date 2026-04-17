@@ -1278,9 +1278,7 @@ fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
             use std::os::unix::fs::MetadataExt;
             // SAFETY: getuid() has no preconditions.
             let my_uid = unsafe { libc::getuid() };
-            std::fs::metadata(p)
-                .map(|m| m.uid() == my_uid)
-                .unwrap_or(false)
+            std::fs::metadata(p).is_ok_and(|m| m.uid() == my_uid)
         })
         .collect();
 

@@ -4,7 +4,7 @@ Thanks for your interest in contributing! This document covers the development w
 
 ## Prerequisites
 
-- Rust 1.94.1+ (LTS) with edition 2024
+- Rust 1.95.0+ with edition 2024
 - A Tauri v2 app for testing (or use the examples)
 - Linux (WebKitGTK) — macOS/Windows not yet supported
 
@@ -22,7 +22,7 @@ cargo test --workspace
 - **No `.unwrap()`** outside of tests — use `thiserror` (plugin) or `anyhow` (CLI)
 - **Clippy strict**: `cargo clippy --workspace -- -D warnings`
 - **Modules < 150 lines**, functions < 50 lines
-- **Edition 2024**, rust-version 1.94.1
+- **Edition 2024**, rust-version 1.95.0
 
 ## Workflow
 

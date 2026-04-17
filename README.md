@@ -6,7 +6,7 @@
   <a href="https://github.com/mpiton/tauri-pilot/actions/workflows/ci.yml"><img src="https://github.com/mpiton/tauri-pilot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://crates.io/crates/tauri-plugin-pilot"><img src="https://img.shields.io/crates/v/tauri-plugin-pilot.svg" alt="crates.io"></a>
   <a href="https://github.com/mpiton/tauri-pilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/rust-1.94.1+-orange.svg" alt="Rust 1.94.1+">
+  <img src="https://img.shields.io/badge/rust-1.95.0+-orange.svg" alt="Rust 1.95.0+">
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS-lightgrey.svg" alt="Platform: Linux | macOS">
   <img src="https://img.shields.io/badge/tauri-v2-24C8D8.svg" alt="Tauri v2">
 </p>
@@ -224,7 +224,7 @@ window:
 
 - **Linux** (WebKitGTK) or **macOS** (WebKit) — Windows planned
 - **Tauri v2** (v1 not supported)
-- **Rust 1.94.1+** (LTS, edition 2024)
+- **Rust 1.95.0+** (edition 2024)
 
 ## Who uses this?
 

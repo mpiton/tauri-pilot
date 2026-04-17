@@ -570,7 +570,7 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
                     );
 
                     let mut line =
-                        format!("{} {} ", crate::style::warn("~"), crate::style::info(&role),);
+                        format!("{} {} ", crate::style::warn("~"), crate::style::info(&role));
                     if let Some(ref n) = name {
                         let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
                     }
@@ -586,7 +586,7 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
                 }
             } else {
                 let mut line =
-                    format!("{} {} ", crate::style::warn("~"), crate::style::info(&role),);
+                    format!("{} {} ", crate::style::warn("~"), crate::style::info(&role));
                 if let Some(ref n) = name {
                     let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
                 }
@@ -612,7 +612,7 @@ fn format_diff_entry(
         .unwrap_or("?");
     let name = el.get("name").and_then(serde_json::Value::as_str);
 
-    let mut line = format!("{} {} ", prefix_style(prefix), crate::style::info(role),);
+    let mut line = format!("{} {} ", prefix_style(prefix), crate::style::info(role));
     if let Some(n) = name {
         let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
     }
