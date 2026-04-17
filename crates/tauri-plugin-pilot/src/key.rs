@@ -200,9 +200,8 @@ pub fn simulate_press(combo: &str) -> Result<(), KeyError> {
         // (libei/X11) and Windows the remediation is different, so don't
         // point users at the wrong fix.
         #[cfg(target_os = "macos")]
-        let msg = format!(
-            "{e} (on macOS, grant Accessibility permission to the launching terminal)"
-        );
+        let msg =
+            format!("{e} (on macOS, grant Accessibility permission to the launching terminal)");
         #[cfg(not(target_os = "macos"))]
         let msg = e.to_string();
         KeyError::EnigoInit(msg)

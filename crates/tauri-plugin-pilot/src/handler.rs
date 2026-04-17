@@ -565,8 +565,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_press_with_missing_key_returns_invalid_params() {
         let engine = EvalEngine::new();
-        let result =
-            dispatch("press", None, &engine, None, None, None, &Recorder::new()).await;
+        let result = dispatch("press", None, &engine, None, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32602);
     }
