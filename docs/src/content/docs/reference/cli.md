@@ -731,9 +731,9 @@ $ tauri-pilot eval "function pick(n){return n*2;} pick(21)"
 ```
 
 If the final statement is a `Promise`, it is awaited before the value is
-serialized. If the script ends on a declaration (`const x = 1;`) instead of an
-expression, the returned value is `null` — append the bare identifier (`; x`)
-to read the value back.
+serialized. Scripts that end on a declaration (`const x = 1;`) instead of an
+expression return `null` — append the bare identifier (`; x`) to read the value
+back.
 
 Top-level `await` is not supported; wrap async work in an IIFE:
 `(async () => await fetch('/api').then(r => r.json()))()`.

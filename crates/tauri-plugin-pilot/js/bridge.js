@@ -696,11 +696,17 @@
   function evalScript(options) {
     var script = options && options.script;
     if (!script) throw new Error("No script provided");
-    // Indirect eval runs in global scope and returns the completion value of
-    // the last expression — so both `document.title` (bare expression) and
-    // `const x = 1; x` (statements + trailing expression) work. A
-    // `new Function("return (" + script + ")")` wrapper would force the input
-    // into an expression context and reject `const`/`let`/`var` (#46).
+    // Try expression context first: `{a:1}` stays an object literal (not a
+    // labeled block), `class C {}` evaluates to the constructor, and bare
+    // expressions like `document.title` keep their prior semantics.
+    try {
+      return new Function("return (" + script + ")")();
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) throw e;
+    }
+    // Fallback for statements (`const x = 1; x`, function declarations, etc.)
+    // that the expression wrapper rejects. Indirect eval runs in global scope
+    // and returns the completion value of the last expression (#46).
     var indirectEval = eval;
     return indirectEval(script);
   }
