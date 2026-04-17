@@ -307,10 +307,17 @@ async fn handle_press(
         })?;
 
     if let Some(focus) = focus_fn {
-        if let Err(e) = focus(window) {
-            tracing::warn!(window = ?window, error = %e, "focus before press failed (continuing)");
+        match focus(window) {
+            Ok(()) => {
+                // Only wait if the WM actually accepted the focus request —
+                // a failed focus call won't transfer focus, so sleeping
+                // would just delay the press for nothing.
+                tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
+            }
+            Err(e) => {
+                tracing::warn!(window = ?window, error = %e, "focus before press failed (continuing)");
+            }
         }
-        tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
     }
 
     let combo = key_str.to_owned();

@@ -13,7 +13,14 @@
 //!
 //! See issue #45.
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use std::sync::Mutex;
 use thiserror::Error;
+
+/// Serializes all OS-level key injections from this process. Concurrent calls
+/// to `simulate_press` from multiple tokio tasks would otherwise interleave
+/// modifier-down/up events on the libei/uinput backends, producing scrambled
+/// shortcuts. The lock is held only for the duration of one combo (a few ms).
+static PRESS_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum KeyError {
@@ -36,29 +43,42 @@ pub struct Combo {
 
 /// Parse a combo string like `"Control+Shift+P"` into modifiers + main key.
 ///
-/// Accepts `+` or `-` as separators. Tokens are matched case-insensitively
-/// against a small alias table; single characters become `Key::Unicode`.
+/// `+` is the only separator. Trailing `+` is interpreted as the literal `+`
+/// key (e.g. `"Control++"` == Control plus the `+` key), and `"+"` alone is
+/// just the `+` key. This keeps combos like `"Shift+-"` (Shift + minus)
+/// unambiguous.
 pub fn parse_combo(combo: &str) -> Result<Combo, KeyError> {
     let trimmed = combo.trim();
     if trimmed.is_empty() {
         return Err(KeyError::Empty);
     }
+    if trimmed == "+" {
+        return Ok(Combo {
+            modifiers: Vec::new(),
+            key: Key::Unicode('+'),
+        });
+    }
 
-    let tokens: Vec<&str> = trimmed
-        .split(['+', '-'])
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .collect();
-    if tokens.is_empty() {
+    // If the combo ends with `+`, the last "key" is the `+` character itself.
+    let (body, main) = if let Some(prefix) = trimmed.strip_suffix('+') {
+        (prefix.trim_end_matches('+').trim(), "+")
+    } else {
+        match trimmed.rsplit_once('+') {
+            Some((mods, k)) => (mods.trim(), k.trim()),
+            None => ("", trimmed),
+        }
+    };
+
+    let mut modifiers = Vec::new();
+    if !body.is_empty() {
+        for tok in body.split('+').map(str::trim).filter(|t| !t.is_empty()) {
+            modifiers.push(parse_modifier(tok)?);
+        }
+    }
+    if main.is_empty() {
         return Err(KeyError::Empty);
     }
-
-    let (last, rest) = tokens.split_last().expect("non-empty");
-    let mut modifiers = Vec::with_capacity(rest.len());
-    for tok in rest {
-        modifiers.push(parse_modifier(tok)?);
-    }
-    let key = parse_key(last)?;
+    let key = parse_key(main)?;
     Ok(Combo { modifiers, key })
 }
 
@@ -128,26 +148,49 @@ fn single_char(token: &str) -> Option<char> {
 /// main key is tapped (press+release), then modifiers are released in reverse
 /// order — the same pattern a human or Playwright would produce.
 ///
-/// This is a blocking OS call; callers in async contexts should wrap with
+/// If a modifier press or the key tap fails, every modifier successfully
+/// pressed so far is released before returning, so the OS is never left with
+/// a stuck modifier (e.g. permanent Shift). On macOS, when Enigo silently
+/// no-ops because Accessibility permission is missing, the first failing call
+/// returns an error; the `EnigoInput` message includes a hint pointing at the
+/// permission.
+///
+/// All callers serialize through a process-global lock so two concurrent
+/// `press` RPC calls never interleave their modifier-down/key/modifier-up
+/// sequences. This is a blocking OS call; async callers should wrap with
 /// `tokio::task::spawn_blocking` to avoid stalling the runtime.
 pub fn simulate_press(combo: &str) -> Result<(), KeyError> {
     let parsed = parse_combo(combo)?;
-    let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| KeyError::EnigoInit(e.to_string()))?;
+    let _guard = PRESS_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-    for m in &parsed.modifiers {
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| {
+        KeyError::EnigoInit(format!(
+            "{e} (on macOS, grant Accessibility permission to the launching terminal)"
+        ))
+    })?;
+
+    // Track how many modifiers were pressed so we can release exactly those
+    // on any failure path — including failures during the modifier press loop.
+    let mut pressed: Vec<Key> = Vec::with_capacity(parsed.modifiers.len());
+    let press_outcome = (|| -> Result<(), KeyError> {
+        for m in &parsed.modifiers {
+            enigo
+                .key(*m, Direction::Press)
+                .map_err(|e| KeyError::EnigoInput(e.to_string()))?;
+            pressed.push(*m);
+        }
         enigo
-            .key(*m, Direction::Press)
-            .map_err(|e| KeyError::EnigoInput(e.to_string()))?;
-    }
-    let tap_result = enigo.key(parsed.key, Direction::Click);
-    // Always release modifiers, even on tap failure, to avoid leaving the OS
-    // in a stuck-modifier state.
-    for m in parsed.modifiers.iter().rev() {
+            .key(parsed.key, Direction::Click)
+            .map_err(|e| KeyError::EnigoInput(e.to_string()))
+    })();
+
+    // Always release the modifiers we actually pressed, in reverse order.
+    for m in pressed.iter().rev() {
         let _ = enigo.key(*m, Direction::Release);
     }
-    tap_result.map_err(|e| KeyError::EnigoInput(e.to_string()))?;
-    Ok(())
+    press_outcome
 }
 
 #[cfg(test)]
@@ -210,9 +253,28 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dash_separator_accepted() {
-        let combo = parse_combo("Ctrl-Shift-P").unwrap();
-        assert_eq!(combo.modifiers.len(), 2);
+    fn test_parse_dash_is_treated_as_minus_key() {
+        // `-` is no longer a separator (review #45 finding 3): "Shift+-" must
+        // parse as Shift + the literal `-` key, not as nonsense.
+        let combo = parse_combo("Shift+-").unwrap();
+        assert_eq!(combo.modifiers.len(), 1);
+        assert!(key_eq(&combo.modifiers[0], &Key::Shift));
+        assert!(key_eq(&combo.key, &Key::Unicode('-')));
+    }
+
+    #[test]
+    fn test_parse_plus_alone_is_plus_key() {
+        let combo = parse_combo("+").unwrap();
+        assert!(combo.modifiers.is_empty());
+        assert!(key_eq(&combo.key, &Key::Unicode('+')));
+    }
+
+    #[test]
+    fn test_parse_trailing_plus_is_plus_key_with_modifiers() {
+        let combo = parse_combo("Control++").unwrap();
+        assert_eq!(combo.modifiers.len(), 1);
+        assert!(key_eq(&combo.modifiers[0], &Key::Control));
+        assert!(key_eq(&combo.key, &Key::Unicode('+')));
     }
 
     #[test]
@@ -225,7 +287,15 @@ mod tests {
     fn test_parse_empty_returns_error() {
         assert!(matches!(parse_combo(""), Err(KeyError::Empty)));
         assert!(matches!(parse_combo("   "), Err(KeyError::Empty)));
-        assert!(matches!(parse_combo("+++"), Err(KeyError::Empty)));
+    }
+
+    #[test]
+    fn test_parse_repeated_plus_collapses_to_plus_key() {
+        // "+++" has nothing meaningful between modifiers — the trailing-`+`
+        // rule takes the last `+` as the key, modifiers list ends up empty.
+        let combo = parse_combo("+++").unwrap();
+        assert!(combo.modifiers.is_empty());
+        assert!(key_eq(&combo.key, &Key::Unicode('+')));
     }
 
     #[test]
