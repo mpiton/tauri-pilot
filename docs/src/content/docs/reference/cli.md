@@ -718,6 +718,26 @@ Prefer `<<'EOF'` with quotes around the heredoc delimiter. It disables shell
 variable and command expansion, so `$` and backticks inside the script do not
 need escaping.
 
+Statements are supported alongside bare expressions — `const`, `let`, `var`,
+function declarations and blocks all work, and the completion value of the last
+expression is returned:
+
+```bash
+$ tauri-pilot eval "const els = document.querySelectorAll('button'); els.length"
+7
+
+$ tauri-pilot eval "function pick(n){return n*2;} pick(21)"
+42
+```
+
+If the final statement is a `Promise`, it is awaited before the value is
+serialized. Scripts that end on a declaration (`const x = 1;`) instead of an
+expression return `null` — append the bare identifier (`; x`) to read the value
+back.
+
+Top-level `await` is not supported; wrap async work in an IIFE:
+`(async () => await fetch('/api').then(r => r.json()))()`.
+
 ---
 
 ### `ipc`
