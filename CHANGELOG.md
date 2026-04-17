@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `eval` now accepts `const`, `let`, `var`, function declarations and other statements — the previous `new Function("return (…)")` wrapper forced an expression context and rejected top-level declarations. Scripts now run through indirect `eval`, which returns the completion value of the last expression ([#46])
 - `click` now dispatches pointer events before mouse events so Radix UI dropdown, select, and dialog triggers open correctly ([#52])
 - `press "Control+1"` and similar combos now trigger Tauri global shortcuts and any handler that requires trusted keyboard events ([#45])
 - `press` with an explicit `--window <label>` now returns an error when the target window cannot be focused, instead of silently delivering the key to whatever window currently holds focus ([#53])
@@ -157,6 +158,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#10]: https://github.com/mpiton/tauri-pilot/issues/10
 [#37]: https://github.com/mpiton/tauri-pilot/issues/37
 [#41]: https://github.com/mpiton/tauri-pilot/pull/41
+[#46]: https://github.com/mpiton/tauri-pilot/issues/46
 [#50]: https://github.com/mpiton/tauri-pilot/pull/50
 [#51]: https://github.com/mpiton/tauri-pilot/pull/51
 [#52]: https://github.com/mpiton/tauri-pilot/pull/52

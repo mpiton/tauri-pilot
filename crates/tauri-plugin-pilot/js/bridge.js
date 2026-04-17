@@ -696,7 +696,13 @@
   function evalScript(options) {
     var script = options && options.script;
     if (!script) throw new Error("No script provided");
-    return new Function("return (" + script + ")")();
+    // Indirect eval runs in global scope and returns the completion value of
+    // the last expression — so both `document.title` (bare expression) and
+    // `const x = 1; x` (statements + trailing expression) work. A
+    // `new Function("return (" + script + ")")` wrapper would force the input
+    // into an expression context and reject `const`/`let`/`var` (#46).
+    var indirectEval = eval;
+    return indirectEval(script);
   }
 
   function waitFor(options) {
