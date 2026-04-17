@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `press` with `--window <label>` but no focus hook installed now errors instead of silently injecting into whatever window has focus ([#53])
 - `Enigo::new` failure hint about macOS Accessibility permission is now gated to macOS builds — Linux and Windows errors no longer point users at the wrong remediation ([#53])
 - `press` JoinError handling distinguishes panics from cancellation and runtime-shutdown cases instead of reporting every failure as "panicked" ([#53])
+- `eval` now exits with code 0 when the JS expression returns `undefined` (e.g. `element.click()`, void functions). Previously the CLI bailed with `Error: Server returned empty result without error`, breaking bash `&&` chains and `set -e` scripts even though the eval had succeeded ([#48])
 
 ## [0.3.0] - 2026-04-10
 
@@ -159,6 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#37]: https://github.com/mpiton/tauri-pilot/issues/37
 [#41]: https://github.com/mpiton/tauri-pilot/pull/41
 [#46]: https://github.com/mpiton/tauri-pilot/issues/46
+[#48]: https://github.com/mpiton/tauri-pilot/issues/48
 [#50]: https://github.com/mpiton/tauri-pilot/pull/50
 [#51]: https://github.com/mpiton/tauri-pilot/pull/51
 [#52]: https://github.com/mpiton/tauri-pilot/pull/52

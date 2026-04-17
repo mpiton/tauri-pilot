@@ -674,6 +674,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_callback_with_null_string_resolves_to_value_null() {
+        // #48 round-trip: wrap_script sends `result: 'null'` (string) when the
+        // JS expr returns undefined. The callback must parse it back to
+        // Value::Null so the client sees a clean success, not a warn fallback.
+        let engine = EvalEngine::new();
+        let (id, rx) = engine.register();
+        handle_callback(&engine, id, Some("null".to_owned()), None);
+        let val = rx.await.unwrap().unwrap();
+        assert_eq!(val, serde_json::Value::Null);
+    }
+
+    #[tokio::test]
     async fn test_callback_with_error() {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
