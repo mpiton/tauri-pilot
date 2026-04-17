@@ -68,8 +68,15 @@ else
 fi
 
 # Add version link if not present
+# Prefer compare/vPREV...vNEW format for consistency with prior entries; fall back
+# to releases/tag/ only for the first-ever release (no previous tag exists yet).
 if ! grep -q "\[$VERSION\]:" CHANGELOG.md; then
-  echo "[$VERSION]: https://github.com/mpiton/tauri-pilot/releases/tag/v$VERSION" >> CHANGELOG.md
+  PREVIOUS_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -vx "v$VERSION" | head -n1 || true)
+  if [ -n "$PREVIOUS_TAG" ]; then
+    echo "[$VERSION]: https://github.com/mpiton/tauri-pilot/compare/$PREVIOUS_TAG...v$VERSION" >> CHANGELOG.md
+  else
+    echo "[$VERSION]: https://github.com/mpiton/tauri-pilot/releases/tag/v$VERSION" >> CHANGELOG.md
+  fi
 fi
 
 echo "  Updated CHANGELOG.md"
