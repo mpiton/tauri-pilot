@@ -52,7 +52,7 @@ if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
   echo "Error: CHANGELOG.md is missing '## [Unreleased]' header"
   exit 1
 fi
-if grep -q "## \[$VERSION\]" CHANGELOG.md; then
+if grep -Fq "## [$VERSION]" CHANGELOG.md; then
   echo "Error: CHANGELOG.md already has an entry for $VERSION"
   exit 1
 fi
@@ -67,9 +67,19 @@ else
   echo "[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v$VERSION...HEAD" >> CHANGELOG.md
 fi
 
-# Add version link if not present
-if ! grep -q "\[$VERSION\]:" CHANGELOG.md; then
-  echo "[$VERSION]: https://github.com/mpiton/tauri-pilot/releases/tag/v$VERSION" >> CHANGELOG.md
+# Add version link if not present — insert immediately after the [Unreleased]
+# definition so every version link stays grouped together instead of being
+# appended to the end of the file on each release.
+# Prefer compare/vPREV...vNEW format for consistency with prior entries; fall back
+# to releases/tag/ only for the first-ever release (no previous tag exists yet).
+if ! grep -Fq "[$VERSION]:" CHANGELOG.md; then
+  PREVIOUS_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -Fvx "v$VERSION" | head -n1 || true)
+  if [ -n "$PREVIOUS_TAG" ]; then
+    NEW_LINK="[$VERSION]: https://github.com/mpiton/tauri-pilot/compare/$PREVIOUS_TAG...v$VERSION"
+  else
+    NEW_LINK="[$VERSION]: https://github.com/mpiton/tauri-pilot/releases/tag/v$VERSION"
+  fi
+  perl -i -pe "s|(\[Unreleased\]:.*)|\$1\n$NEW_LINK|" CHANGELOG.md
 fi
 
 echo "  Updated CHANGELOG.md"

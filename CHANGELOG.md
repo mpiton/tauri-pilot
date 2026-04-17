@@ -7,9 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Bumped MSRV from Rust 1.94.0 to **1.95.0** (workspace `Cargo.toml`, `ci.yml`, `release.yml`). Public docs (README, CONTRIBUTING, docs site) updated and the inaccurate "LTS" wording dropped — Rust does not yet ship an LTS channel ([#54])
+## [0.4.0] - 2026-04-17
 
 ### Added
 
@@ -24,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `press` command now injects keyboard events at the OS level via `enigo` instead of dispatching synthetic JS `KeyboardEvent`s. Events are now `isTrusted=true` and traverse the full input pipeline, reaching DOM listeners, Tauri accelerators, and global shortcut handlers ([#45])
 - The plugin now requests window focus before injecting keys so events land on the correct webview
 - `tauri-plugin-pilot` exposes a default-on `press` feature that gates the `enigo` dependency. Build with `--no-default-features` to drop it from release builds where the whole plugin is already no-op'd ([#53])
+- Bumped MSRV from Rust 1.94.0 to **1.95.0** (workspace `Cargo.toml`, `ci.yml`, `release.yml`). Public docs (README, CONTRIBUTING, docs site) updated and the inaccurate "LTS" wording dropped — Rust does not yet ship an LTS channel ([#54])
 
 ### Fixed
 
@@ -165,6 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#10]: https://github.com/mpiton/tauri-pilot/issues/10
 [#37]: https://github.com/mpiton/tauri-pilot/issues/37
 [#41]: https://github.com/mpiton/tauri-pilot/pull/41
+[#45]: https://github.com/mpiton/tauri-pilot/issues/45
 [#46]: https://github.com/mpiton/tauri-pilot/issues/46
 [#48]: https://github.com/mpiton/tauri-pilot/issues/48
 [#49]: https://github.com/mpiton/tauri-pilot/issues/49
@@ -173,7 +173,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#52]: https://github.com/mpiton/tauri-pilot/pull/52
 [#53]: https://github.com/mpiton/tauri-pilot/pull/53
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/mpiton/tauri-pilot/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/mpiton/tauri-pilot/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mpiton/tauri-pilot/releases/tag/v0.1.0
@@ -187,4 +189,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#8]: https://github.com/mpiton/tauri-pilot/issues/8
 [#17]: https://github.com/mpiton/tauri-pilot/pull/17
 [#31]: https://github.com/mpiton/tauri-pilot/issues/31
-[0.3.0]: https://github.com/mpiton/tauri-pilot/compare/v0.2.1...v0.3.0
