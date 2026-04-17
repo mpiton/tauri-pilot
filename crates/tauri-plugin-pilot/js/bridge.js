@@ -696,19 +696,24 @@
   function evalScript(options) {
     var script = options && options.script;
     if (!script) throw new Error("No script provided");
-    // Try expression context first: `{a:1}` stays an object literal (not a
-    // labeled block), `class C {}` evaluates to the constructor, and bare
-    // expressions like `document.title` keep their prior semantics.
+    // Compile as an expression first so `{a:1}` keeps its object-literal
+    // semantics (not a labeled block) and `class C {}` evaluates to the
+    // constructor. Keep compilation separate from execution: a runtime
+    // SyntaxError from e.g. `JSON.parse('x')` must propagate, not trigger
+    // the statement fallback — otherwise the script would run twice.
+    var expr;
     try {
-      return new Function("return (" + script + ")")();
+      expr = new Function("return (" + script + ")");
     } catch (e) {
       if (!(e instanceof SyntaxError)) throw e;
+      // Fallback for statements (`const x = 1; x`, function declarations,
+      // etc.) that the expression wrapper can't parse. Indirect eval runs
+      // in global scope and returns the completion value of the last
+      // expression (#46).
+      var indirectEval = eval;
+      return indirectEval(script);
     }
-    // Fallback for statements (`const x = 1; x`, function declarations, etc.)
-    // that the expression wrapper rejects. Indirect eval runs in global scope
-    // and returns the completion value of the last expression (#46).
-    var indirectEval = eval;
-    return indirectEval(script);
+    return expr();
   }
 
   function waitFor(options) {
