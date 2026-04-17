@@ -17,6 +17,11 @@ pub(crate) type EvalFn = Arc<dyn Fn(Option<&str>, String) -> Result<(), String> 
 /// A function that lists all available webview windows and returns their metadata.
 pub(crate) type ListWindowsFn = Arc<dyn Fn() -> serde_json::Value + Send + Sync>;
 
+/// A function that requests focus for a webview window.
+/// `None` means "default window" (same resolution as `EvalFn`).
+/// Used before native key injection so synthesised OS events reach the right window.
+pub(crate) type FocusFn = Arc<dyn Fn(Option<&str>) -> Result<(), String> + Send + Sync>;
+
 /// RAII guard that removes the socket file on drop (normal shutdown or panic).
 /// Stores the inode at bind time so it only unlinks its own socket, not one
 /// created by an overlapping instance.
@@ -165,6 +170,7 @@ pub(crate) async fn run(
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
     list_fn: Option<ListWindowsFn>,
+    focus_fn: Option<FocusFn>,
     recorder: Recorder,
 ) {
     let listener = match UnixListener::from_std(std_listener) {
@@ -174,7 +180,7 @@ pub(crate) async fn run(
             return;
         }
     };
-    if let Err(e) = accept_loop(listener, engine, eval_fn, list_fn, recorder).await {
+    if let Err(e) = accept_loop(listener, engine, eval_fn, list_fn, focus_fn, recorder).await {
         tracing::error!("socket server error: {e}");
     }
 }
@@ -184,9 +190,10 @@ async fn accept_loop(
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
     list_fn: Option<ListWindowsFn>,
+    focus_fn: Option<FocusFn>,
     recorder: Recorder,
 ) -> Result<(), Error> {
-    let ctx = Arc::new((engine, eval_fn, list_fn, recorder));
+    let ctx = Arc::new((engine, eval_fn, list_fn, focus_fn, recorder));
 
     loop {
         let (stream, _addr) = match listener.accept().await {
@@ -217,8 +224,15 @@ async fn accept_loop(
         }
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
-            if let Err(e) =
-                handle_connection(stream, &ctx.0, ctx.1.as_ref(), ctx.2.as_ref(), &ctx.3).await
+            if let Err(e) = handle_connection(
+                stream,
+                &ctx.0,
+                ctx.1.as_ref(),
+                ctx.2.as_ref(),
+                ctx.3.as_ref(),
+                &ctx.4,
+            )
+            .await
             {
                 tracing::warn!("connection error: {e}");
             }
@@ -231,6 +245,7 @@ async fn handle_connection(
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
+    focus_fn: Option<&FocusFn>,
     recorder: &Recorder,
 ) -> Result<(), Error> {
     let (reader, mut writer) = stream.into_split();
@@ -255,7 +270,7 @@ async fn handle_connection(
                 -32600,
                 "Invalid JSON-RPC version (expected \"2.0\")",
             ),
-            Ok(req) => dispatch_request(&req, engine, eval_fn, list_fn, recorder).await,
+            Ok(req) => dispatch_request(&req, engine, eval_fn, list_fn, focus_fn, recorder).await,
             Err(e) => Response::error(0, -32700, format!("Parse error: {e}")),
         };
 
@@ -273,6 +288,7 @@ async fn dispatch_request(
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
+    focus_fn: Option<&FocusFn>,
     recorder: &Recorder,
 ) -> Response {
     match handler::dispatch(
@@ -281,6 +297,7 @@ async fn dispatch_request(
         engine,
         eval_fn,
         list_fn,
+        focus_fn,
         recorder,
     )
     .await
@@ -315,10 +332,9 @@ mod tests {
     async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let (listener, guard) = bind(path).expect("bind test socket");
         let engine = EvalEngine::new();
-        let handle =
-            tokio::spawn(
-                async move { run(listener, guard, engine, None, None, Recorder::new()).await },
-            );
+        let handle = tokio::spawn(async move {
+            run(listener, guard, engine, None, None, None, Recorder::new()).await
+        });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
     }

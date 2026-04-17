@@ -3,6 +3,7 @@ mod error;
 #[allow(dead_code)]
 pub(crate) mod eval;
 mod handler;
+pub(crate) mod key;
 pub(crate) mod protocol;
 pub(crate) mod recorder;
 #[cfg(unix)]
@@ -15,7 +16,7 @@ use eval::EvalEngine;
 #[cfg(unix)]
 use recorder::Recorder;
 #[cfg(unix)]
-use server::{EvalFn, ListWindowsFn};
+use server::{EvalFn, FocusFn, ListWindowsFn};
 #[cfg(unix)]
 use std::sync::Arc;
 #[cfg(unix)]
@@ -53,6 +54,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
                 let eval_fn = make_eval_fn(app);
                 let list_fn = make_list_fn(app);
+                let focus_fn = make_focus_fn(app);
 
                 let (listener, guard) = server::bind(&socket_path).map_err(|e| {
                     tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
@@ -67,6 +69,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     engine,
                     Some(eval_fn),
                     Some(list_fn),
+                    Some(focus_fn),
                     recorder,
                 ));
 
@@ -121,6 +124,34 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
             .next()
             .ok_or_else(|| "No webview available".to_owned())
             .and_then(|w| w.eval(&script).map_err(|e| e.to_string()))
+    })
+}
+
+/// Create a focus function that requests OS focus for a webview window.
+///
+/// Resolution mirrors `make_eval_fn`: explicit label first, then `"main"`, then
+/// the first window. The call is best-effort — failures are returned to the
+/// caller (which logs and continues), since the press still has a chance of
+/// landing on whatever window currently holds focus.
+#[cfg(all(unix, debug_assertions))]
+fn make_focus_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> FocusFn {
+    let handle = app.clone();
+    Arc::new(move |window: Option<&str>| {
+        let target = if let Some(label) = window {
+            handle
+                .get_webview_window(label)
+                .ok_or_else(|| format!("Window '{label}' not found"))?
+        } else if let Some(w) = handle.get_webview_window("main") {
+            w
+        } else {
+            handle
+                .webview_windows()
+                .values()
+                .next()
+                .cloned()
+                .ok_or_else(|| "No webview available".to_owned())?
+        };
+        target.set_focus().map_err(|e| e.to_string())
     })
 }
 

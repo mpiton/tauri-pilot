@@ -24,6 +24,7 @@ tracing.workspace = true
 thiserror = "2"
 tauri = { version = "2", features = ["unstable"] }
 libc = "0.2.184"
+enigo = "0.6.1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

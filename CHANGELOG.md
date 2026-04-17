@@ -13,9 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stdin heredoc and pipe examples for `eval -` in README, SKILL.md, and CLI reference ([#50])
 - MCP server mode for exposing tauri-pilot commands as structured tools over stdio ([#51])
 
+### Changed
+
+- `press` command now injects keyboard events at the OS level via `enigo` instead of dispatching synthetic JS `KeyboardEvent`s. Events are now `isTrusted=true` and traverse the full input pipeline, reaching DOM listeners, Tauri accelerators, and global shortcut handlers ([#45])
+- The plugin now requests window focus before injecting keys so events land on the correct webview
+
 ### Fixed
 
 - `click` now dispatches pointer events before mouse events so Radix UI dropdown, select, and dialog triggers open correctly ([#52])
+- `press "Control+1"` and similar combos now trigger Tauri global shortcuts and any handler that requires trusted keyboard events ([#45])
 
 ## [0.3.0] - 2026-04-10
 

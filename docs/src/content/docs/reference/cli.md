@@ -381,21 +381,33 @@ tauri-pilot type @e2 " additional text"
 
 ### `press`
 
-Send a keyboard event to the focused element.
+Inject a keyboard event at the OS level. Events are `isTrusted=true`, so they
+reach DOM listeners, Tauri accelerators, and `tauri-plugin-global-shortcut`
+handlers — exactly like a physical key press.
 
 ```bash
 tauri-pilot press <key>
 ```
 
-Common keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp`, `Backspace`, `Space`.
+`<key>` accepts modifier-prefixed combos: `Modifier+...+Key`, with `+` or `-`
+as the separator.
+
+- **Modifiers** (case-insensitive): `Control`/`Ctrl`, `Shift`, `Alt`/`Option`, `Meta`/`Cmd`/`Super`/`Win`
+- **Common keys**: `Enter`, `Tab`, `Escape`, `ArrowUp`/`ArrowDown`/`ArrowLeft`/`ArrowRight`, `Backspace`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Space`, `F1`–`F12`, or any single character
 
 **Example:**
 
 ```bash
 tauri-pilot press Enter
 tauri-pilot press Tab
-tauri-pilot press Escape
+tauri-pilot press Control+1
+tauri-pilot press Ctrl+Shift+P
 ```
+
+Before pressing, the plugin requests focus on the target window so the event
+lands on the right webview. The press takes effect on whatever element holds
+focus inside that window — call `click` first if you need to focus a specific
+input.
 
 ---
 
