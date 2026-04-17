@@ -271,16 +271,15 @@ impl PilotMcpServer {
                 .await
             }
             "watch" => {
-                self.call_app_tool(
-                    "watch",
-                    Some(json!({
-                        "selector": optional_string(&args, "selector")?,
-                        "timeout": optional_u64(&args, "timeout")?.unwrap_or(10_000),
-                        "stable": optional_u64(&args, "stable")?.unwrap_or(300),
-                    })),
-                    window,
-                )
-                .await
+                let mut watch_params = json!({
+                    "selector": optional_string(&args, "selector")?,
+                    "timeout": optional_u64(&args, "timeout")?.unwrap_or(10_000),
+                    "stable": optional_u64(&args, "stable")?.unwrap_or(300),
+                });
+                if optional_bool(&args, "require_mutation")?.unwrap_or(false) {
+                    watch_params["requireMutation"] = json!(true);
+                }
+                self.call_app_tool("watch", Some(watch_params), window).await
             }
             "logs" => self.call_logs_tool(&args, window).await,
             "network" => self.call_network_tool(&args, window).await,
@@ -1405,6 +1404,13 @@ fn watch_schema() -> Arc<JsonObject> {
             ),
             ("timeout", integer_prop("Timeout in milliseconds.")),
             ("stable", integer_prop("Stability window in milliseconds.")),
+            (
+                "require_mutation",
+                bool_prop(
+                    "Defer the stability timer until at least one DOM mutation occurs. \
+                     Rejects on timeout when nothing changed.",
+                ),
+            ),
         ]),
         &[],
     )

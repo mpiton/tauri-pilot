@@ -571,7 +571,7 @@ tauri-pilot drop @e3 --file ./doc.pdf --file ./data.csv
 
 ### `watch`
 
-Watch for DOM mutations using `MutationObserver`. Blocks until changes are detected (or timeout), then returns a summary of what changed. Useful for waiting on async UI updates without polling snapshots.
+Watch for DOM mutations using `MutationObserver`. By default, it resolves once the DOM stays quiet for `--stable` ms and returns a summary of what changed — the change set can be empty on idle pages. Pass `--require-mutation` to reject on timeout when nothing mutated. Useful for waiting on async UI updates without polling snapshots.
 
 ```bash
 tauri-pilot watch [OPTIONS]
@@ -584,6 +584,7 @@ tauri-pilot watch [OPTIONS]
 | `--selector <sel>` | Scope observation to a subtree matching this CSS selector |
 | `--timeout <ms>` | Maximum wait time in milliseconds (default: 10000) |
 | `--stable <ms>` | Wait until DOM is stable (no new mutations) for N ms (default: 300) |
+| `--require-mutation` | Defer the stability timer until at least one mutation occurs. Rejects on timeout if nothing changed. |
 
 **Examples:**
 
@@ -599,12 +600,16 @@ tauri-pilot watch --timeout 3000
 
 # Wait for DOM to settle after animations
 tauri-pilot watch --stable 500
+
+# Wait for an async re-render after an IPC call (e.g. React state update)
+tauri-pilot ipc settings_update --args '{"theme":"dark"}'
+tauri-pilot watch --require-mutation --stable 300 --timeout 2000
 ```
 
 **JSON-RPC example:**
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"watch","params":{"selector":"#results","timeout":5000,"stable":300}}
+{"jsonrpc":"2.0","id":1,"method":"watch","params":{"selector":"#results","timeout":5000,"stable":300,"requireMutation":true}}
 ```
 
 ---

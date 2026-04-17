@@ -779,6 +779,7 @@
     var selector = options && options.selector;
     var timeout = (options && options.timeout != null) ? options.timeout : 10000;
     var stable = (options && options.stable != null) ? options.stable : 300;
+    var requireMutation = !!(options && options.requireMutation);
 
     var root;
     if (selector) {
@@ -818,6 +819,13 @@
           rej(new Error("watch timeout: no DOM changes within " + timeout + "ms"));
         }
       }, timeout);
+
+      // With requireMutation we skip starting the stable timer until the first
+      // mutation is seen; without it we start immediately so stable windows can
+      // resolve even when the DOM is idle.
+      if (!requireMutation) {
+        resetStableTimer();
+      }
 
       function pushCapped(arr, entry) {
         if (arr.length < MAX_WATCH_ENTRIES) {

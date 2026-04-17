@@ -101,6 +101,7 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `ass
 | `wait --timeout 5000` | Custom timeout (default: 10000ms) |
 | `watch [--selector ".el"]` | Watch for DOM mutations (MutationObserver) |
 | `watch --timeout 3000 --stable 500` | Custom timeout and stability window |
+| `watch --require-mutation` | Wait for first mutation before stability (use after IPC triggering async re-renders) |
 
 ### Storage & Forms
 

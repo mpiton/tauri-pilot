@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `eval` command now reads the script from stdin when the argument is `-` or omitted ([#41])
 - Stdin heredoc and pipe examples for `eval -` in README, SKILL.md, and CLI reference ([#50])
 - MCP server mode for exposing tauri-pilot commands as structured tools over stdio ([#51])
+- `watch --require-mutation` flag defers the stability timer until at least one DOM mutation occurs, then waits for `--stable` ms of quiet. Rejects on timeout if nothing mutated. Use after IPC calls that trigger async re-renders (e.g. React state updates) where you need to block until the re-render lands ([#49])
 
 ### Changed
 
+- **Breaking:** `watch` default semantics changed — the stability timer now arms at startup instead of on the first mutation. Idle runs resolve after `--stable` ms with an empty change set (`{added:[], removed:[], modified:[]}`) instead of rejecting with a "no DOM changes" timeout error. Scripts that relied on `watch` as a "did anything change?" assertion should switch to `watch --require-mutation` to keep the old reject-on-idle behaviour ([#49])
 - `press` command now injects keyboard events at the OS level via `enigo` instead of dispatching synthetic JS `KeyboardEvent`s. Events are now `isTrusted=true` and traverse the full input pipeline, reaching DOM listeners, Tauri accelerators, and global shortcut handlers ([#45])
 - The plugin now requests window focus before injecting keys so events land on the correct webview
 - `tauri-plugin-pilot` exposes a default-on `press` feature that gates the `enigo` dependency. Build with `--no-default-features` to drop it from release builds where the whole plugin is already no-op'd ([#53])
