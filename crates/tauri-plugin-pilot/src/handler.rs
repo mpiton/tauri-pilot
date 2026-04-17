@@ -327,6 +327,16 @@ async fn handle_press(
             data: None,
         })?;
 
+    // Parse the combo up front: a bad combo is a client input error, so we
+    // shouldn't take the serialization lock, steal focus, or sleep for it —
+    // and we report it as -32602 (invalid params) instead of letting the
+    // later spawn_blocking path surface it as -32603 (internal error).
+    key::parse_combo(key_str).map_err(|e| RpcError {
+        code: -32602,
+        message: format!("invalid press combo: {e}"),
+        data: None,
+    })?;
+
     // Hold this lock across the whole focus → settle → inject sequence so
     // two concurrent `press` calls cannot interleave their focus steps (call
     // A focuses window X, call B focuses window Y, then both keys land on Y).
@@ -483,6 +493,37 @@ mod tests {
         let engine = EvalEngine::new();
         let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new()).await;
         assert_eq!(result.unwrap(), json!({"status": "ok"}));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test]
+    async fn test_dispatch_press_with_invalid_combo_returns_invalid_params() {
+        // A malformed combo must not steal focus or acquire the serialization
+        // lock — it should short-circuit with -32602 (invalid params).
+        let engine = EvalEngine::new();
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "Control++P"})),
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("invalid press combo"));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test]
+    async fn test_dispatch_press_with_missing_key_returns_invalid_params() {
+        let engine = EvalEngine::new();
+        let result =
+            dispatch("press", None, &engine, None, None, None, &Recorder::new()).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602);
     }
 
     #[tokio::test]

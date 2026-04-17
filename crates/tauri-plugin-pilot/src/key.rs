@@ -217,10 +217,28 @@ pub fn simulate_press(combo: &str) -> Result<(), KeyError> {
     })();
 
     // Always release the modifiers we actually pressed, in reverse order.
+    // We keep going after a release failure so subsequent modifiers still
+    // get a chance to come back up — but we remember the first error so we
+    // don't return Ok with a modifier potentially stuck down.
+    let mut release_error: Option<KeyError> = None;
     for m in pressed.iter().rev() {
-        let _ = enigo.key(*m, Direction::Release);
+        if let Err(e) = enigo.key(*m, Direction::Release)
+            && release_error.is_none()
+        {
+            release_error = Some(KeyError::EnigoInput(format!(
+                "modifier release failed (possible stuck key): {e}"
+            )));
+        }
     }
-    press_outcome
+
+    // If the press itself failed, report that (more actionable than a
+    // downstream release error). Otherwise surface any release failure so
+    // callers learn about a stuck modifier instead of seeing Ok(()).
+    press_outcome?;
+    match release_error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
