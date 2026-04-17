@@ -138,7 +138,8 @@ pub(crate) enum Command {
         /// CSS selector to scope observation to a subtree.
         #[arg(long)]
         selector: Option<String>,
-        /// Timeout in ms (reject if no changes).
+        /// Maximum wait time in ms. With `--require-mutation`, rejects on timeout
+        /// if no mutation occurred; otherwise resolves after `--stable` ms of quiet.
         #[arg(long, default_value = "10000")]
         timeout: u64,
         /// Wait until DOM is stable for N ms (no new mutations).

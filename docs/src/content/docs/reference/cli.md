@@ -571,7 +571,7 @@ tauri-pilot drop @e3 --file ./doc.pdf --file ./data.csv
 
 ### `watch`
 
-Watch for DOM mutations using `MutationObserver`. Blocks until changes are detected (or timeout), then returns a summary of what changed. Useful for waiting on async UI updates without polling snapshots.
+Watch for DOM mutations using `MutationObserver`. By default, it resolves once the DOM stays quiet for `--stable` ms and returns a summary of what changed — the change set can be empty on idle pages. Pass `--require-mutation` to reject on timeout when nothing mutated. Useful for waiting on async UI updates without polling snapshots.
 
 ```bash
 tauri-pilot watch [OPTIONS]
