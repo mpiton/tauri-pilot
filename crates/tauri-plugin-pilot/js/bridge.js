@@ -535,14 +535,6 @@
     return { ok: true };
   }
 
-  function press(params) {
-    var key = params.key || params;
-    const target = document.activeElement || document.body;
-    target.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true }));
-    target.dispatchEvent(new KeyboardEvent("keyup", { key: key, bubbles: true }));
-    return { ok: true };
-  }
-
   function select(params) {
     const el = resolveTarget(params);
     const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
@@ -1005,7 +997,6 @@
     click: click,
     fill: fill,
     type: typeText,
-    press: press,
     select: select,
     check: check,
     scroll: scroll,

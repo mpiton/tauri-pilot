@@ -1,10 +1,29 @@
 use crate::diff;
 use crate::eval::EvalEngine;
+#[cfg(feature = "press")]
+use crate::key;
 use crate::protocol::RpcError;
 use crate::recorder::{RecordEntry, Recorder};
-use crate::server::{EvalFn, ListWindowsFn};
+use crate::server::{EvalFn, FocusFn, ListWindowsFn};
 
 use std::time::Duration;
+#[cfg(feature = "press")]
+use tokio::sync::Mutex as AsyncMutex;
+
+/// Delay after requesting window focus before injecting OS-level keyboard
+/// events, so the window manager has time to actually transfer focus. Tuned
+/// empirically — too short and the first key on Wayland drops; too long and
+/// press feels sluggish.
+#[cfg(feature = "press")]
+const FOCUS_SETTLE_MS: u64 = 80;
+
+/// Serializes the full `focus → settle → inject` sequence across concurrent
+/// `press` calls. The inner `key::PRESS_LOCK` only covers the OS injection,
+/// so without this outer lock two calls targeting different windows could
+/// race on the focus step and deliver both keys to whichever window won the
+/// focus race.
+#[cfg(feature = "press")]
+static PRESS_ORDER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -38,13 +57,14 @@ fn extract_window(
 }
 
 /// Dispatch a JSON-RPC method call to the appropriate handler.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub(crate) async fn dispatch(
     method: &str,
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
+    #[cfg_attr(not(feature = "press"), allow(unused_variables))] focus_fn: Option<&FocusFn>,
     recorder: &Recorder,
 ) -> Result<serde_json::Value, RpcError> {
     // Save original params before window extraction so the recorder can strip
@@ -76,9 +96,18 @@ pub(crate) async fn dispatch(
             Ok(result)
         }
         "diff" => handle_diff(params, engine, eval_fn, win).await,
-        "click" | "fill" | "type" | "press" | "select" | "check" | "scroll" | "drag" | "drop"
-        | "text" | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title"
-        | "state" | "wait" | "visible" | "count" | "checked" => {
+        #[cfg(feature = "press")]
+        "press" => handle_press(params, focus_fn, win).await,
+        #[cfg(not(feature = "press"))]
+        "press" => Err(RpcError {
+            code: -32601,
+            message: "press disabled (compile `tauri-plugin-pilot` with the `press` feature)"
+                .to_owned(),
+            data: None,
+        }),
+        "click" | "fill" | "type" | "select" | "check" | "scroll" | "drag" | "drop" | "text"
+        | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state"
+        | "wait" | "visible" | "count" | "checked" => {
             handle_eval_method(method, params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
         "watch" => {
@@ -276,6 +305,107 @@ async fn handle_diff(
     })
 }
 
+/// Handle the "press" method by injecting an OS-level keyboard event.
+///
+/// JS-dispatched `KeyboardEvent`s are flagged `isTrusted: false` and never
+/// reach Tauri accelerators or window-manager-level shortcut handlers (#45).
+/// Native injection via `enigo` produces real keyboard events that traverse
+/// the full pipeline.
+#[cfg(feature = "press")]
+async fn handle_press(
+    params: Option<&serde_json::Value>,
+    focus_fn: Option<&FocusFn>,
+    window: Option<&str>,
+) -> Result<serde_json::Value, RpcError> {
+    let key_str = params
+        .and_then(|p| p.get("key"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| RpcError {
+            code: -32602,
+            message: "press requires a non-empty \"key\" string param".to_owned(),
+            data: None,
+        })?;
+
+    // Parse the combo up front: a bad combo is a client input error, so we
+    // shouldn't take the serialization lock, steal focus, or sleep for it —
+    // and we report it as -32602 (invalid params) instead of letting the
+    // later spawn_blocking path surface it as -32603 (internal error).
+    key::parse_combo(key_str).map_err(|e| RpcError {
+        code: -32602,
+        message: format!("invalid press combo: {e}"),
+        data: None,
+    })?;
+
+    // An explicit `--window <label>` with no focus hook installed would
+    // otherwise silently drop the focus step and inject into whatever window
+    // currently has focus. Reject before taking any lock.
+    if window.is_some() && focus_fn.is_none() {
+        return Err(RpcError {
+            code: -32603,
+            message: "cannot focus target window: no focus hook installed".to_owned(),
+            data: None,
+        });
+    }
+
+    // Hold this lock across the whole focus → settle → inject sequence so
+    // two concurrent `press` calls cannot interleave their focus steps (call
+    // A focuses window X, call B focuses window Y, then both keys land on Y).
+    let _order_guard = PRESS_ORDER_LOCK.lock().await;
+
+    if let Some(focus) = focus_fn {
+        match focus(window) {
+            Ok(()) => {
+                // Only wait if the WM actually accepted the focus request —
+                // a failed focus call won't transfer focus, so sleeping
+                // would just delay the press for nothing.
+                tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
+            }
+            Err(e) => {
+                if let Some(label) = window {
+                    // The caller explicitly targeted a window; silently
+                    // falling through would deliver the key to whatever
+                    // window currently has focus and still return ok.
+                    return Err(RpcError {
+                        code: -32603,
+                        message: format!("failed to focus window '{label}': {e}"),
+                        data: None,
+                    });
+                }
+                tracing::warn!(error = %e, "focus before press failed (continuing)");
+            }
+        }
+    }
+
+    let combo = key_str.to_owned();
+    tokio::task::spawn_blocking(move || key::simulate_press(&combo))
+        .await
+        .map_err(|e| {
+            // A JoinError can be a panic, a cancellation, or a runtime
+            // shutdown — reporting every one as "panicked" misleads during
+            // teardown.
+            let message = if e.is_panic() {
+                format!("press task panicked: {e}")
+            } else if e.is_cancelled() {
+                "press task was cancelled".to_owned()
+            } else {
+                format!("press task failed: {e}")
+            };
+            RpcError {
+                code: -32603,
+                message,
+                data: None,
+            }
+        })?
+        .map_err(|e| RpcError {
+            code: -32603,
+            message: format!("press failed: {e}"),
+            data: None,
+        })?;
+
+    Ok(serde_json::json!({"ok": true}))
+}
+
 /// Handle a method that requires JS evaluation via the bridge.
 async fn handle_eval_method(
     method: &str,
@@ -384,14 +514,75 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_ping_returns_ok() {
         let engine = EvalEngine::new();
-        let result = dispatch("ping", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new()).await;
         assert_eq!(result.unwrap(), json!({"status": "ok"}));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test]
+    async fn test_dispatch_press_with_invalid_combo_returns_invalid_params() {
+        // A malformed combo must not steal focus or acquire the serialization
+        // lock — it should short-circuit with -32602 (invalid params).
+        let engine = EvalEngine::new();
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "Control++P"})),
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("invalid press combo"));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test]
+    async fn test_dispatch_press_with_explicit_window_and_no_focus_fn_errors() {
+        // --window <label> with no focus hook must not silently inject into
+        // the currently focused window. We can pass `window` through params
+        // (handler extracts it before dispatch).
+        let engine = EvalEngine::new();
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "Enter", "window": "settings"})),
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("focus"));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test]
+    async fn test_dispatch_press_with_missing_key_returns_invalid_params() {
+        let engine = EvalEngine::new();
+        let result = dispatch("press", None, &engine, None, None, None, &Recorder::new()).await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32602);
     }
 
     #[tokio::test]
     async fn test_dispatch_unknown_method_returns_error() {
         let engine = EvalEngine::new();
-        let result = dispatch("nonexistent", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "nonexistent",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32601);
     }
@@ -399,7 +590,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_snapshot_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("snapshot", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "snapshot",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -408,7 +608,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_diff_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("diff", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch("diff", None, &engine, None, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -433,6 +633,7 @@ mod tests {
             None,
             &engine,
             Some(&eval_fn),
+            None,
             None,
             &Recorder::new(),
         )
@@ -490,6 +691,7 @@ mod tests {
             &engine,
             None,
             None,
+            None,
             &Recorder::new(),
         )
         .await;
@@ -501,7 +703,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_console_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("console.clear", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "console.clear",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -530,6 +741,7 @@ mod tests {
             &engine,
             None,
             None,
+            None,
             &Recorder::new(),
         )
         .await;
@@ -541,7 +753,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_network_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("network.clear", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "network.clear",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -588,7 +809,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_watch_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("watch", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch("watch", None, &engine, None, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -605,7 +826,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drag_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drag", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch("drag", None, &engine, None, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_ne!(err.code, -32601);
     }
@@ -613,7 +834,7 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drop_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drop", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch("drop", None, &engine, None, None, None, &Recorder::new()).await;
         let err = result.unwrap_err();
         assert_ne!(err.code, -32601);
     }
@@ -635,7 +856,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_get_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.get", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "storage.get",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -644,7 +874,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_set_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.set", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "storage.set",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -653,7 +892,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_list_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.list", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "storage.list",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -662,7 +910,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_storage_clear_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("storage.clear", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "storage.clear",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -721,7 +978,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_forms_dump_without_eval_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("forms.dump", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "forms.dump",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -730,7 +996,16 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_windows_list_without_list_fn() {
         let engine = EvalEngine::new();
-        let result = dispatch("windows.list", None, &engine, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "windows.list",
+            None,
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
         let err = result.unwrap_err();
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No window manager"));
@@ -748,6 +1023,7 @@ mod tests {
             &engine,
             None,
             Some(&list_fn),
+            None,
             &Recorder::new(),
         )
         .await;
@@ -781,6 +1057,7 @@ mod tests {
             &engine,
             Some(&eval_fn),
             None,
+            None,
             &Recorder::new(),
         )
         .await;
@@ -794,7 +1071,7 @@ mod tests {
     async fn test_dispatch_record_start_returns_recording() {
         let engine = EvalEngine::new();
         let recorder = Recorder::new();
-        let result = dispatch("record.start", None, &engine, None, None, &recorder)
+        let result = dispatch("record.start", None, &engine, None, None, None, &recorder)
             .await
             .unwrap();
         assert_eq!(result["status"], "recording");
@@ -807,7 +1084,7 @@ mod tests {
         let recorder = Recorder::new();
         recorder.start();
         recorder.record("click", Some(&json!({"ref": "e1"})));
-        let result = dispatch("record.stop", None, &engine, None, None, &recorder)
+        let result = dispatch("record.stop", None, &engine, None, None, None, &recorder)
             .await
             .unwrap();
         assert_eq!(result["count"], 1);
@@ -820,7 +1097,7 @@ mod tests {
         let engine = EvalEngine::new();
         let recorder = Recorder::new();
         recorder.start();
-        let result = dispatch("record.status", None, &engine, None, None, &recorder)
+        let result = dispatch("record.status", None, &engine, None, None, None, &recorder)
             .await
             .unwrap();
         assert_eq!(result["active"], true);
@@ -833,9 +1110,17 @@ mod tests {
         let recorder = Recorder::new();
         recorder.start();
         let params = json!({"action": "navigate", "timestamp": 100, "url": "/home"});
-        let result = dispatch("record.add", Some(&params), &engine, None, None, &recorder)
-            .await
-            .unwrap();
+        let result = dispatch(
+            "record.add",
+            Some(&params),
+            &engine,
+            None,
+            None,
+            None,
+            &recorder,
+        )
+        .await
+        .unwrap();
         assert_eq!(result["status"], "ok");
         let entries = recorder.stop();
         assert_eq!(entries.len(), 1);
