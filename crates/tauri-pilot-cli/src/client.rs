@@ -166,11 +166,11 @@ mod tests {
     #[tokio::test]
     async fn test_client_missing_result_is_success() {
         // Defensive coverage: a response with neither `result` nor `error` is
-        // technically a JSON-RPC protocol edge case. The #48 path is actually
-        // covered by `test_client_null_result_is_success` above — the plugin
-        // emits `"result": null` (explicit), which serde then conflates with
-        // absent for `Option<Value>`. This test locks in that both shapes
-        // deserialize to the same successful `Value::Null` outcome.
+        // technically a JSON-RPC protocol edge case. The #48 path proper is
+        // covered by `test_client_null_result_is_success` above (explicit
+        // `"result": null`); this test pins down the companion shape where
+        // the field is omitted entirely. Both end up as `Value::Null` via
+        // `unwrap_or`.
         let socket = PathBuf::from("/tmp/tauri-pilot-test-t05d.sock");
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).unwrap();
