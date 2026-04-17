@@ -7,7 +7,7 @@ description: Install tauri-pilot and start testing your Tauri v2 app interactive
 
 - Linux (WebKitGTK) or macOS (WebKit) — Windows planned
 - Tauri v2 (v1 not supported)
-- Rust 1.94.0+ (edition 2024)
+- Rust 1.95.0+ (edition 2024)
 
 ## Installation
 

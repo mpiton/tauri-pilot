@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped MSRV from Rust 1.94.0 to **1.95.0** (workspace `Cargo.toml`, `ci.yml`, `release.yml`). Public docs (README, CONTRIBUTING, docs site) updated and the inaccurate "LTS" wording dropped — Rust does not yet ship an LTS channel ([#54])
+
 ### Added
 
 - `eval` command now reads the script from stdin when the argument is `-` or omitted ([#41])
@@ -163,9 +167,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#41]: https://github.com/mpiton/tauri-pilot/pull/41
 [#46]: https://github.com/mpiton/tauri-pilot/issues/46
 [#48]: https://github.com/mpiton/tauri-pilot/issues/48
+[#49]: https://github.com/mpiton/tauri-pilot/issues/49
 [#50]: https://github.com/mpiton/tauri-pilot/pull/50
 [#51]: https://github.com/mpiton/tauri-pilot/pull/51
 [#52]: https://github.com/mpiton/tauri-pilot/pull/52
+[#53]: https://github.com/mpiton/tauri-pilot/pull/53
+[#54]: https://github.com/mpiton/tauri-pilot/issues/54
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...HEAD
 [0.2.1]: https://github.com/mpiton/tauri-pilot/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mpiton/tauri-pilot/compare/v0.1.0...v0.2.0
