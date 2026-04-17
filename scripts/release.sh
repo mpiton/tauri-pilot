@@ -52,7 +52,7 @@ if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
   echo "Error: CHANGELOG.md is missing '## [Unreleased]' header"
   exit 1
 fi
-if grep -q "## \[$VERSION\]" CHANGELOG.md; then
+if grep -Fq "## [$VERSION]" CHANGELOG.md; then
   echo "Error: CHANGELOG.md already has an entry for $VERSION"
   exit 1
 fi
@@ -72,8 +72,8 @@ fi
 # appended to the end of the file on each release.
 # Prefer compare/vPREV...vNEW format for consistency with prior entries; fall back
 # to releases/tag/ only for the first-ever release (no previous tag exists yet).
-if ! grep -q "\[$VERSION\]:" CHANGELOG.md; then
-  PREVIOUS_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -vx "v$VERSION" | head -n1 || true)
+if ! grep -Fq "[$VERSION]:" CHANGELOG.md; then
+  PREVIOUS_TAG=$(git tag -l 'v*' --sort=-v:refname | grep -Fvx "v$VERSION" | head -n1 || true)
   if [ -n "$PREVIOUS_TAG" ]; then
     NEW_LINK="[$VERSION]: https://github.com/mpiton/tauri-pilot/compare/$PREVIOUS_TAG...v$VERSION"
   else
