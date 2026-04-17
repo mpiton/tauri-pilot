@@ -167,9 +167,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#41]: https://github.com/mpiton/tauri-pilot/pull/41
 [#46]: https://github.com/mpiton/tauri-pilot/issues/46
 [#48]: https://github.com/mpiton/tauri-pilot/issues/48
+[#49]: https://github.com/mpiton/tauri-pilot/issues/49
 [#50]: https://github.com/mpiton/tauri-pilot/pull/50
 [#51]: https://github.com/mpiton/tauri-pilot/pull/51
 [#52]: https://github.com/mpiton/tauri-pilot/pull/52
+[#53]: https://github.com/mpiton/tauri-pilot/pull/53
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...HEAD
 [0.2.1]: https://github.com/mpiton/tauri-pilot/compare/v0.2.0...v0.2.1
