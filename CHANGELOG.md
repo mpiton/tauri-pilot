@@ -17,11 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `press` command now injects keyboard events at the OS level via `enigo` instead of dispatching synthetic JS `KeyboardEvent`s. Events are now `isTrusted=true` and traverse the full input pipeline, reaching DOM listeners, Tauri accelerators, and global shortcut handlers ([#45])
 - The plugin now requests window focus before injecting keys so events land on the correct webview
+- `tauri-plugin-pilot` exposes a default-on `press` feature that gates the `enigo` dependency. Build with `--no-default-features` to drop it from release builds where the whole plugin is already no-op'd ([#53])
 
 ### Fixed
 
 - `click` now dispatches pointer events before mouse events so Radix UI dropdown, select, and dialog triggers open correctly ([#52])
 - `press "Control+1"` and similar combos now trigger Tauri global shortcuts and any handler that requires trusted keyboard events ([#45])
+- `press` with an explicit `--window <label>` now returns an error when the target window cannot be focused, instead of silently delivering the key to whatever window currently holds focus ([#53])
+- `press` serializes the full `focus → settle → inject` sequence, so two concurrent calls targeting different windows can no longer race on the focus step and cross their keys ([#53])
+- `press` combo parser now rejects empty segments between `+` (e.g. `Control++P`, `+A`) instead of silently normalizing them into different shortcuts ([#53])
+- `press` now explicitly enables enigo's `wayland` backend so OS-level key injection works on Wayland sessions, not just X11 ([#53])
 
 ## [0.3.0] - 2026-04-10
 

@@ -47,6 +47,9 @@ pub struct Combo {
 /// key (e.g. `"Control++"` == Control plus the `+` key), and `"+"` alone is
 /// just the `+` key. This keeps combos like `"Shift+-"` (Shift + minus)
 /// unambiguous.
+///
+/// Empty segments between `+` separators are rejected — `"Control++P"` and
+/// `"+A"` are errors, not silently normalized into `"Control+P"` / `"A"`.
 pub fn parse_combo(combo: &str) -> Result<Combo, KeyError> {
     let trimmed = combo.trim();
     if trimmed.is_empty() {
@@ -59,22 +62,49 @@ pub fn parse_combo(combo: &str) -> Result<Combo, KeyError> {
         });
     }
 
-    // If the combo ends with `+`, the last "key" is the `+` character itself.
-    let (body, main) = if let Some(prefix) = trimmed.strip_suffix('+') {
-        (prefix.trim_end_matches('+').trim(), "+")
+    // Determine the modifier section and the main key token. A trailing `+`
+    // means "the main key is `+`"; the `+` immediately before it is the
+    // separator between the last modifier (if any) and that key.
+    let (modifier_section, main) = if let Some(prefix) = trimmed.strip_suffix('+') {
+        match prefix.strip_suffix('+') {
+            Some(body) => (body, "+"),
+            // `"abc+"` with no separator `+` before — malformed.
+            None if !prefix.is_empty() => {
+                return Err(KeyError::UnknownKey(combo.trim().to_owned()));
+            }
+            None => (prefix, "+"),
+        }
     } else {
         match trimmed.rsplit_once('+') {
-            Some((mods, k)) => (mods.trim(), k.trim()),
+            // A leading `+` (e.g. `"+A"`) produces `mods = ""` while a `+`
+            // actually exists in the input — reject instead of silently
+            // treating it as "no modifiers".
+            Some(("", _)) => {
+                return Err(KeyError::UnknownKey(combo.trim().to_owned()));
+            }
+            Some((mods, k)) => (mods, k.trim()),
             None => ("", trimmed),
         }
     };
 
-    let mut modifiers = Vec::new();
-    if !body.is_empty() {
-        for tok in body.split('+').map(str::trim).filter(|t| !t.is_empty()) {
-            modifiers.push(parse_modifier(tok)?);
-        }
-    }
+    let modifiers = if modifier_section.is_empty() {
+        Vec::new()
+    } else {
+        modifier_section
+            .split('+')
+            .map(|tok| {
+                let trimmed_tok = tok.trim();
+                if trimmed_tok.is_empty() {
+                    // An empty segment between separators is a typo, not a
+                    // modifier — reject rather than silently collapsing.
+                    Err(KeyError::UnknownKey(combo.trim().to_owned()))
+                } else {
+                    parse_modifier(trimmed_tok)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
     if main.is_empty() {
         return Err(KeyError::Empty);
     }
@@ -290,12 +320,29 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_repeated_plus_collapses_to_plus_key() {
-        // "+++" has nothing meaningful between modifiers — the trailing-`+`
-        // rule takes the last `+` as the key, modifiers list ends up empty.
-        let combo = parse_combo("+++").unwrap();
-        assert!(combo.modifiers.is_empty());
-        assert!(key_eq(&combo.key, &Key::Unicode('+')));
+    fn test_parse_triple_plus_returns_error() {
+        // `"+++"` has an empty modifier segment once the trailing `+` is
+        // stripped off as the main key. Rejecting is safer than silently
+        // collapsing: if a user typed three `+`, something is wrong.
+        assert!(matches!(parse_combo("+++"), Err(KeyError::UnknownKey(_))));
+    }
+
+    #[test]
+    fn test_parse_empty_modifier_segment_returns_error() {
+        // `"Control++P"` previously parsed as `"Control+P"` because the empty
+        // segment between the two `+` was silently dropped. That turns typos
+        // into different shortcuts — reject instead.
+        assert!(matches!(
+            parse_combo("Control++P"),
+            Err(KeyError::UnknownKey(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_leading_plus_returns_error() {
+        // `"+A"` previously parsed as just `"A"` — the leading `+` was
+        // discarded. Same reasoning: silent normalization hides typos.
+        assert!(matches!(parse_combo("+A"), Err(KeyError::UnknownKey(_))));
     }
 
     #[test]

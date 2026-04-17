@@ -16,6 +16,14 @@ links = "tauri-plugin-pilot"
 [lints]
 workspace = true
 
+[features]
+default = ["press"]
+# Enables the OS-level `press` command. Pulls in `enigo` and its platform
+# backends. Opt out with `--no-default-features` to drop the dependency from
+# release builds where the whole plugin is already no-op'd by
+# `cfg(debug_assertions)`.
+press = ["dep:enigo"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -24,7 +32,9 @@ tracing.workspace = true
 thiserror = "2"
 tauri = { version = "2", features = ["unstable"] }
 libc = "0.2.184"
-enigo = "0.6.1"
+# `wayland` enables the libei-based Wayland backend so `press` works on
+# modern Linux sessions, not just X11.
+enigo = { version = "0.6.1", features = ["wayland"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

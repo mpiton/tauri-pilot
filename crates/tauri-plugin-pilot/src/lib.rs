@@ -3,6 +3,7 @@ mod error;
 #[allow(dead_code)]
 pub(crate) mod eval;
 mod handler;
+#[cfg(feature = "press")]
 pub(crate) mod key;
 pub(crate) mod protocol;
 pub(crate) mod recorder;

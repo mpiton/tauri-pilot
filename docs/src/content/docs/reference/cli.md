@@ -389,8 +389,10 @@ handlers — exactly like a physical key press.
 tauri-pilot press <key>
 ```
 
-`<key>` accepts modifier-prefixed combos: `Modifier+...+Key`, with `+` or `-`
-as the separator.
+`<key>` accepts modifier-prefixed combos in the form `Modifier+...+Key`. Only
+`+` is a separator — `-` is treated as the literal minus key, so `Shift+-`
+means Shift + minus. A trailing `+` is the `+` key itself (e.g. `Control++`
+is Control + plus).
 
 - **Modifiers** (case-insensitive): `Control`/`Ctrl`, `Shift`, `Alt`/`Option`, `Meta`/`Cmd`/`Super`/`Win`
 - **Common keys**: `Enter`, `Tab`, `Escape`, `ArrowUp`/`ArrowDown`/`ArrowLeft`/`ArrowRight`, `Backspace`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, `Space`, `F1`–`F12`, or any single character

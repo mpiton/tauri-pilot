@@ -1,17 +1,29 @@
 use crate::diff;
 use crate::eval::EvalEngine;
+#[cfg(feature = "press")]
 use crate::key;
 use crate::protocol::RpcError;
 use crate::recorder::{RecordEntry, Recorder};
 use crate::server::{EvalFn, FocusFn, ListWindowsFn};
 
 use std::time::Duration;
+#[cfg(feature = "press")]
+use tokio::sync::Mutex as AsyncMutex;
 
 /// Delay after requesting window focus before injecting OS-level keyboard
 /// events, so the window manager has time to actually transfer focus. Tuned
 /// empirically — too short and the first key on Wayland drops; too long and
 /// press feels sluggish.
+#[cfg(feature = "press")]
 const FOCUS_SETTLE_MS: u64 = 80;
+
+/// Serializes the full `focus → settle → inject` sequence across concurrent
+/// `press` calls. The inner `key::PRESS_LOCK` only covers the OS injection,
+/// so without this outer lock two calls targeting different windows could
+/// race on the focus step and deliver both keys to whichever window won the
+/// focus race.
+#[cfg(feature = "press")]
+static PRESS_ORDER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -52,7 +64,7 @@ pub(crate) async fn dispatch(
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
-    focus_fn: Option<&FocusFn>,
+    #[cfg_attr(not(feature = "press"), allow(unused_variables))] focus_fn: Option<&FocusFn>,
     recorder: &Recorder,
 ) -> Result<serde_json::Value, RpcError> {
     // Save original params before window extraction so the recorder can strip
@@ -84,7 +96,15 @@ pub(crate) async fn dispatch(
             Ok(result)
         }
         "diff" => handle_diff(params, engine, eval_fn, win).await,
+        #[cfg(feature = "press")]
         "press" => handle_press(params, focus_fn, win).await,
+        #[cfg(not(feature = "press"))]
+        "press" => Err(RpcError {
+            code: -32601,
+            message: "press disabled (compile `tauri-plugin-pilot` with the `press` feature)"
+                .to_owned(),
+            data: None,
+        }),
         "click" | "fill" | "type" | "select" | "check" | "scroll" | "drag" | "drop" | "text"
         | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state"
         | "wait" | "visible" | "count" | "checked" => {
@@ -291,6 +311,7 @@ async fn handle_diff(
 /// reach Tauri accelerators or window-manager-level shortcut handlers (#45).
 /// Native injection via `enigo` produces real keyboard events that traverse
 /// the full pipeline.
+#[cfg(feature = "press")]
 async fn handle_press(
     params: Option<&serde_json::Value>,
     focus_fn: Option<&FocusFn>,
@@ -306,6 +327,11 @@ async fn handle_press(
             data: None,
         })?;
 
+    // Hold this lock across the whole focus → settle → inject sequence so
+    // two concurrent `press` calls cannot interleave their focus steps (call
+    // A focuses window X, call B focuses window Y, then both keys land on Y).
+    let _order_guard = PRESS_ORDER_LOCK.lock().await;
+
     if let Some(focus) = focus_fn {
         match focus(window) {
             Ok(()) => {
@@ -315,7 +341,17 @@ async fn handle_press(
                 tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
             }
             Err(e) => {
-                tracing::warn!(window = ?window, error = %e, "focus before press failed (continuing)");
+                if let Some(label) = window {
+                    // The caller explicitly targeted a window; silently
+                    // falling through would deliver the key to whatever
+                    // window currently has focus and still return ok.
+                    return Err(RpcError {
+                        code: -32603,
+                        message: format!("failed to focus window '{label}': {e}"),
+                        data: None,
+                    });
+                }
+                tracing::warn!(error = %e, "focus before press failed (continuing)");
             }
         }
     }
