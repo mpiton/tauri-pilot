@@ -144,6 +144,10 @@ pub(crate) enum Command {
         /// Wait until DOM is stable for N ms (no new mutations).
         #[arg(long, default_value = "300")]
         stable: u64,
+        /// Defer the stability timer until at least one mutation occurs.
+        /// Use after IPC calls that trigger async re-renders (e.g., React state updates).
+        #[arg(long)]
+        require_mutation: bool,
     },
     /// Display or stream captured console logs.
     Logs {
@@ -452,11 +456,13 @@ mod tests {
             selector,
             timeout,
             stable,
+            require_mutation,
         } = cli.command
         {
             assert_eq!(selector, Some(".results".to_owned()));
             assert_eq!(timeout, 5000);
             assert_eq!(stable, 500);
+            assert!(!require_mutation);
         } else {
             panic!("Expected Watch command");
         }
@@ -469,11 +475,60 @@ mod tests {
             selector,
             timeout,
             stable,
+            require_mutation,
         } = cli.command
         {
             assert_eq!(selector, None);
             assert_eq!(timeout, 10000);
             assert_eq!(stable, 300);
+            assert!(!require_mutation);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_parse_watch_require_mutation() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "watch",
+            "--require-mutation",
+        ]);
+        if let Command::Watch {
+            require_mutation, ..
+        } = cli.command
+        {
+            assert!(require_mutation);
+        } else {
+            panic!("Expected Watch command");
+        }
+    }
+
+    #[test]
+    fn test_parse_watch_require_mutation_with_selector() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "watch",
+            "--selector",
+            "#root",
+            "--require-mutation",
+            "--stable",
+            "500",
+        ]);
+        if let Command::Watch {
+            selector,
+            stable,
+            require_mutation,
+            ..
+        } = cli.command
+        {
+            assert_eq!(selector, Some("#root".to_owned()));
+            assert_eq!(stable, 500);
+            assert!(require_mutation);
         } else {
             panic!("Expected Watch command");
         }

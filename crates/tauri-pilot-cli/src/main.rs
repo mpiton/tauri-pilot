@@ -374,7 +374,8 @@ async fn run_command(
             selector,
             timeout,
             stable,
-        } => run_watch_command(client, selector, timeout, stable, window).await,
+            require_mutation,
+        } => run_watch_command(client, selector, timeout, stable, require_mutation, window).await,
         Command::Logs {
             level,
             last,
@@ -431,11 +432,15 @@ async fn run_watch_command(
     selector: Option<String>,
     timeout: u64,
     stable: u64,
+    require_mutation: bool,
     window: Option<&str>,
 ) -> Result<serde_json::Value> {
     let mut params = serde_json::Map::new();
     params.insert("timeout".into(), json!(timeout));
     params.insert("stable".into(), json!(stable));
+    if require_mutation {
+        params.insert("requireMutation".into(), json!(true));
+    }
     if let Some(sel) = selector {
         params.insert("selector".into(), json!(sel));
     }
