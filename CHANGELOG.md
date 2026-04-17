@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `simulate_press` now propagates modifier-release failures instead of dropping them, so a combo can no longer return `Ok(())` while leaving a modifier stuck down ([#53])
 - `press` with `--window <label>` but no focus hook installed now errors instead of silently injecting into whatever window has focus ([#53])
 - `Enigo::new` failure hint about macOS Accessibility permission is now gated to macOS builds — Linux and Windows errors no longer point users at the wrong remediation ([#53])
+- `press` JoinError handling distinguishes panics from cancellation and runtime-shutdown cases instead of reporting every failure as "panicked" ([#53])
 
 ## [0.3.0] - 2026-04-10
 

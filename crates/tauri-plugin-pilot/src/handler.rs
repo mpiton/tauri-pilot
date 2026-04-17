@@ -380,10 +380,22 @@ async fn handle_press(
     let combo = key_str.to_owned();
     tokio::task::spawn_blocking(move || key::simulate_press(&combo))
         .await
-        .map_err(|e| RpcError {
-            code: -32603,
-            message: format!("press task panicked: {e}"),
-            data: None,
+        .map_err(|e| {
+            // A JoinError can be a panic, a cancellation, or a runtime
+            // shutdown — reporting every one as "panicked" misleads during
+            // teardown.
+            let message = if e.is_panic() {
+                format!("press task panicked: {e}")
+            } else if e.is_cancelled() {
+                "press task was cancelled".to_owned()
+            } else {
+                format!("press task failed: {e}")
+            };
+            RpcError {
+                code: -32603,
+                message,
+                data: None,
+            }
         })?
         .map_err(|e| RpcError {
             code: -32603,
