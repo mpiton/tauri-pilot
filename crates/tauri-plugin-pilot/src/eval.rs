@@ -91,12 +91,17 @@ impl EvalEngine {
     /// Uses `__TAURI_INTERNALS__.invoke` which is always available (even without
     /// `withGlobalTauri`). The expression is `await`-ed so async results resolve
     /// before serialization.
+    ///
+    /// Normalizes `undefined` results to `null` (string `"null"`) so Tauri does
+    /// not drop the `result` field — otherwise a void expression (e.g.,
+    /// `element.click()`) would cause the handler to log a bogus "neither
+    /// result nor error" warning (#48).
     #[must_use]
     pub fn wrap_script(id: u64, script: &str) -> String {
         format!(
             "(async()=>{{try{{let __r=await({script});\
              await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
-             {{id:{id},result:JSON.stringify(__r)}});\
+             {{id:{id},result:__r===undefined?'null':JSON.stringify(__r)}});\
              }}catch(__e){{await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
              {{id:{id},error:(__e&&__e.message)||String(__e)}});}}}})();"
         )
@@ -215,6 +220,19 @@ mod tests {
         assert!(script.contains("__callback"));
         assert!(script.contains("try"));
         assert!(script.contains("catch"));
+    }
+
+    #[test]
+    fn test_wrap_script_normalizes_undefined_to_null() {
+        // #48: A JS expression returning undefined must not cause the handler
+        // to log "callback received with neither result nor error". The wrapper
+        // converts undefined → the string "null" so Tauri keeps the `result`
+        // field populated.
+        let script = EvalEngine::wrap_script(1, "element.click()");
+        assert!(
+            script.contains("__r===undefined?'null':JSON.stringify(__r)"),
+            "wrapped script must normalize undefined to the string 'null'; got: {script}"
+        );
     }
 
     #[test]

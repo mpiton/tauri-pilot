@@ -735,6 +735,15 @@ serialized. Scripts that end on a declaration (`const x = 1;`) instead of an
 expression return `null` — append the bare identifier (`; x`) to read the value
 back.
 
+Expressions that return `undefined` (e.g. `element.click()`, `console.log(...)`,
+any void function) print nothing and exit with status `0`, so they compose
+cleanly with `&&` and `set -e`:
+
+```bash
+$ tauri-pilot eval "document.querySelector('a')?.click()" && tauri-pilot state
+# click fires, then state prints — exit 0
+```
+
 Top-level `await` is not supported; wrap async work in an IIFE:
 `(async () => await fetch('/api').then(r => r.json()))()`.
 

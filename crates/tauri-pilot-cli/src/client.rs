@@ -65,9 +65,12 @@ impl Client {
             bail!("RPC error ({}): {}", err.code, err.message);
         }
 
-        response
-            .result
-            .context("Server returned empty result without error")
+        // A missing `result` field (or explicit `"result": null`) means the
+        // server-side script completed successfully but produced no value —
+        // e.g., `element.click()` or any void expression. Treat this as
+        // success with Value::Null rather than an error so bash `&&` chains
+        // and `set -e` keep working. See #48.
+        Ok(response.result.unwrap_or(serde_json::Value::Null))
     }
 }
 
@@ -124,6 +127,70 @@ mod tests {
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("ping", None).await.unwrap();
         assert_eq!(result, serde_json::json!({"status": "ok"}));
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_client_null_result_is_success() {
+        // A JSON-RPC response with explicit `"result": null` must be treated as
+        // success with Value::Null — not a protocol error. This happens when an
+        // eval'd JS expression legitimately returns `undefined` (e.g.,
+        // `element.click()`, void functions). Regression test for #48.
+        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05c.sock");
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let req: Request = serde_json::from_str(line.trim()).unwrap();
+            // Write `{"result": null}` explicitly to simulate a void JS expr.
+            let raw = format!(r#"{{"jsonrpc":"2.0","id":{},"result":null}}"#, req.id);
+            writer.write_all(raw.as_bytes()).await.unwrap();
+            writer.write_all(b"\n").await.unwrap();
+            writer.flush().await.unwrap();
+        });
+
+        let mut client = connect_with_retry(&socket).await;
+        let result = client.call("eval", None).await.unwrap();
+        assert_eq!(result, serde_json::Value::Null);
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_client_missing_result_is_success() {
+        // Defensive coverage: a response with neither `result` nor `error` is
+        // technically a JSON-RPC protocol edge case. The #48 path is actually
+        // covered by `test_client_null_result_is_success` above — the plugin
+        // emits `"result": null` (explicit), which serde then conflates with
+        // absent for `Option<Value>`. This test locks in that both shapes
+        // deserialize to the same successful `Value::Null` outcome.
+        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05d.sock");
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let req: Request = serde_json::from_str(line.trim()).unwrap();
+            // Neither `result` nor `error` present
+            let raw = format!(r#"{{"jsonrpc":"2.0","id":{}}}"#, req.id);
+            writer.write_all(raw.as_bytes()).await.unwrap();
+            writer.write_all(b"\n").await.unwrap();
+            writer.flush().await.unwrap();
+        });
+
+        let mut client = connect_with_retry(&socket).await;
+        let result = client.call("eval", None).await.unwrap();
+        assert_eq!(result, serde_json::Value::Null);
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);
