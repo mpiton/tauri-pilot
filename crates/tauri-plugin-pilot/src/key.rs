@@ -196,9 +196,16 @@ pub fn simulate_press(combo: &str) -> Result<(), KeyError> {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
 
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| {
-        KeyError::EnigoInit(format!(
+        // The Accessibility permission hint only applies to macOS — on Linux
+        // (libei/X11) and Windows the remediation is different, so don't
+        // point users at the wrong fix.
+        #[cfg(target_os = "macos")]
+        let msg = format!(
             "{e} (on macOS, grant Accessibility permission to the launching terminal)"
-        ))
+        );
+        #[cfg(not(target_os = "macos"))]
+        let msg = e.to_string();
+        KeyError::EnigoInit(msg)
     })?;
 
     // Track how many modifiers were pressed so we can release exactly those

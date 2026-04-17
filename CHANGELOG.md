@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `press` now explicitly enables enigo's `wayland` backend so OS-level key injection works on Wayland sessions, not just X11 ([#53])
 - `press` validates the combo string before taking the focus lock or stealing focus, so malformed input returns `-32602` (invalid params) immediately instead of `-32603` after an 80ms focus settle ([#53])
 - `simulate_press` now propagates modifier-release failures instead of dropping them, so a combo can no longer return `Ok(())` while leaving a modifier stuck down ([#53])
+- `press` with `--window <label>` but no focus hook installed now errors instead of silently injecting into whatever window has focus ([#53])
+- `Enigo::new` failure hint about macOS Accessibility permission is now gated to macOS builds — Linux and Windows errors no longer point users at the wrong remediation ([#53])
 
 ## [0.3.0] - 2026-04-10
 

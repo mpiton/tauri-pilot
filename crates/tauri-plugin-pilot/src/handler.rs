@@ -337,6 +337,17 @@ async fn handle_press(
         data: None,
     })?;
 
+    // An explicit `--window <label>` with no focus hook installed would
+    // otherwise silently drop the focus step and inject into whatever window
+    // currently has focus. Reject before taking any lock.
+    if window.is_some() && focus_fn.is_none() {
+        return Err(RpcError {
+            code: -32603,
+            message: "cannot focus target window: no focus hook installed".to_owned(),
+            data: None,
+        });
+    }
+
     // Hold this lock across the whole focus → settle → inject sequence so
     // two concurrent `press` calls cannot interleave their focus steps (call
     // A focuses window X, call B focuses window Y, then both keys land on Y).
@@ -514,6 +525,28 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("invalid press combo"));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test]
+    async fn test_dispatch_press_with_explicit_window_and_no_focus_fn_errors() {
+        // --window <label> with no focus hook must not silently inject into
+        // the currently focused window. We can pass `window` through params
+        // (handler extracts it before dispatch).
+        let engine = EvalEngine::new();
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "Enter", "window": "settings"})),
+            &engine,
+            None,
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.unwrap_err();
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("focus"));
     }
 
     #[cfg(feature = "press")]
