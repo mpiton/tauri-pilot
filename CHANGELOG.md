@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Bumped MSRV from Rust 1.94.0 to **1.95.0** (workspace `Cargo.toml`, `ci.yml`, `release.yml`). Public docs (README, CONTRIBUTING, docs site) updated and the inaccurate "LTS" wording dropped — Rust does not yet ship an LTS channel ([#54])
-
 ### Added
 
 - `eval` command now reads the script from stdin when the argument is `-` or omitted ([#41])
@@ -24,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `press` command now injects keyboard events at the OS level via `enigo` instead of dispatching synthetic JS `KeyboardEvent`s. Events are now `isTrusted=true` and traverse the full input pipeline, reaching DOM listeners, Tauri accelerators, and global shortcut handlers ([#45])
 - The plugin now requests window focus before injecting keys so events land on the correct webview
 - `tauri-plugin-pilot` exposes a default-on `press` feature that gates the `enigo` dependency. Build with `--no-default-features` to drop it from release builds where the whole plugin is already no-op'd ([#53])
+- Bumped MSRV from Rust 1.94.0 to **1.95.0** (workspace `Cargo.toml`, `ci.yml`, `release.yml`). Public docs (README, CONTRIBUTING, docs site) updated and the inaccurate "LTS" wording dropped — Rust does not yet ship an LTS channel ([#54])
 
 ### Fixed
 
