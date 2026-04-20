@@ -673,11 +673,11 @@ mod tests {
 
     #[test]
     fn test_toml_parse_minimal() {
-        let toml_str = r#"
+        let toml_str = r##"
 [[step]]
 action = "click"
 target = "#btn"
-"#;
+"##;
         let scenario: Scenario = toml::from_str(toml_str).expect("valid toml");
         assert_eq!(scenario.step.len(), 1);
         assert_eq!(scenario.step[0].action, "click");
