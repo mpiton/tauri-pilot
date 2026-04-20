@@ -570,9 +570,8 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
                 writer.write_event(Event::Empty(BytesStart::new("skipped")))?;
             }
             StepOutcome::Failed { message, .. } => {
-                let escaped = xml_attr_escape(message);
                 let mut failure = BytesStart::new("failure");
-                failure.push_attribute(("message", escaped.as_str()));
+                failure.push_attribute(("message", message.as_str()));
                 writer.write_event(Event::Empty(failure))?;
             }
         }
@@ -593,13 +592,6 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
         .with_context(|| format!("Failed to write JUnit XML to {}", path.display()))?;
 
     Ok(())
-}
-
-fn xml_attr_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -840,10 +832,4 @@ action = "ping"
         assert!(xml.contains("<skipped"));
     }
 
-    #[test]
-    fn test_xml_attr_escape() {
-        assert_eq!(xml_attr_escape("a & b"), "a &amp; b");
-        assert_eq!(xml_attr_escape(r#"say "hi""#), "say &quot;hi&quot;");
-        assert_eq!(xml_attr_escape("<tag>"), "&lt;tag&gt;");
-    }
 }
