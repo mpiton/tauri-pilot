@@ -369,13 +369,10 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
         }
         "assert-exists" => {
             let t = require_target(step)?;
-            let result = client
+            client
                 .call("visible", with_window(Some(target_params(t)), window))
-                .await?;
-            anyhow::ensure!(
-                result.get("visible").is_some(),
-                "element '{t}' was not found in the DOM"
-            );
+                .await
+                .with_context(|| format!("element '{t}' was not found in the DOM"))?;
             Ok(json!({"ok": true}))
         }
         "assert-visible" => {
