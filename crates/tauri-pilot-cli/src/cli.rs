@@ -214,10 +214,10 @@ pub(crate) enum Command {
     Run {
         /// Path to scenario TOML file.
         scenario: PathBuf,
-        /// Write JUnit XML report to this path.
+        /// Write `JUnit` XML report to this path.
         #[arg(long, value_name = "FILE")]
         junit: Option<PathBuf>,
-        /// Override fail_fast setting from the scenario file.
+        /// Override `fail_fast` setting from the scenario file.
         #[arg(long)]
         no_fail_fast: bool,
     },

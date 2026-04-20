@@ -1279,8 +1279,7 @@ async fn run_scenario_command(
                 .as_ref()
                 .and_then(|c| c.socket.clone())
         })
-        .map(Ok)
-        .unwrap_or_else(|| resolve_socket(None))?;
+        .map_or_else(|| resolve_socket(None), Ok)?;
 
     let mut client = Client::connect(&socket).await?;
 

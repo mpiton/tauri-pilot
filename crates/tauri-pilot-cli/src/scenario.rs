@@ -11,7 +11,7 @@ use crate::{target_params, with_window};
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
 
-#[allow(clippy::module_name_repetitions)]
+#[allow(clippy::module_name_repetitions, clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
 pub(crate) struct Scenario {
     pub(crate) connect: Option<Connect>,
@@ -24,6 +24,7 @@ pub(crate) struct Scenario {
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct Connect {
     pub(crate) socket: Option<PathBuf>,
+    #[allow(dead_code)]
     pub(crate) timeout_ms: Option<u64>,
 }
 
@@ -33,6 +34,7 @@ pub(crate) struct ScenarioMeta {
     pub(crate) name: Option<String>,
     #[serde(default = "default_true")]
     pub(crate) fail_fast: bool,
+    #[allow(dead_code)]
     pub(crate) global_timeout_ms: Option<u64>,
 }
 
@@ -50,6 +52,7 @@ fn default_true() -> bool {
     true
 }
 
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
 pub(crate) struct Step {
     pub(crate) name: Option<String>,
@@ -354,9 +357,7 @@ async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Res
             let actual = result.as_str().unwrap_or_default();
             anyhow::ensure!(
                 actual == expected,
-                "expected text {:?}, got {:?}",
-                expected,
-                actual
+                "expected text {expected:?}, got {actual:?}"
             );
             Ok(json!({"ok": true}))
         }
@@ -403,9 +404,7 @@ async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Res
             let actual = result.as_str().unwrap_or_default();
             anyhow::ensure!(
                 actual == expected,
-                "expected value {:?}, got {:?}",
-                expected,
-                actual
+                "expected value {expected:?}, got {actual:?}"
             );
             Ok(json!({"ok": true}))
         }
@@ -418,13 +417,11 @@ async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Res
             let actual = result.as_str().unwrap_or_default();
             anyhow::ensure!(
                 actual.contains(expected),
-                "URL does not contain {:?}, got {:?}",
-                expected,
-                actual
+                "URL does not contain {expected:?}, got {actual:?}"
             );
             Ok(json!({"ok": true}))
         }
-        other => anyhow::bail!("unknown step action: {:?}", other),
+        other => anyhow::bail!("unknown step action: {other:?}"),
     }
 }
 
@@ -589,10 +586,8 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
     writer.write_event(Event::End(BytesEnd::new("testsuites")))?;
     writer.write_event(Event::Text(BytesText::new("\n")))?;
 
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent() && !parent.as_os_str().is_empty() {
+        std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, &buf)
         .with_context(|| format!("Failed to write JUnit XML to {}", path.display()))?;
