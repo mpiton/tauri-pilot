@@ -7,7 +7,7 @@
   <a href="https://crates.io/crates/tauri-plugin-pilot"><img src="https://img.shields.io/crates/v/tauri-plugin-pilot.svg" alt="crates.io"></a>
   <a href="https://github.com/mpiton/tauri-pilot/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/rust-1.95.0+-orange.svg" alt="Rust 1.95.0+">
-  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS-lightgrey.svg" alt="Platform: Linux | macOS">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg" alt="Platform: Linux | macOS | Windows">
   <img src="https://img.shields.io/badge/tauri-v2-24C8D8.svg" alt="Tauri v2">
 </p>
 
@@ -38,24 +38,24 @@ ok
 
 ## Why?
 
-There's no tool for AI agents to interact with Tauri app UIs. Playwright doesn't work (Tauri uses system WebViews — WebKitGTK on Linux, WebKit on macOS — not Chromium). tauri-pilot bridges this gap with a lightweight plugin + CLI that speaks a protocol optimized for LLM consumption.
+There's no tool for AI agents to interact with Tauri app UIs. Playwright doesn't work (Tauri uses system WebViews — WebKitGTK on Linux, WebKit on macOS, WebView2 on Windows — not Chromium). tauri-pilot bridges this gap with a lightweight plugin + CLI that speaks a protocol optimized for LLM consumption.
 
 ## How it works
 
 ```
-┌──────────────┐   Unix Socket    ┌─────────────────────────────┐
-│  tauri-pilot  │ ◄──────────────► │  tauri-plugin-pilot (Rust)  │
-│  (CLI)        │   JSON-RPC       │  embedded in your app       │
-└──────────────┘                   │                             │
-                                   │  ┌─────────────────────┐   │
-                                   │  │  JS Bridge (injected)│   │
-                                   │  │  window.__PILOT__    │   │
-                                   │  └─────────────────────┘   │
-                                   │  WebView                    │
-                                   └─────────────────────────────┘
+┌──────────────┐   Unix Socket /     ┌─────────────────────────────┐
+│  tauri-pilot  │   Named Pipe (Win) │  tauri-plugin-pilot (Rust)  │
+│  (CLI)        │ ◄─────────────────► │  embedded in your app       │
+└──────────────┘   JSON-RPC           │                             │
+                                     │  ┌─────────────────────┐   │
+                                     │  │  JS Bridge (injected)│   │
+                                     │  │  window.__PILOT__    │   │
+                                     │  └─────────────────────┘   │
+                                     │  WebView                    │
+                                     └─────────────────────────────┘
 ```
 
-1. **Plugin** embeds in your Tauri app (debug builds only), starts a Unix socket server
+1. **Plugin** embeds in your Tauri app (debug builds only), starts a Unix socket / Named Pipe server
 2. **CLI** connects to the socket, sends JSON-RPC commands
 3. **JS Bridge** injected into the WebView handles DOM inspection and interaction
 
@@ -222,7 +222,7 @@ window:
 
 ## Requirements
 
-- **Linux** (WebKitGTK) or **macOS** (WebKit) — Windows planned
+- **Linux** (WebKitGTK), **macOS** (WebKit), or **Windows** (WebView2)
 - **Tauri v2** (v1 not supported)
 - **Rust 1.95.0+** (edition 2024)
 
