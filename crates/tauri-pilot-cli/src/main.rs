@@ -1322,17 +1322,55 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
-        let xdg = PathBuf::from(xdg);
-        if let Some(socket) = newest_socket_in_dir(&xdg) {
-            return Ok(socket);
+    #[cfg(unix)]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+            let xdg = PathBuf::from(xdg);
+            if let Some(socket) = newest_socket_in_dir(&xdg) {
+                return Ok(socket);
+            }
         }
+
+        newest_socket_in_dir(Path::new("/tmp"))
+            .ok_or_else(|| anyhow::anyhow!("No tauri-pilot socket found. Is a Tauri app running?"))
     }
 
-    newest_socket_in_dir(Path::new("/tmp"))
-        .ok_or_else(|| anyhow::anyhow!("No tauri-pilot socket found. Is a Tauri app running?"))
+    #[cfg(windows)]
+    {
+        let reg_path = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .map(|p| p.join("tauri-pilot").join("instances.json"));
+
+        if let Some(path) = reg_path {
+            if let Ok(data) = std::fs::read_to_string(&path) {
+                if let Ok(reg) = serde_json::from_str::<serde_json::Value>(&data) {
+                    if let Some(instances) = reg.get("instances").and_then(|v| v.as_object()) {
+                        let mut newest: Option<(u64, PathBuf)> = None;
+                        for (_, entry) in instances {
+                            if let Some(created_at) =
+                                entry.get("created_at").and_then(|v| v.as_u64())
+                            {
+                                if let Some(pipe) = entry.get("pipe").and_then(|v| v.as_str()) {
+                                    if newest.is_none() || created_at > newest.as_ref().unwrap().0 {
+                                        newest = Some((created_at, PathBuf::from(pipe)));
+                                    }
+                                }
+                            }
+                        }
+                        if let Some((_, pipe)) = newest {
+                            return Ok(pipe);
+                        }
+                    }
+                }
+            }
+        }
+        Err(anyhow::anyhow!(
+            "No tauri-pilot pipe found. Is a Tauri app running?"
+        ))
+    }
 }
 
+#[cfg(not(windows))]
 fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
@@ -1441,6 +1479,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_finds_socket_in_xdg_runtime_dir() {
         let dir =
@@ -1462,6 +1501,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_prefers_xdg_runtime_dir_over_tmp() {
         let dir = std::env::temp_dir().join(format!(
@@ -1491,6 +1531,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_falls_back_to_tmp_when_xdg_unset() {
         let tmp_sock = std::path::PathBuf::from(format!(
@@ -1524,6 +1565,84 @@ mod tests {
         let explicit = std::path::PathBuf::from("/tmp/my-explicit.sock");
         let result = resolve_socket(Some(explicit.clone()));
         assert_eq!(result.expect("explicit path returned"), explicit);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_resolve_socket_windows_reads_registry() {
+        let dir = std::env::temp_dir().join(format!("tauri-pilot-reg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create reg test dir");
+
+        let reg_path = dir.join("instances.json");
+        let pipe = r"\\.\pipe\tauri-pilot-testapp";
+        let reg_data = serde_json::json!({
+            "instances": {
+                "testapp": {
+                    "pipe": pipe,
+                    "pid": 1234,
+                    "created_at": 1745200000
+                }
+            }
+        });
+        std::fs::write(&reg_path, serde_json::to_string(&reg_data).unwrap())
+            .expect("write mock registry");
+
+        unsafe { std::env::set_var("LOCALAPPDATA", &dir) };
+        let result = resolve_socket(None);
+        unsafe { std::env::remove_var("LOCALAPPDATA") };
+
+        let _ = std::fs::remove_file(&reg_path);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(result.expect("pipe found"), std::path::PathBuf::from(pipe));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_resolve_socket_windows_returns_explicit() {
+        let explicit = std::path::PathBuf::from(r"\\.\pipe\my-explicit");
+        let result = resolve_socket(Some(explicit.clone()));
+        assert_eq!(result.expect("explicit path returned"), explicit);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_resolve_socket_windows_picks_newest_instance() {
+        let dir = std::env::temp_dir().join(format!(
+            "tauri-pilot-reg-newest-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create reg test dir");
+
+        let reg_path = dir.join("instances.json");
+        let reg_data = serde_json::json!({
+            "instances": {
+                "old_app": {
+                    "pipe": r"\\.\pipe\tauri-pilot-old",
+                    "pid": 1111,
+                    "created_at": 1000
+                },
+                "new_app": {
+                    "pipe": r"\\.\pipe\tauri-pilot-new",
+                    "pid": 2222,
+                    "created_at": 2000
+                }
+            }
+        });
+        std::fs::write(&reg_path, serde_json::to_string(&reg_data).unwrap())
+            .expect("write mock registry");
+
+        unsafe { std::env::set_var("LOCALAPPDATA", &dir) };
+        let result = resolve_socket(None);
+        unsafe { std::env::remove_var("LOCALAPPDATA") };
+
+        let _ = std::fs::remove_file(&reg_path);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(
+            result.expect("pipe found"),
+            std::path::PathBuf::from(r"\\.\pipe\tauri-pilot-new")
+        );
     }
 
     #[test]
