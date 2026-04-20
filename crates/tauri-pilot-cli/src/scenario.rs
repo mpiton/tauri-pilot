@@ -11,27 +11,29 @@ use crate::{target_params, with_window};
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Deserialize)]
-pub struct Scenario {
-    pub connect: Option<Connect>,
+pub(crate) struct Scenario {
+    pub(crate) connect: Option<Connect>,
     #[serde(default)]
-    pub scenario: ScenarioMeta,
+    pub(crate) scenario: ScenarioMeta,
     #[serde(default)]
-    pub step: Vec<Step>,
+    pub(crate) step: Vec<Step>,
 }
 
 #[derive(Debug, Deserialize, Default)]
-pub struct Connect {
-    pub socket: Option<PathBuf>,
-    pub timeout_ms: Option<u64>,
+pub(crate) struct Connect {
+    pub(crate) socket: Option<PathBuf>,
+    pub(crate) timeout_ms: Option<u64>,
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Deserialize)]
-pub struct ScenarioMeta {
-    pub name: Option<String>,
+pub(crate) struct ScenarioMeta {
+    pub(crate) name: Option<String>,
     #[serde(default = "default_true")]
-    pub fail_fast: bool,
-    pub global_timeout_ms: Option<u64>,
+    pub(crate) fail_fast: bool,
+    pub(crate) global_timeout_ms: Option<u64>,
 }
 
 impl Default for ScenarioMeta {
@@ -49,26 +51,26 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Step {
-    pub name: Option<String>,
-    pub action: String,
-    pub timeout_ms: Option<u64>,
-    pub target: Option<String>,
-    pub value: Option<String>,
-    pub text: Option<String>,
-    pub key: Option<String>,
-    pub url: Option<String>,
-    pub script: Option<String>,
-    pub expected: Option<String>,
-    pub selector: Option<String>,
-    pub direction: Option<String>,
-    pub amount: Option<i32>,
+pub(crate) struct Step {
+    pub(crate) name: Option<String>,
+    pub(crate) action: String,
+    pub(crate) timeout_ms: Option<u64>,
+    pub(crate) target: Option<String>,
+    pub(crate) value: Option<String>,
+    pub(crate) text: Option<String>,
+    pub(crate) key: Option<String>,
+    pub(crate) url: Option<String>,
+    pub(crate) script: Option<String>,
+    pub(crate) expected: Option<String>,
+    pub(crate) selector: Option<String>,
+    pub(crate) direction: Option<String>,
+    pub(crate) amount: Option<i32>,
     #[serde(rename = "ref")]
-    pub step_ref: Option<String>,
-    pub gone: Option<bool>,
-    pub stable: Option<u64>,
-    pub require_mutation: Option<bool>,
-    pub path: Option<PathBuf>,
+    pub(crate) step_ref: Option<String>,
+    pub(crate) gone: Option<bool>,
+    pub(crate) stable: Option<u64>,
+    pub(crate) require_mutation: Option<bool>,
+    pub(crate) path: Option<PathBuf>,
 }
 
 impl Step {
@@ -82,63 +84,67 @@ impl Step {
 // ── Execution result types ────────────────────────────────────────────────────
 
 #[derive(Debug)]
-pub enum StepOutcome {
+pub(crate) enum StepOutcome {
     Passed { duration: Duration },
     Failed { duration: Duration, message: String },
     Skipped,
 }
 
 #[derive(Debug)]
-pub struct StepResult {
-    pub name: String,
-    pub outcome: StepOutcome,
+pub(crate) struct StepResult {
+    pub(crate) name: String,
+    pub(crate) outcome: StepOutcome,
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
-pub struct ScenarioReport {
-    pub name: String,
-    pub results: Vec<StepResult>,
-    pub total_duration: Duration,
+pub(crate) struct ScenarioReport {
+    pub(crate) name: String,
+    pub(crate) results: Vec<StepResult>,
+    pub(crate) total_duration: Duration,
 }
 
 impl ScenarioReport {
-    pub fn passed(&self) -> usize {
+    #[must_use]
+    pub(crate) fn passed(&self) -> usize {
         self.results
             .iter()
             .filter(|r| matches!(r.outcome, StepOutcome::Passed { .. }))
             .count()
     }
 
-    pub fn failed(&self) -> usize {
+    #[must_use]
+    pub(crate) fn failed(&self) -> usize {
         self.results
             .iter()
             .filter(|r| matches!(r.outcome, StepOutcome::Failed { .. }))
             .count()
     }
 
-    pub fn skipped(&self) -> usize {
+    #[must_use]
+    pub(crate) fn skipped(&self) -> usize {
         self.results
             .iter()
             .filter(|r| matches!(r.outcome, StepOutcome::Skipped))
             .count()
     }
 
-    pub fn all_passed(&self) -> bool {
+    #[must_use]
+    pub(crate) fn all_passed(&self) -> bool {
         self.failed() == 0
     }
 }
 
 // ── Main runner ───────────────────────────────────────────────────────────────
 
-pub fn load_scenario(path: &Path) -> Result<Scenario> {
+pub(crate) fn load_scenario(path: &Path) -> Result<Scenario> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read scenario file: {}", path.display()))?;
-    toml::from_str(&content).with_context(|| {
-        format!("Failed to parse scenario TOML: {}", path.display())
-    })
+    toml::from_str(&content)
+        .with_context(|| format!("Failed to parse scenario TOML: {}", path.display()))
 }
 
-pub async fn run_scenario(
+pub(crate) async fn run_scenario(
     client: &mut Client,
     scenario: &Scenario,
     window: Option<&str>,
@@ -179,7 +185,6 @@ pub async fn run_scenario(
                 let dur = step_start.elapsed();
                 let msg = format!("{e:#}");
                 print_step_fail(idx, scenario.step.len(), &step_name, &msg);
-                // Capture screenshot on failure
                 let _ = take_failure_screenshot(client, &step_name, window).await;
                 failed = true;
                 StepOutcome::Failed {
@@ -202,6 +207,7 @@ pub async fn run_scenario(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
     let timeout_ms = step.timeout_ms;
     match step.action.as_str() {
@@ -356,7 +362,6 @@ async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Res
         }
         "assert-exists" => {
             let t = require_target(step)?;
-            // Call visible; if it returns any valid response, element exists
             client
                 .call("visible", with_window(Some(target_params(t)), window))
                 .await?;
@@ -441,16 +446,20 @@ async fn take_failure_screenshot(
 
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis());
 
-    // Sanitize step name for use in a filename
     let safe_name: String = step_name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let filename = format!("{safe_name}-{ts}.png");
-    let path = dir.join(&filename);
+    let path = dir.join(filename.as_str());
 
     let result = client
         .call("screenshot", with_window(Some(json!({})), window))
@@ -503,18 +512,14 @@ fn print_step_fail(idx: usize, total: usize, name: &str, msg: &str) {
     );
 }
 
-pub fn print_report(report: &ScenarioReport) {
-    let total = report.results.len();
+pub(crate) fn print_report(report: &ScenarioReport) {
     let passed = report.passed();
     let failed = report.failed();
     let skipped = report.skipped();
     let secs = report.total_duration.as_secs_f64();
 
     eprintln!();
-    eprintln!(
-        "Scenario: {}",
-        crate::style::bold(&report.name)
-    );
+    eprintln!("Scenario: {}", crate::style::bold(&report.name));
     eprintln!(
         "  {} passed · {} failed · {} skipped  ({:.3}s)",
         passed, failed, skipped, secs
@@ -524,14 +529,16 @@ pub fn print_report(report: &ScenarioReport) {
 
 // ── JUnit XML output ──────────────────────────────────────────────────────────
 
-pub fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()> {
+pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()> {
     use quick_xml::Writer;
     use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
-    let total = report.results.len();
     let failures = report.failed();
     let skipped = report.skipped();
-    let elapsed = report.total_duration.as_secs_f64();
+    let total_str = report.results.len().to_string();
+    let failures_str = failures.to_string();
+    let skipped_str = skipped.to_string();
+    let elapsed_str = format!("{:.3}", report.total_duration.as_secs_f64());
 
     let mut buf = Vec::new();
     let mut writer = Writer::new(&mut buf);
@@ -539,31 +546,31 @@ pub fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()> {
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     writer.write_event(Event::Text(BytesText::new("\n")))?;
 
-    let mut testsuites = BytesStart::new("testsuites");
+    let testsuites = BytesStart::new("testsuites");
     writer.write_event(Event::Start(testsuites))?;
     writer.write_event(Event::Text(BytesText::new("\n  ")))?;
 
     let mut suite = BytesStart::new("testsuite");
     suite.push_attribute(("name", report.name.as_str()));
-    suite.push_attribute(("tests", total.to_string().as_str()));
-    suite.push_attribute(("failures", failures.to_string().as_str()));
+    suite.push_attribute(("tests", total_str.as_str()));
+    suite.push_attribute(("failures", failures_str.as_str()));
     suite.push_attribute(("errors", "0"));
-    suite.push_attribute(("skipped", skipped.to_string().as_str()));
-    suite.push_attribute(("time", format!("{elapsed:.3}").as_str()));
+    suite.push_attribute(("skipped", skipped_str.as_str()));
+    suite.push_attribute(("time", elapsed_str.as_str()));
     writer.write_event(Event::Start(suite))?;
 
     for result in &report.results {
         writer.write_event(Event::Text(BytesText::new("\n    ")))?;
-        let dur = match &result.outcome {
+        let dur_str = match &result.outcome {
             StepOutcome::Passed { duration } | StepOutcome::Failed { duration, .. } => {
-                duration.as_secs_f64()
+                format!("{:.3}", duration.as_secs_f64())
             }
-            StepOutcome::Skipped => 0.0,
+            StepOutcome::Skipped => "0.000".to_string(),
         };
 
         let mut tc = BytesStart::new("testcase");
         tc.push_attribute(("name", result.name.as_str()));
-        tc.push_attribute(("time", format!("{dur:.3}").as_str()));
+        tc.push_attribute(("time", dur_str.as_str()));
         writer.write_event(Event::Start(tc))?;
 
         match &result.outcome {
@@ -572,9 +579,8 @@ pub fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()> {
                 writer.write_event(Event::Empty(BytesStart::new("skipped")))?;
             }
             StepOutcome::Failed { message, .. } => {
-                let mut failure = BytesStart::new("failure");
-                // Escape message for XML attribute
                 let escaped = xml_attr_escape(message);
+                let mut failure = BytesStart::new("failure");
                 failure.push_attribute(("message", escaped.as_str()));
                 writer.write_event(Event::Empty(failure))?;
             }
@@ -631,8 +637,19 @@ mod tests {
     #[test]
     fn test_scenario_report_counts() {
         let report = make_report(vec![
-            ("step-1", StepOutcome::Passed { duration: Duration::from_millis(100) }),
-            ("step-2", StepOutcome::Failed { duration: Duration::from_millis(50), message: "oops".into() }),
+            (
+                "step-1",
+                StepOutcome::Passed {
+                    duration: Duration::from_millis(100),
+                },
+            ),
+            (
+                "step-2",
+                StepOutcome::Failed {
+                    duration: Duration::from_millis(50),
+                    message: "oops".into(),
+                },
+            ),
             ("step-3", StepOutcome::Skipped),
         ]);
         assert_eq!(report.passed(), 1);
@@ -644,29 +661,39 @@ mod tests {
     #[test]
     fn test_scenario_report_all_passed() {
         let report = make_report(vec![
-            ("step-1", StepOutcome::Passed { duration: Duration::from_millis(10) }),
-            ("step-2", StepOutcome::Passed { duration: Duration::from_millis(20) }),
+            (
+                "step-1",
+                StepOutcome::Passed {
+                    duration: Duration::from_millis(10),
+                },
+            ),
+            (
+                "step-2",
+                StepOutcome::Passed {
+                    duration: Duration::from_millis(20),
+                },
+            ),
         ]);
         assert!(report.all_passed());
     }
 
     #[test]
     fn test_toml_parse_minimal() {
-        let toml = r#"
+        let toml_str = r#"
 [[step]]
 action = "click"
 target = "#btn"
 "#;
-        let scenario: Scenario = toml::from_str(toml).unwrap();
+        let scenario: Scenario = toml::from_str(toml_str).expect("valid toml");
         assert_eq!(scenario.step.len(), 1);
         assert_eq!(scenario.step[0].action, "click");
         assert_eq!(scenario.step[0].target.as_deref(), Some("#btn"));
-        assert!(scenario.scenario.fail_fast); // default true
+        assert!(scenario.scenario.fail_fast);
     }
 
     #[test]
     fn test_toml_parse_full_meta() {
-        let toml = r#"
+        let toml_str = r#"
 [connect]
 socket = "/tmp/test.sock"
 timeout_ms = 5000
@@ -688,14 +715,17 @@ action = "assert-text"
 target = "h1"
 expected = "Login"
 "#;
-        let scenario: Scenario = toml::from_str(toml).unwrap();
+        let scenario: Scenario = toml::from_str(toml_str).expect("valid toml");
         assert_eq!(scenario.scenario.name.as_deref(), Some("login flow"));
         assert!(!scenario.scenario.fail_fast);
         assert_eq!(scenario.scenario.global_timeout_ms, Some(60000));
         assert_eq!(scenario.step.len(), 2);
 
-        let connect = scenario.connect.as_ref().unwrap();
-        assert_eq!(connect.socket.as_deref(), Some(Path::new("/tmp/test.sock")));
+        let connect = scenario.connect.as_ref().expect("connect section");
+        assert_eq!(
+            connect.socket.as_deref(),
+            Some(Path::new("/tmp/test.sock"))
+        );
         assert_eq!(connect.timeout_ms, Some(5000));
 
         let step = &scenario.step[1];
@@ -707,11 +737,11 @@ expected = "Login"
 
     #[test]
     fn test_toml_default_fail_fast() {
-        let toml = r#"
+        let toml_str = r#"
 [[step]]
 action = "ping"
 "#;
-        let scenario: Scenario = toml::from_str(toml).unwrap();
+        let scenario: Scenario = toml::from_str(toml_str).expect("valid toml");
         assert!(scenario.scenario.fail_fast);
     }
 
@@ -768,13 +798,23 @@ action = "ping"
     #[test]
     fn test_junit_xml_all_passed() {
         let report = make_report(vec![
-            ("click button", StepOutcome::Passed { duration: Duration::from_millis(123) }),
-            ("fill form", StepOutcome::Passed { duration: Duration::from_millis(45) }),
+            (
+                "click button",
+                StepOutcome::Passed {
+                    duration: Duration::from_millis(123),
+                },
+            ),
+            (
+                "fill form",
+                StepOutcome::Passed {
+                    duration: Duration::from_millis(45),
+                },
+            ),
         ]);
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("results.xml");
-        write_junit_xml(&report, &path).unwrap();
-        let xml = std::fs::read_to_string(&path).unwrap();
+        write_junit_xml(&report, &path).expect("write junit xml");
+        let xml = std::fs::read_to_string(&path).expect("read xml");
         assert!(xml.contains(r#"name="test-scenario""#));
         assert!(xml.contains(r#"failures="0""#));
         assert!(xml.contains(r#"name="click button""#));
@@ -786,14 +826,25 @@ action = "ping"
     #[test]
     fn test_junit_xml_with_failures_and_skips() {
         let report = make_report(vec![
-            ("step-1", StepOutcome::Passed { duration: Duration::from_millis(10) }),
-            ("step-2", StepOutcome::Failed { duration: Duration::from_millis(20), message: "oops & done".into() }),
+            (
+                "step-1",
+                StepOutcome::Passed {
+                    duration: Duration::from_millis(10),
+                },
+            ),
+            (
+                "step-2",
+                StepOutcome::Failed {
+                    duration: Duration::from_millis(20),
+                    message: "oops & done".into(),
+                },
+            ),
             ("step-3", StepOutcome::Skipped),
         ]);
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("results.xml");
-        write_junit_xml(&report, &path).unwrap();
-        let xml = std::fs::read_to_string(&path).unwrap();
+        write_junit_xml(&report, &path).expect("write junit xml");
+        let xml = std::fs::read_to_string(&path).expect("read xml");
         assert!(xml.contains(r#"failures="1""#));
         assert!(xml.contains(r#"skipped="1""#));
         assert!(xml.contains(r#"message="oops &amp; done""#));
