@@ -34,6 +34,11 @@ pub(crate) fn bold(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.bold()))
 }
 
+/// Format a failure message in red (no icon, unlike `error`).
+pub(crate) fn failure(msg: impl Display) -> String {
+    format!("{}", msg.if_supports_color(Stdout, |t| t.red()))
+}
+
 /// Format a warning message in yellow.
 pub(crate) fn warn(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.yellow()))

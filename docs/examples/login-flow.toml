@@ -1,0 +1,82 @@
+# tauri-pilot scenario example — login flow
+#
+# Run with:
+#   tauri-pilot run docs/examples/login-flow.toml
+#   tauri-pilot run docs/examples/login-flow.toml --junit results.xml
+
+# [connect] is optional. When omitted, the socket is auto-detected.
+[connect]
+# socket = "/tmp/tauri-pilot-myapp.sock"  # override auto-detection
+timeout_ms = 5000
+
+[scenario]
+name = "Login flow"
+fail_fast = true           # stop on first failure (default: true)
+global_timeout_ms = 60000  # hard cap for the entire scenario (ms)
+
+# ── Navigation ──────────────────────────────────────────────────────────────
+
+[[step]]
+name = "open login page"
+action = "navigate"
+url = "http://localhost:1420/login"
+
+[[step]]
+name = "wait for form"
+action = "wait"
+selector = "#login-form"
+timeout_ms = 5000
+
+# ── Interaction ──────────────────────────────────────────────────────────────
+
+[[step]]
+name = "fill email"
+action = "fill"
+target = "#email"
+value = "user@example.com"
+
+[[step]]
+name = "fill password"
+action = "fill"
+target = "#password"
+value = "secret"
+
+[[step]]
+name = "click submit"
+action = "click"
+target = "#submit-btn"
+
+# ── Wait for redirect ─────────────────────────────────────────────────────────
+
+[[step]]
+name = "watch for dashboard"
+action = "watch"
+selector = "#dashboard"
+timeout_ms = 10000
+stable = 300
+require_mutation = true
+
+# ── Assertions ────────────────────────────────────────────────────────────────
+
+[[step]]
+name = "assert dashboard url"
+action = "assert-url"
+expected = "/dashboard"
+
+[[step]]
+name = "assert welcome heading"
+action = "assert-text"
+target = "h1"
+expected = "Welcome"
+
+[[step]]
+name = "assert logout button visible"
+action = "assert-visible"
+target = "#logout-btn"
+
+# ── Screenshot ────────────────────────────────────────────────────────────────
+
+[[step]]
+name = "capture final state"
+action = "screenshot"
+path = "screenshots/dashboard.png"

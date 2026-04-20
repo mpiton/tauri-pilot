@@ -3,6 +3,7 @@ mod client;
 mod mcp;
 mod output;
 mod protocol;
+mod scenario;
 mod style;
 
 use std::fmt::Write as _;
@@ -39,6 +40,22 @@ async fn main() -> Result<()> {
 
     if is_mcp {
         return mcp::run_mcp_server(args.socket, args.window).await;
+    }
+
+    if let Command::Run {
+        ref scenario,
+        ref junit,
+        no_fail_fast,
+    } = args.command
+    {
+        return run_scenario_command(
+            scenario,
+            junit.as_deref(),
+            no_fail_fast,
+            args.socket,
+            args.window.as_deref(),
+        )
+        .await;
     }
 
     let socket = resolve_socket(args.socket)?;
@@ -316,6 +333,7 @@ async fn run_command(
 ) -> Result<serde_json::Value> {
     match command {
         Command::Mcp => anyhow::bail!("mcp must be handled before run_command"),
+        Command::Run { .. } => anyhow::bail!("run must be handled before run_command"),
         Command::Windows => client.call("windows.list", None).await,
         Command::Ping => client.call("ping", with_window(None, window)).await,
         Command::State => client.call("state", with_window(None, window)).await,
@@ -1242,6 +1260,44 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
             format!("# unknown action: {safe}")
         }
     }
+}
+
+async fn run_scenario_command(
+    scenario_path: &std::path::Path,
+    junit: Option<&std::path::Path>,
+    no_fail_fast: bool,
+    explicit_socket: Option<PathBuf>,
+    window: Option<&str>,
+) -> Result<()> {
+    let loaded = scenario::load_scenario(scenario_path)?;
+
+    // Socket resolution: CLI flag > TOML [connect].socket > auto-detect
+    let socket = explicit_socket
+        .or_else(|| {
+            loaded
+                .connect
+                .as_ref()
+                .and_then(|c| c.socket.clone())
+        })
+        .map(Ok)
+        .unwrap_or_else(|| resolve_socket(None))?;
+
+    let mut client = Client::connect(&socket).await?;
+
+    let fail_fast_override = if no_fail_fast { Some(false) } else { None };
+    let report = scenario::run_scenario(&mut client, &loaded, window, fail_fast_override).await?;
+
+    scenario::print_report(&report);
+
+    if let Some(xml_path) = junit {
+        scenario::write_junit_xml(&report, xml_path)?;
+        eprintln!("JUnit XML written to {}", xml_path.display());
+    }
+
+    if !report.all_passed() {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 /// Resolve the socket path from explicit arg, env var, or auto-detection.

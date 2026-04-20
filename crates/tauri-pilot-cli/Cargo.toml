@@ -32,8 +32,11 @@ owo-colors = { version = "4.3.0", features = ["supports-colors"] }
 indicatif = "0.17"
 libc = "0.2.184"
 rmcp = { version = "1.4.0", default-features = false, features = ["server", "transport-io"] }
+toml = "0.8"
+quick-xml = "0.36"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 assert_cmd = "2"
 serial_test = "3.4.0"
+tempfile = "3"
