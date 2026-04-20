@@ -30,10 +30,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22.1"
 owo-colors = { version = "4.3.0", features = ["supports-colors"] }
 indicatif = "0.17"
-libc = "0.2.184"
 rmcp = { version = "1.4.0", default-features = false, features = ["server", "transport-io"] }
 toml = "0.8"
 quick-xml = "0.36"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.184"
+
+[target.'cfg(windows)'.dependencies]
+windows = "0.52"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

@@ -7,23 +7,23 @@ mod handler;
 pub(crate) mod key;
 pub(crate) mod protocol;
 pub(crate) mod recorder;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) mod server;
 
 pub use error::Error;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use eval::EvalEngine;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use recorder::Recorder;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use server::{EvalFn, FocusFn, ListWindowsFn};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::Arc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tauri::Manager;
 
-#[cfg(all(unix, debug_assertions))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 const BRIDGE_JS: &str = concat!(
     include_str!("../js/vendor/html-to-image.iife.js"),
     "\n",
@@ -37,12 +37,12 @@ const BRIDGE_JS: &str = concat!(
 /// and starts a Unix socket server at `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` (falls back to `/tmp` if unavailable).
 #[must_use]
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    #[cfg(not(all(unix, debug_assertions)))]
+    #[cfg(not(all(any(unix, windows), debug_assertions)))]
     {
         return tauri::plugin::Builder::new("pilot").build();
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(any(unix, windows), debug_assertions))]
     {
         tauri::plugin::Builder::new("pilot")
             .js_init_script(BRIDGE_JS.to_owned())
@@ -83,7 +83,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
 /// Strip path separators and unsafe characters from the app identifier
 /// so it can be safely used in a socket filename.
-#[cfg(all(unix, debug_assertions))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 fn sanitize_identifier(raw: &str) -> String {
     let sanitized: String = raw
         .chars()
@@ -106,7 +106,7 @@ fn sanitize_identifier(raw: &str) -> String {
 ///
 /// If `window` is `Some(label)`, targets that specific window (error if not found).
 /// If `window` is `None`, tries "main" first then falls back to the first available window.
-#[cfg(all(unix, debug_assertions))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
     let handle = app.clone();
     Arc::new(move |window: Option<&str>, script: String| {
@@ -134,7 +134,7 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
 /// the first window. The call is best-effort — failures are returned to the
 /// caller (which logs and continues), since the press still has a chance of
 /// landing on whatever window currently holds focus.
-#[cfg(all(unix, debug_assertions))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 fn make_focus_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> FocusFn {
     let handle = app.clone();
     Arc::new(move |window: Option<&str>| {
@@ -157,7 +157,7 @@ fn make_focus_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> FocusFn {
 }
 
 /// Create a list function that enumerates all available webview windows.
-#[cfg(all(unix, debug_assertions))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
     let handle = app.clone();
     Arc::new(move || {
@@ -179,7 +179,7 @@ fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(any(unix, windows), debug_assertions))]
     #[test]
     fn bridge_js_contains_html_to_image_and_pilot() {
         let js = super::BRIDGE_JS;
@@ -201,7 +201,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(unix, debug_assertions))]
+    #[cfg(all(any(unix, windows), debug_assertions))]
     #[test]
     fn bridge_click_dispatches_pointer_sequence() {
         let js = super::BRIDGE_JS;
