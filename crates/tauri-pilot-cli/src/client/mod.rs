@@ -1,31 +1,33 @@
 use crate::protocol::{Request, Response};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
-/// JSON-RPC client over a Unix socket.
+/// JSON-RPC client over a platform-specific transport (Unix socket or Named Pipe).
 pub(crate) struct Client {
-    reader: BufReader<OwnedReadHalf>,
-    writer: OwnedWriteHalf,
+    #[cfg(unix)]
+    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
+    #[cfg(unix)]
+    writer: tokio::net::unix::OwnedWriteHalf,
+    #[cfg(windows)]
+    reader: BufReader<tokio::io::ReadHalf<tokio::net::windows::named_pipe::NamedPipeClient>>,
+    #[cfg(windows)]
+    writer: tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>,
     next_id: u64,
 }
 
 impl Client {
-    /// Connect to the tauri-pilot socket.
+    /// Connect to the tauri-pilot transport.
     pub async fn connect(path: &Path) -> Result<Self> {
-        let stream = UnixStream::connect(path)
-            .await
-            .with_context(|| format!("Cannot connect to socket: {}", path.display()))?;
-
-        let (reader, writer) = stream.into_split();
-        Ok(Self {
-            reader: BufReader::new(reader),
-            writer,
-            next_id: 1,
-        })
+        #[cfg(unix)]
+        {
+            unix::connect(path).await
+        }
+        #[cfg(windows)]
+        {
+            windows::connect(path).await
+        }
     }
 
     /// Send a JSON-RPC request and return the result value.
@@ -74,7 +76,12 @@ impl Client {
     }
 }
 
-#[cfg(test)]
+#[cfg(unix)]
+pub mod unix;
+#[cfg(windows)]
+pub mod windows;
+
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::path::PathBuf;
