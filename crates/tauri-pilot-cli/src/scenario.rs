@@ -465,11 +465,8 @@ async fn take_failure_screenshot(
         .call("screenshot", with_window(Some(json!({})), window))
         .await?;
     save_screenshot_result(&result, &path)?;
-    eprintln!(
-        "  {} {}",
-        crate::style::dim("failure screenshot →"),
-        path.display()
-    );
+    let arrow = crate::style::dim("failure screenshot →");
+    eprintln!("  {arrow} {}", path.display());
     Ok(())
 }
 
@@ -493,23 +490,20 @@ fn save_screenshot_result(result: &Value, path: &Path) -> Result<()> {
 // ── Terminal output helpers ───────────────────────────────────────────────────
 
 fn print_step_line(idx: usize, total: usize, name: &str, status: &str) {
+    let step_num = idx + 1;
     let colored = match status {
         "ok" => crate::style::success(status),
         "SKIP" => crate::style::dim(status),
         _ => crate::style::failure(status),
     };
-    eprintln!("  [{}/{}] {} {}", idx + 1, total, name, colored);
+    eprintln!("  [{step_num}/{total}] {name} {colored}");
 }
 
 fn print_step_fail(idx: usize, total: usize, name: &str, msg: &str) {
-    eprintln!(
-        "  [{}/{}] {} {}\n    {}",
-        idx + 1,
-        total,
-        name,
-        crate::style::failure("FAIL"),
-        crate::style::failure(msg)
-    );
+    let step_num = idx + 1;
+    let fail_label = crate::style::failure("FAIL");
+    let fail_msg = crate::style::failure(msg);
+    eprintln!("  [{step_num}/{total}] {name} {fail_label}\n    {fail_msg}");
 }
 
 pub(crate) fn print_report(report: &ScenarioReport) {
@@ -517,13 +511,11 @@ pub(crate) fn print_report(report: &ScenarioReport) {
     let failed = report.failed();
     let skipped = report.skipped();
     let secs = report.total_duration.as_secs_f64();
+    let name = crate::style::bold(&report.name);
 
     eprintln!();
-    eprintln!("Scenario: {}", crate::style::bold(&report.name));
-    eprintln!(
-        "  {} passed · {} failed · {} skipped  ({:.3}s)",
-        passed, failed, skipped, secs
-    );
+    eprintln!("Scenario: {name}");
+    eprintln!("  {passed} passed · {failed} failed · {skipped} skipped  ({secs:.3}s)");
     eprintln!();
 }
 
@@ -538,7 +530,8 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
     let total_str = report.results.len().to_string();
     let failures_str = failures.to_string();
     let skipped_str = skipped.to_string();
-    let elapsed_str = format!("{:.3}", report.total_duration.as_secs_f64());
+    let elapsed = report.total_duration.as_secs_f64();
+    let elapsed_str = format!("{elapsed:.3}");
 
     let mut buf = Vec::new();
     let mut writer = Writer::new(&mut buf);
@@ -563,7 +556,8 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
         writer.write_event(Event::Text(BytesText::new("\n    ")))?;
         let dur_str = match &result.outcome {
             StepOutcome::Passed { duration } | StepOutcome::Failed { duration, .. } => {
-                format!("{:.3}", duration.as_secs_f64())
+                let d = duration.as_secs_f64();
+                format!("{d:.3}")
             }
             StepOutcome::Skipped => "0.000".to_string(),
         };
