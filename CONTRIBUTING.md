@@ -47,7 +47,7 @@ tauri-pilot offers two complementary automation modes:
 
 | Mode | Command | Format | Use case |
 |------|---------|--------|----------|
-| **Declarative** | `tauri-pilot run <file.toml>` | TOML scenario | Structured tests with assertions and assertions (CI-friendly) |
+| **Declarative** | `tauri-pilot run <file.toml>` | TOML scenario | Structured tests with assertions and timeouts (CI-friendly) |
 | **Capture-replay** | `tauri-pilot record start` / `replay` | JSON session | Quick capture of manual interactions for later replay |
 
 **`run` (TOML scenario)** — define steps declaratively with action types, assertions, and
