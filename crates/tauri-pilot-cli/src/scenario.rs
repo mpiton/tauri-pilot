@@ -312,10 +312,7 @@ async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Res
                 params.insert("selector".into(), json!(sel));
             }
             client
-                .call(
-                    "watch",
-                    with_window(Some(Value::Object(params)), window),
-                )
+                .call("watch", with_window(Some(Value::Object(params)), window))
                 .await
         }
         "eval" => {
@@ -324,10 +321,7 @@ async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Res
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("eval step requires 'script'"))?;
             client
-                .call(
-                    "eval",
-                    with_window(Some(json!({"script": script})), window),
-                )
+                .call("eval", with_window(Some(json!({"script": script})), window))
                 .await
         }
         "screenshot" => {
@@ -585,7 +579,9 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
     writer.write_event(Event::End(BytesEnd::new("testsuites")))?;
     writer.write_event(Event::Text(BytesText::new("\n")))?;
 
-    if let Some(parent) = path.parent() && !parent.as_os_str().is_empty() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, &buf)
@@ -703,10 +699,7 @@ expected = "Login"
         assert_eq!(scenario.step.len(), 2);
 
         let connect = scenario.connect.as_ref().expect("connect section");
-        assert_eq!(
-            connect.socket.as_deref(),
-            Some(Path::new("/tmp/test.sock"))
-        );
+        assert_eq!(connect.socket.as_deref(), Some(Path::new("/tmp/test.sock")));
         assert_eq!(connect.timeout_ms, Some(5000));
 
         let step = &scenario.step[1];
@@ -831,5 +824,4 @@ action = "ping"
         assert!(xml.contains(r#"message="oops &amp; done""#));
         assert!(xml.contains("<skipped"));
     }
-
 }

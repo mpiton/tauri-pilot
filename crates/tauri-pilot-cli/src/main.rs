@@ -1273,12 +1273,7 @@ async fn run_scenario_command(
 
     // Socket resolution: CLI flag > TOML [connect].socket > auto-detect
     let socket = explicit_socket
-        .or_else(|| {
-            loaded
-                .connect
-                .as_ref()
-                .and_then(|c| c.socket.clone())
-        })
+        .or_else(|| loaded.connect.as_ref().and_then(|c| c.socket.clone()))
         .map_or_else(|| resolve_socket(None), Ok)?;
 
     let mut client = Client::connect(&socket).await?;
