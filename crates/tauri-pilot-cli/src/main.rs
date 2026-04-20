@@ -1276,10 +1276,32 @@ async fn run_scenario_command(
         .or_else(|| loaded.connect.as_ref().and_then(|c| c.socket.clone()))
         .map_or_else(|| resolve_socket(None), Ok)?;
 
-    let mut client = Client::connect(&socket).await?;
+    let connect_timeout = loaded
+        .connect
+        .as_ref()
+        .and_then(|c| c.timeout_ms)
+        .map(std::time::Duration::from_millis);
+    let mut client = match connect_timeout {
+        Some(t) => tokio::time::timeout(t, Client::connect(&socket))
+            .await
+            .map_err(|_| anyhow::anyhow!("connection timed out after {}ms", t.as_millis()))??,
+        None => Client::connect(&socket).await?,
+    };
 
     let fail_fast_override = if no_fail_fast { Some(false) } else { None };
-    let report = scenario::run_scenario(&mut client, &loaded, window, fail_fast_override).await?;
+    let global_ms = loaded.scenario.global_timeout_ms;
+    let report = match global_ms {
+        Some(ms) => {
+            let t = std::time::Duration::from_millis(ms);
+            tokio::time::timeout(
+                t,
+                scenario::run_scenario(&mut client, &loaded, window, fail_fast_override),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("scenario exceeded global timeout of {ms}ms"))??
+        }
+        None => scenario::run_scenario(&mut client, &loaded, window, fail_fast_override).await?,
+    };
 
     scenario::print_report(&report);
 

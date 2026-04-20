@@ -24,7 +24,6 @@ pub(crate) struct Scenario {
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct Connect {
     pub(crate) socket: Option<PathBuf>,
-    #[allow(dead_code)]
     pub(crate) timeout_ms: Option<u64>,
 }
 
@@ -34,7 +33,6 @@ pub(crate) struct ScenarioMeta {
     pub(crate) name: Option<String>,
     #[serde(default = "default_true")]
     pub(crate) fail_fast: bool,
-    #[allow(dead_code)]
     pub(crate) global_timeout_ms: Option<u64>,
 }
 
@@ -210,8 +208,22 @@ pub(crate) async fn run_scenario(
     })
 }
 
-#[allow(clippy::too_many_lines)]
 async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
+    // wait/watch send timeout in RPC params; all other actions use a tokio deadline
+    let is_rpc_timed = matches!(step.action.as_str(), "wait" | "watch");
+    match (is_rpc_timed, step.timeout_ms) {
+        (false, Some(ms)) => tokio::time::timeout(
+            Duration::from_millis(ms),
+            dispatch_step(client, step, window),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("step '{}' timed out after {ms}ms", step.action))?,
+        _ => dispatch_step(client, step, window).await,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
     let timeout_ms = step.timeout_ms;
     match step.action.as_str() {
         "click" => {
@@ -359,7 +371,8 @@ async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Res
             let t = require_target(step)?;
             client
                 .call("visible", with_window(Some(target_params(t)), window))
-                .await?;
+                .await
+                .with_context(|| format!("element '{t}' was not found in the DOM"))?;
             Ok(json!({"ok": true}))
         }
         "assert-visible" => {
@@ -530,7 +543,12 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     writer.write_event(Event::Text(BytesText::new("\n")))?;
 
-    let testsuites = BytesStart::new("testsuites");
+    let mut testsuites = BytesStart::new("testsuites");
+    testsuites.push_attribute(("tests", total_str.as_str()));
+    testsuites.push_attribute(("failures", failures_str.as_str()));
+    testsuites.push_attribute(("errors", "0"));
+    testsuites.push_attribute(("skipped", skipped_str.as_str()));
+    testsuites.push_attribute(("time", elapsed_str.as_str()));
     writer.write_event(Event::Start(testsuites))?;
     writer.write_event(Event::Text(BytesText::new("\n  ")))?;
 
@@ -790,7 +808,9 @@ action = "ping"
         write_junit_xml(&report, &path).expect("write junit xml");
         let xml = std::fs::read_to_string(&path).expect("read xml");
         assert!(xml.contains(r#"name="test-scenario""#));
+        assert!(xml.contains(r#"tests="2""#));
         assert!(xml.contains(r#"failures="0""#));
+        assert!(xml.contains(r#"skipped="0""#));
         assert!(xml.contains(r#"name="click button""#));
         assert!(xml.contains(r#"name="fill form""#));
         assert!(!xml.contains("<failure"));
