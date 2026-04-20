@@ -41,6 +41,23 @@ cargo test --workspace
 
 See [ARCHI.md](ARCHI.md) for architecture decisions and module structure.
 
+## `run` vs `record`/`replay`
+
+tauri-pilot offers two complementary automation modes:
+
+| Mode | Command | Format | Use case |
+|------|---------|--------|----------|
+| **Declarative** | `tauri-pilot run <file.toml>` | TOML scenario | Structured tests with assertions and assertions (CI-friendly) |
+| **Capture-replay** | `tauri-pilot record start` / `replay` | JSON session | Quick capture of manual interactions for later replay |
+
+**`run` (TOML scenario)** — define steps declaratively with action types, assertions, and
+timeouts. Exits 0 on success, 1 on any failure. Supports JUnit XML output (`--junit`).
+Automatically captures failure screenshots to `./tauri-pilot-failures/`.
+
+**`record` / `replay` (JSON session)** — record interactions as they happen, then replay
+the timing-accurate sequence. Useful for smoke tests derived from manual exploration.
+Export to shell script with `replay --export sh`.
+
 ## Reporting Issues
 
 Use the issue templates — bug reports and feature requests are welcome.
