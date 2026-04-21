@@ -1562,9 +1562,10 @@ mod tests {
     use super::*;
     use crate::protocol::{Request, Response};
     use serial_test::serial;
+    #[cfg(unix)]
+    use tokio::net::UnixListener;
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-        net::UnixListener,
         task::JoinHandle,
     };
 
@@ -1695,6 +1696,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
+    #[cfg(unix)]
     async fn auto_detected_socket_is_pinned_after_first_connection() {
         let dir =
             std::env::temp_dir().join(format!("tauri-pilot-mcp-pin-test-{}", std::process::id()));
@@ -1726,6 +1728,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(unix)]
     async fn click_tool_sends_json_rpc_request() {
         let socket = std::env::temp_dir().join(format!(
             "tauri-pilot-mcp-click-test-{}.sock",
@@ -1784,6 +1787,7 @@ mod tests {
             .and_then(Value::as_str)
     }
 
+    #[cfg(unix)]
     fn spawn_click_server(socket: &Path, source: &'static str, requests: usize) -> JoinHandle<()> {
         let listener = UnixListener::bind(socket).expect("bind mock socket");
         tokio::spawn(async move {
