@@ -1350,7 +1350,7 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
                         let mut newest: Option<(u64, PathBuf)> = None;
                         for (_, entry) in instances {
                             if let Some(created_at) =
-                                entry.get("created_at").and_then(|v| v.as_u64())
+                                entry.get("created_at").and_then(serde_json::Value::as_u64)
                             {
                                 if let Some(pipe) = entry.get("pipe").and_then(|v| v.as_str()) {
                                     let should_update = match newest {

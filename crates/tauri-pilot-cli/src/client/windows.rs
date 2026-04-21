@@ -4,7 +4,7 @@ use std::path::Path;
 use tokio::io::BufReader;
 use tokio::net::windows::named_pipe::ClientOptions;
 
-#[allow(unused_async)]
+#[allow(clippy::unused_async)]
 pub async fn connect(path: &Path) -> Result<Client> {
     let client = ClientOptions::new()
         .open(path)

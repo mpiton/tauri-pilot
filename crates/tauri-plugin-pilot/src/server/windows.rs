@@ -15,7 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
 use windows::Win32::Security::{
-    ACL_REVISION, AddAccessAllowedAce, GetLengthSid, GetTokenInformation, InitializeAcl,
+    ACL, ACL_REVISION, AddAccessAllowedAce, GetLengthSid, GetTokenInformation, InitializeAcl,
     InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
     SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
@@ -133,6 +133,7 @@ impl Drop for SecurityAttributesGuard {
 /// The returned guard must stay alive for as long as the `SECURITY_ATTRIBUTES` is
 /// passed to Windows APIs (the kernel copies the security descriptor, so the guard
 /// can be dropped immediately after the pipe is created).
+#[allow(clippy::cast_ptr_alignment)]
 fn create_user_only_security_attributes()
 -> std::io::Result<(SECURITY_ATTRIBUTES, SecurityAttributesGuard)> {
     unsafe {
@@ -156,7 +157,7 @@ fn create_user_only_security_attributes()
         )
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-        let token_user = &*(token_user_buf.as_ptr() as *const TOKEN_USER);
+        let token_user = &*token_user_buf.as_ptr().cast::<TOKEN_USER>();
         let user_sid = token_user.User.Sid;
 
         // 3. Allocate and initialise an ACL with a single ACE for the user.
@@ -167,7 +168,7 @@ fn create_user_only_security_attributes()
         let acl_size = (acl_size + 3) & !3;
 
         let mut acl_buf = vec![0u8; acl_size];
-        let acl_ptr = acl_buf.as_mut_ptr() as *mut _;
+        let acl_ptr = acl_buf.as_mut_ptr().cast::<ACL>();
 
         InitializeAcl(acl_ptr, acl_size as u32, ACL_REVISION)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
