@@ -110,6 +110,7 @@ impl Drop for RegistryGuard {
 
 /// Owns the buffers backing a [`SECURITY_ATTRIBUTES`] and closes the token handle.
 /// Must outlive the `SECURITY_ATTRIBUTES` pointer passed to Windows APIs.
+#[allow(dead_code)]
 struct SecurityAttributesGuard {
     sd: Vec<u8>,
     acl: Vec<u8>,
@@ -138,8 +139,8 @@ fn create_user_only_security_attributes()
         // 1. Open the current process token (TOKEN_QUERY only).
         let process = GetCurrentProcess();
         let mut token = HANDLE(0);
-        OpenProcessToken(process, TOKEN_QUERY, &mut token)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        OpenProcessToken(process, TOKEN_QUERY, &raw mut token)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         // 2. Retrieve TokenUser information.
         //    First call: discover required buffer size.
@@ -153,7 +154,7 @@ fn create_user_only_security_attributes()
             return_length,
             &mut return_length,
         )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         let token_user = &*(token_user_buf.as_ptr() as *const TOKEN_USER);
         let user_sid = token_user.User.Sid;
@@ -169,23 +170,23 @@ fn create_user_only_security_attributes()
         let acl_ptr = acl_buf.as_mut_ptr() as *mut _;
 
         InitializeAcl(acl_ptr, acl_size as u32, ACL_REVISION)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         AddAccessAllowedAce(
             acl_ptr,
             ACL_REVISION,
             (GENERIC_READ | GENERIC_WRITE).0 as u32,
             user_sid,
         )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         // 4. Initialise an absolute security descriptor and attach the DACL.
         let mut sd_buf = vec![0u8; 40];
         let sd_ptr = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr() as *mut c_void);
 
         InitializeSecurityDescriptor(sd_ptr, 1)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         SetSecurityDescriptorDacl(sd_ptr, true, Some(acl_ptr), false)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         // 5. Build SECURITY_ATTRIBUTES pointing into our buffers.
         let sa = SECURITY_ATTRIBUTES {
@@ -216,7 +217,7 @@ pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error>
         ServerOptions::new()
             .first_pipe_instance(true)
             .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
-            .create_with_security_attributes_raw(pipe_path, &mut sa as *mut _ as *mut c_void)?
+            .create_with_security_attributes_raw(pipe_path, &raw mut sa as *mut c_void)?
     };
 
     tracing::info!(path = %pipe_path.display(), "tauri-pilot named pipe listening");

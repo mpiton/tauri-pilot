@@ -13,7 +13,9 @@ use base64::Engine;
 use clap::Parser;
 use serde_json::{Value, json};
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use cli::{
@@ -1353,7 +1355,7 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
                                 if let Some(pipe) = entry.get("pipe").and_then(|v| v.as_str()) {
                                     let should_update = match newest {
                                         None => true,
-                                        Some((current_max, _)) => created_at > *current_max,
+                                        Some((current_max, _)) => created_at > current_max,
                                     };
                                     if should_update {
                                         newest = Some((created_at, PathBuf::from(pipe)));
