@@ -1339,31 +1339,28 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
             .map(PathBuf::from)
             .map(|p| p.join("tauri-pilot").join("instances.json"));
 
-        if let Some(path) = reg_path {
-            if let Ok(data) = std::fs::read_to_string(&path) {
-                if let Ok(reg) = serde_json::from_str::<serde_json::Value>(&data) {
-                    if let Some(instances) = reg.get("instances").and_then(|v| v.as_object()) {
-                        let mut newest: Option<(u64, PathBuf)> = None;
-                        for (_, entry) in instances {
-                            if let Some(created_at) =
-                                entry.get("created_at").and_then(serde_json::Value::as_u64)
-                            {
-                                if let Some(pipe) = entry.get("pipe").and_then(|v| v.as_str()) {
-                                    let should_update = match newest {
-                                        None => true,
-                                        Some((current_max, _)) => created_at > current_max,
-                                    };
-                                    if should_update {
-                                        newest = Some((created_at, PathBuf::from(pipe)));
-                                    }
-                                }
-                            }
-                        }
-                        if let Some((_, pipe)) = newest {
-                            return Ok(pipe);
-                        }
+        if let Some(path) = reg_path
+            && let Ok(data) = std::fs::read_to_string(&path)
+            && let Ok(reg) = serde_json::from_str::<serde_json::Value>(&data)
+            && let Some(instances) = reg.get("instances").and_then(|v| v.as_object())
+        {
+            let mut newest: Option<(u64, PathBuf)> = None;
+            for (_, entry) in instances {
+                if let Some(created_at) =
+                    entry.get("created_at").and_then(serde_json::Value::as_u64)
+                    && let Some(pipe) = entry.get("pipe").and_then(|v| v.as_str())
+                {
+                    let should_update = match newest {
+                        None => true,
+                        Some((current_max, _)) => created_at > current_max,
+                    };
+                    if should_update {
+                        newest = Some((created_at, PathBuf::from(pipe)));
                     }
                 }
+            }
+            if let Some((_, pipe)) = newest {
+                return Ok(pipe);
             }
         }
         Err(anyhow::anyhow!(

@@ -170,8 +170,14 @@ fn create_user_only_security_attributes()
         let mut acl_buf = vec![0u8; acl_size];
         let acl_ptr = acl_buf.as_mut_ptr().cast::<ACL>();
 
-        InitializeAcl(acl_ptr, acl_size.try_into().map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "ACL size too large"))?, ACL_REVISION)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        InitializeAcl(
+            acl_ptr,
+            acl_size.try_into().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "ACL size too large")
+            })?,
+            ACL_REVISION,
+        )
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
         AddAccessAllowedAce(
             acl_ptr,
             ACL_REVISION,
@@ -191,7 +197,8 @@ fn create_user_only_security_attributes()
 
         // 5. Build SECURITY_ATTRIBUTES pointing into our buffers.
         let sa = SECURITY_ATTRIBUTES {
-            nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap(),
+            nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
+                .expect("SECURITY_ATTRIBUTES size must fit in u32"),
             lpSecurityDescriptor: sd_buf.as_mut_ptr().cast::<c_void>(),
             bInheritHandle: windows::Win32::Foundation::BOOL(0),
         };
@@ -218,7 +225,7 @@ pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error>
         ServerOptions::new()
             .first_pipe_instance(true)
             .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
-            .create_with_security_attributes_raw(pipe_path, &raw mut sa as *mut c_void)?
+            .create_with_security_attributes_raw(pipe_path, (&raw mut sa).cast::<c_void>())?
     };
 
     tracing::info!(path = %pipe_path.display(), "tauri-pilot named pipe listening");
