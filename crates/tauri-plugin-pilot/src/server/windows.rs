@@ -170,19 +170,19 @@ fn create_user_only_security_attributes()
         let mut acl_buf = vec![0u8; acl_size];
         let acl_ptr = acl_buf.as_mut_ptr().cast::<ACL>();
 
-        InitializeAcl(acl_ptr, acl_size as u32, ACL_REVISION)
+        InitializeAcl(acl_ptr, acl_size.try_into().map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "ACL size too large"))?, ACL_REVISION)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         AddAccessAllowedAce(
             acl_ptr,
             ACL_REVISION,
-            (GENERIC_READ | GENERIC_WRITE).0 as u32,
+            (GENERIC_READ | GENERIC_WRITE).0,
             user_sid,
         )
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         // 4. Initialise an absolute security descriptor and attach the DACL.
         let mut sd_buf = vec![0u8; 40];
-        let sd_ptr = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr() as *mut c_void);
+        let sd_ptr = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr().cast::<c_void>());
 
         InitializeSecurityDescriptor(sd_ptr, 1)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -191,8 +191,8 @@ fn create_user_only_security_attributes()
 
         // 5. Build SECURITY_ATTRIBUTES pointing into our buffers.
         let sa = SECURITY_ATTRIBUTES {
-            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: sd_buf.as_mut_ptr() as *mut c_void,
+            nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap(),
+            lpSecurityDescriptor: sd_buf.as_mut_ptr().cast::<c_void>(),
             bInheritHandle: windows::Win32::Foundation::BOOL(0),
         };
 

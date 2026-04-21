@@ -231,10 +231,8 @@ async fn follow_logs(
         if let Some(l) = level {
             params.insert("level".into(), json!(l));
         }
-        if first_poll {
-            if let Some(n) = last {
-                params.insert("last".into(), json!(n));
-            }
+        if first_poll && let Some(n) = last {
+            params.insert("last".into(), json!(n));
             first_poll = false;
         }
         let result = client
@@ -285,10 +283,8 @@ async fn follow_network(
         if failed {
             params.insert("failedOnly".into(), json!(true));
         }
-        if first_poll {
-            if let Some(n) = last {
-                params.insert("last".into(), json!(n));
-            }
+        if first_poll && let Some(n) = last {
+            params.insert("last".into(), json!(n));
             first_poll = false;
         }
         let result = client
