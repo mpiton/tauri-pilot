@@ -145,14 +145,14 @@ fn create_user_only_security_attributes()
         // 2. Retrieve TokenUser information.
         //    First call: discover required buffer size.
         let mut return_length = 0u32;
-        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut return_length);
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &raw mut return_length);
         let mut token_user_buf = vec![0u8; return_length as usize];
         GetTokenInformation(
             token,
             TokenUser,
-            Some(token_user_buf.as_mut_ptr() as *mut c_void),
+            Some(token_user_buf.as_mut_ptr().cast::<c_void>()),
             return_length,
-            &mut return_length,
+            &raw mut return_length,
         )
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
