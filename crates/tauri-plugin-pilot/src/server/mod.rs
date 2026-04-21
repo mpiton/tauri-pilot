@@ -100,6 +100,6 @@ pub mod unix;
 pub mod windows;
 
 #[cfg(unix)]
-pub use unix::{SocketGuard, bind, run, socket_path};
+pub use unix::{bind, run, socket_path};
 #[cfg(windows)]
 pub use windows::{bind, run, socket_path};

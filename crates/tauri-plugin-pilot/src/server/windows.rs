@@ -21,7 +21,7 @@ use windows::Win32::Security::{
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-pub(crate) fn socket_path(identifier: &str) -> PathBuf {
+pub fn socket_path(identifier: &str) -> PathBuf {
     PathBuf::from(format!(r"\\.\pipe\tauri-pilot-{identifier}"))
 }
 
@@ -93,7 +93,7 @@ fn unregister_instance(identifier: &str) {
     let _ = write_registry(&reg_path, &reg);
 }
 
-pub(crate) struct RegistryGuard {
+pub struct RegistryGuard {
     identifier: String,
 }
 
@@ -206,7 +206,7 @@ fn create_user_only_security_attributes()
 
 // ---------------------------------------------------------------------------
 
-pub(crate) fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error> {
+pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error> {
     let (mut sa, _sec_guard) = create_user_only_security_attributes()?;
 
     // SAFETY: `sa` and its backing buffers (owned by `_sec_guard`) are valid for
@@ -234,7 +234,7 @@ pub(crate) fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard),
     Ok((server, guard))
 }
 
-pub(crate) async fn run(
+pub async fn run(
     first_server: NamedPipeServer,
     guard: RegistryGuard,
     engine: EvalEngine,

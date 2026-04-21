@@ -1351,7 +1351,11 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
                                 entry.get("created_at").and_then(|v| v.as_u64())
                             {
                                 if let Some(pipe) = entry.get("pipe").and_then(|v| v.as_str()) {
-                                    if newest.is_none() || created_at > newest.as_ref().unwrap().0 {
+                                    let should_update = match newest {
+                                        None => true,
+                                        Some((current_max, _)) => created_at > *current_max,
+                                    };
+                                    if should_update {
                                         newest = Some((created_at, PathBuf::from(pipe)));
                                     }
                                 }
