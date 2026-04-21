@@ -312,6 +312,7 @@ async fn accept_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
     use tokio::net::windows::named_pipe::ClientOptions;
@@ -335,6 +336,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_server_responds_ping_ok() {
         let pipe = unique_pipe_path();
         let handle = start_test_server(&pipe).await;
@@ -358,9 +360,11 @@ mod tests {
         assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
 
         handle.abort();
+        let _ = handle.await;
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_server_handles_invalid_json() {
         let pipe = unique_pipe_path();
         let handle = start_test_server(&pipe).await;
@@ -381,9 +385,11 @@ mod tests {
         assert_eq!(err.code, -32700);
 
         handle.abort();
+        let _ = handle.await;
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_server_handles_multiple_requests() {
         let pipe = unique_pipe_path();
         let handle = start_test_server(&pipe).await;
@@ -404,5 +410,6 @@ mod tests {
         }
 
         handle.abort();
+        let _ = handle.await;
     }
 }

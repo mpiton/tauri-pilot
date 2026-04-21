@@ -205,6 +205,7 @@ mod tests {
     #[test]
     fn bridge_click_dispatches_pointer_sequence() {
         let js = super::BRIDGE_JS;
+        let js_normalized: String = js.lines().collect::<Vec<_>>().join("\n");
         let pointer_down_idx = js
             .find(r#"dispatchPointerEvent(el, "pointerdown""#)
             .expect("click must dispatch pointerdown for Radix triggers");
@@ -233,13 +234,15 @@ mod tests {
             "pointer events must include mouse pointer metadata"
         );
         assert!(
-            js.contains(
+            js_normalized.contains(
                 "if (pointerDownOk) {\n      const mouseDownOk = el.dispatchEvent(new MouseEvent(\"mousedown\""
             ),
             "mousedown must only dispatch when pointerdown was not canceled"
         );
         assert!(
-            js.contains("if (pointerDownOk) {\n      el.dispatchEvent(new MouseEvent(\"mouseup\""),
+            js_normalized.contains(
+                "if (pointerDownOk) {\n      el.dispatchEvent(new MouseEvent(\"mouseup\""
+            ),
             "mouseup must only dispatch when pointerdown was not canceled"
         );
     }
