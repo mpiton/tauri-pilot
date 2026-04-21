@@ -818,6 +818,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_format_json_does_not_panic() {
         format_json(&json!({"status": "ok"})).unwrap();
     }
@@ -886,8 +887,8 @@ mod tests {
     #[test]
     fn test_format_logs_with_entries() {
         let logs = json!([
-            {"id": 1, "timestamp": 3661123_u64, "level": "error", "args": ["fail"], "source": null},
-            {"id": 2, "timestamp": 3661500_u64, "level": "info", "args": ["ok", 42], "source": null},
+            {"id": 1, "timestamp": 3_661_123_u64, "level": "error", "args": ["fail"], "source": null},
+            {"id": 2, "timestamp": 3_661_500_u64, "level": "info", "args": ["ok", 42], "source": null},
         ]);
         let output = format_logs(&logs);
         assert!(output.contains("01:01:01.123"));
@@ -910,8 +911,8 @@ mod tests {
     #[test]
     fn test_format_network_with_entries() {
         let requests = json!([
-            {"id": 1, "timestamp": 3661123_u64, "method": "GET", "url": "/api/users", "status": 200, "duration_ms": 150, "error": null, "request_size": 0, "response_size": 1024},
-            {"id": 2, "timestamp": 3661500_u64, "method": "POST", "url": "/api/login", "status": 500, "duration_ms": 2000, "error": "Internal Server Error", "request_size": 42, "response_size": 128},
+            {"id": 1, "timestamp": 3_661_123_u64, "method": "GET", "url": "/api/users", "status": 200, "duration_ms": 150, "error": null, "request_size": 0, "response_size": 1024},
+            {"id": 2, "timestamp": 3_661_500_u64, "method": "POST", "url": "/api/login", "status": 500, "duration_ms": 2000, "error": "Internal Server Error", "request_size": 42, "response_size": 128},
         ]);
         let output = format_network(&requests);
         assert!(output.contains("01:01:01.123"));

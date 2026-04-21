@@ -1704,7 +1704,7 @@ mod tests {
         let _ = std::fs::remove_file(&old_socket);
         let _ = std::fs::remove_file(&new_socket);
 
-        let old_server = spawn_click_server(old_socket.clone(), "old", 2);
+        let old_server = spawn_click_server(&old_socket, "old", 2);
 
         // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
@@ -1713,7 +1713,7 @@ mod tests {
         let first = call_click(&pilot).await;
         assert_eq!(tool_result_source(&first), Some("old"));
 
-        let new_server = spawn_click_server(new_socket.clone(), "new", 1);
+        let new_server = spawn_click_server(&new_socket, "new", 1);
         let second = call_click(&pilot).await;
         assert_eq!(tool_result_source(&second), Some("old"));
 
@@ -1784,12 +1784,8 @@ mod tests {
             .and_then(Value::as_str)
     }
 
-    fn spawn_click_server(
-        socket: PathBuf,
-        source: &'static str,
-        requests: usize,
-    ) -> JoinHandle<()> {
-        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+    fn spawn_click_server(socket: &Path, source: &'static str, requests: usize) -> JoinHandle<()> {
+        let listener = UnixListener::bind(socket).expect("bind mock socket");
         tokio::spawn(async move {
             for _ in 0..requests {
                 let (stream, _) = listener.accept().await.expect("accept");

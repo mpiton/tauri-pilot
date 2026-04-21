@@ -1559,7 +1559,10 @@ mod tests {
             .and_then(|n| n.to_str())
             .expect("socket has a filename");
         assert!(
-            name.starts_with("tauri-pilot-") && name.ends_with(".sock"),
+            name.starts_with("tauri-pilot-")
+                && std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("sock")),
             "expected a tauri-pilot-*.sock path, got: {found:?}"
         );
     }
@@ -1650,12 +1653,14 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_read_script_valid() {
         let mut reader = std::io::Cursor::new(b"document.title");
         assert_eq!(read_script(&mut reader).unwrap(), "document.title");
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_read_script_empty_errors() {
         let mut reader = std::io::Cursor::new(b"");
         let err = read_script(&mut reader).unwrap_err();
@@ -1663,6 +1668,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_read_script_blank_errors() {
         let mut reader = std::io::Cursor::new(b"   \n  ");
         let err = read_script(&mut reader).unwrap_err();

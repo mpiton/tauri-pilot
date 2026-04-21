@@ -82,6 +82,7 @@ pub mod unix;
 pub mod windows;
 
 #[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
