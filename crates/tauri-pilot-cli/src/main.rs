@@ -1573,9 +1573,10 @@ mod tests {
     #[cfg(windows)]
     fn test_resolve_socket_windows_reads_registry() {
         let dir = std::env::temp_dir().join(format!("tauri-pilot-reg-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create reg test dir");
+        let tauri_dir = dir.join("tauri-pilot");
+        std::fs::create_dir_all(&tauri_dir).expect("create reg test dir");
 
-        let reg_path = dir.join("instances.json");
+        let reg_path = tauri_dir.join("instances.json");
         let pipe = r"\\.\pipe\tauri-pilot-testapp";
         let reg_data = serde_json::json!({
             "instances": {
@@ -1593,8 +1594,7 @@ mod tests {
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("LOCALAPPDATA") };
 
-        let _ = std::fs::remove_file(&reg_path);
-        let _ = std::fs::remove_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(result.expect("pipe found"), std::path::PathBuf::from(pipe));
     }
@@ -1614,9 +1614,10 @@ mod tests {
             "tauri-pilot-reg-newest-test-{}",
             std::process::id()
         ));
-        std::fs::create_dir_all(&dir).expect("create reg test dir");
+        let tauri_dir = dir.join("tauri-pilot");
+        std::fs::create_dir_all(&tauri_dir).expect("create reg test dir");
 
-        let reg_path = dir.join("instances.json");
+        let reg_path = tauri_dir.join("instances.json");
         let reg_data = serde_json::json!({
             "instances": {
                 "old_app": {
@@ -1638,8 +1639,7 @@ mod tests {
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("LOCALAPPDATA") };
 
-        let _ = std::fs::remove_file(&reg_path);
-        let _ = std::fs::remove_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(
             result.expect("pipe found"),
