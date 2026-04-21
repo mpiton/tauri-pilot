@@ -14,8 +14,9 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# Claude Code
+# AI Agents
 .claude/
+.sisyphus/
 CLAUDE.md
 
 # Node (for bridge build step)
