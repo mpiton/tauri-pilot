@@ -7,7 +7,7 @@ description: How to use tauri-pilot to let AI agents interact with Tauri app UIs
 
 No existing tool lets AI agents interact with Tauri app UIs. The gap exists because:
 
-- **Playwright doesn't work** — Tauri uses WebKitGTK, not Chromium. Playwright has no driver for WebKitGTK.
+- **Playwright doesn't work** — Tauri uses system WebViews (WebKitGTK on Linux, WebKit on macOS), not Chromium. Playwright has no driver for either.
 - **tauri-pilot speaks a protocol optimized for LLM consumption** — the accessibility tree output is text-based, compact, and structured to be read directly by a language model.
 - **Refs map to UI elements unambiguously** — `@e3` is a stable handle within a snapshot, removing the need for CSS selectors or XPath expressions.
 

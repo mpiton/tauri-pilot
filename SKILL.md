@@ -158,6 +158,16 @@ variable and command expansion inside the script.
 | `replay <file>` | Replay recorded session with original timing |
 | `replay <file> --export sh` | Export recording as executable shell script |
 
+### Declarative Scenarios
+
+| Command | Description |
+|---------|-------------|
+| `run <scenario.toml>` | Execute declarative TOML scenario with assertions and timeouts |
+| `run <file> --no-fail-fast` | Continue running remaining steps after a failure |
+| `run <file> --junit <out.xml>` | Emit JUnit XML report for CI integration |
+
+Failure screenshots auto-saved to `./tauri-pilot-failures/`. Exit code 0 on success, 1 on any failure. Use `run` for structured CI tests; use `record`/`replay` for capture-replay of manual interactions.
+
 ## Global Flags
 
 | Flag | Description |
