@@ -143,6 +143,7 @@ the JavaScript do not need escaping.
 | Command | Description |
 |---------|-------------|
 | `ping` | Health check |
+| `windows` | List all open windows (multi-window apps) |
 | `snapshot` | Accessibility tree with refs (`--save` to persist) |
 | `diff` | Compare snapshots, show only changes |
 | `click` | Click an element |
@@ -163,7 +164,10 @@ the JavaScript do not need escaping.
 | `screenshot` | Capture as PNG |
 | `wait` | Wait for element to appear/disappear |
 | `navigate` | Change the WebView URL |
+| `url` | Get current URL |
+| `title` | Get current page title |
 | `state` | Get URL, title, viewport, scroll |
+| `forms` | Dump all form fields on the page |
 | `assert` | One-step verification (text, visible, hidden, value, count, checked, contains, url) |
 | `watch` | Watch for DOM mutations |
 | `storage` | Read/write localStorage and sessionStorage (`--session`) |
@@ -171,6 +175,7 @@ the JavaScript do not need escaping.
 | `network` | Capture and display network requests |
 | `record` | Record interactions (`start`, `stop --output`, `status`) |
 | `replay` | Replay recorded session (`--export sh` for shell script) |
+| `run` | Execute a declarative TOML scenario (`--junit` for CI output) |
 | `mcp` | Start a Model Context Protocol server over stdio |
 
 ## For AI Agents

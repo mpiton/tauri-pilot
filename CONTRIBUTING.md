@@ -6,7 +6,7 @@ Thanks for your interest in contributing! This document covers the development w
 
 - Rust 1.95.0+ with edition 2024
 - A Tauri v2 app for testing (or use the examples)
-- Linux (WebKitGTK) — macOS/Windows not yet supported
+- Linux (WebKitGTK) or macOS (WebKit) — Windows planned
 
 ## Development Setup
 
@@ -39,7 +39,7 @@ cargo test --workspace
 
 ## Architecture
 
-See [ARCHI.md](ARCHI.md) for architecture decisions and module structure.
+See the [Architecture guide](https://mpiton.github.io/tauri-pilot/guides/architecture/) for design decisions and module structure.
 
 ## `run` vs `record`/`replay`
 

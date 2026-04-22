@@ -9,7 +9,7 @@ Contributions are welcome. Bug reports, feature requests, and pull requests are 
 
 - Rust 1.95.0+ with edition 2024
 - A Tauri v2 app for testing (or use the examples)
-- Linux (WebKitGTK) — macOS/Windows not yet supported
+- Linux (WebKitGTK) or macOS (WebKit) — Windows planned
 
 ## Development Setup
 

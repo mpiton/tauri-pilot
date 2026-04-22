@@ -9,7 +9,7 @@ tauri-pilot is a **debug-only** tool. The plugin runs exclusively under `#[cfg(d
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do NOT open a public issue**
-2. Email: security@mpiton.dev (or use GitHub's private vulnerability reporting)
+2. Email: contact@mathieu-piton.com (or use GitHub's private vulnerability reporting)
 3. Include steps to reproduce and potential impact
 4. We will respond within 72 hours
 

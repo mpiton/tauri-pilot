@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Batch scenario runner** — `tauri-pilot run <scenario.toml>` executes declarative TOML scenarios with 18 action types (click, fill, type, press, select, check, scroll, navigate, wait, watch, eval, screenshot, assert-text, assert-exists, assert-visible, assert-hidden, assert-value, assert-url). Supports `fail_fast` (default true), `--no-fail-fast` override, `--junit <file>` for JUnit XML output, and auto-captures failure screenshots to `./tauri-pilot-failures/`. Exit code 0 = all pass, 1 = any failure. Example: `docs/examples/login-flow.toml` ([#62])
+- `connect.timeout_ms` in TOML scenarios — wraps `Client::connect` in `tokio::time::timeout` ([#63])
+- `global_timeout_ms` in TOML scenarios — hard deadline around `run_scenario` ([#63])
+- Per-step `timeout_ms` applied to all non-`wait`/`watch` actions via `tokio::time::timeout` ([#63])
+- `<testsuites>` JUnit XML root now carries `tests`, `failures`, `errors`, `skipped`, `time` aggregate attributes for CI reporters (Jenkins, GitHub Actions, Allure) ([#63])
+
+### Fixed
+
+- `assert-exists` now verifies the `visible` key is present in the RPC response to catch missing DOM elements ([#63])
+
 ## [0.4.0] - 2026-04-17
 
 ### Added
@@ -173,6 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#52]: https://github.com/mpiton/tauri-pilot/pull/52
 [#53]: https://github.com/mpiton/tauri-pilot/pull/53
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
+[#62]: https://github.com/mpiton/tauri-pilot/pull/62
+[#63]: https://github.com/mpiton/tauri-pilot/pull/63
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mpiton/tauri-pilot/compare/v0.2.1...v0.3.0
