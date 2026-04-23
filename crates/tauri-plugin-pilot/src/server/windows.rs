@@ -520,7 +520,7 @@ mod tests {
         reader.read_line(&mut line).await.unwrap();
         let resp: Response = serde_json::from_str(&line).unwrap();
 
-        assert_eq!(resp.id, 1);
+        assert_eq!(resp.id, serde_json::json!(1));
         assert!(resp.error.is_none());
         assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
 
@@ -545,7 +545,7 @@ mod tests {
         reader.read_line(&mut line).await.unwrap();
         let resp: Response = serde_json::from_str(&line).unwrap();
 
-        assert_eq!(resp.id, 0);
+        assert_eq!(resp.id, serde_json::Value::Null);
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32700);
 
@@ -571,7 +571,7 @@ mod tests {
             let mut line = String::new();
             reader.read_line(&mut line).await.unwrap();
             let resp: Response = serde_json::from_str(&line).unwrap();
-            assert_eq!(resp.id, i);
+            assert_eq!(resp.id, serde_json::json!(i));
         }
 
         handle.abort();

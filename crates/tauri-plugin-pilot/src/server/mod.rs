@@ -48,12 +48,12 @@ where
 
         let response = match serde_json::from_str::<Request>(trimmed) {
             Ok(req) if req.jsonrpc != "2.0" => Response::error(
-                req.id,
+                serde_json::Value::Number(req.id.into()),
                 -32600,
                 "Invalid JSON-RPC version (expected \"2.0\")",
             ),
             Ok(req) => dispatch_request(&req, engine, eval_fn, list_fn, focus_fn, recorder).await,
-            Err(e) => Response::error(0, -32700, format!("Parse error: {e}")),
+            Err(e) => Response::error(serde_json::Value::Null, -32700, format!("Parse error: {e}")),
         };
 
         let mut resp_bytes = serde_json::to_vec(&response)?;
@@ -87,7 +87,7 @@ pub(crate) async fn dispatch_request(
         Ok(result) => Response::success(req.id, result),
         Err(rpc_err) => Response {
             jsonrpc: "2.0".to_owned(),
-            id: req.id,
+            id: serde_json::Value::Number(req.id.into()),
             result: None,
             error: Some(rpc_err),
         },

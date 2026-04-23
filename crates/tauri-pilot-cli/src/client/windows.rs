@@ -39,7 +39,7 @@ mod tests {
                 let resp = if req.method == "ping" {
                     Response::success(req.id, serde_json::json!({"status": "ok"}))
                 } else {
-                    Response::error(req.id, -32601, "Method not found")
+                    Response::error(serde_json::Value::Number(req.id.into()), -32601, "Method not found")
                 };
                 let mut bytes = serde_json::to_vec(&resp).unwrap();
                 bytes.push(b'\n');

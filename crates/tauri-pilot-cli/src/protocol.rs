@@ -26,7 +26,7 @@ pub struct Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {
     pub jsonrpc: String,
-    pub id: u64,
+    pub id: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -49,7 +49,7 @@ impl Response {
     pub fn success(id: u64, result: serde_json::Value) -> Self {
         Self {
             jsonrpc: "2.0".to_owned(),
-            id,
+            id: serde_json::Value::Number(id.into()),
             result: Some(result),
             error: None,
         }
@@ -57,7 +57,7 @@ impl Response {
 
     /// Create an error response.
     #[must_use]
-    pub fn error(id: u64, code: i32, message: impl Into<String>) -> Self {
+    pub fn error(id: serde_json::Value, code: i32, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: "2.0".to_owned(),
             id,
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_serialize_error_response() {
-        let resp = Response::error(1, -32601, "Method not found");
+        let resp = Response::error(serde_json::Value::Number(1.into()), -32601, "Method not found");
         let s = serde_json::to_string(&resp).expect("serialize");
         assert!(s.contains(r#""error""#));
         assert!(!s.contains(r#""result""#));
@@ -130,7 +130,7 @@ mod tests {
         let resp = Response::success(7, json!([1, 2, 3]));
         let serialized = serde_json::to_string(&resp).expect("serialize");
         let deserialized: Response = serde_json::from_str(&serialized).expect("deserialize");
-        assert_eq!(deserialized.id, 7);
+        assert_eq!(deserialized.id, serde_json::json!(7));
         assert_eq!(deserialized.result, Some(json!([1, 2, 3])));
         assert!(deserialized.error.is_none());
     }
