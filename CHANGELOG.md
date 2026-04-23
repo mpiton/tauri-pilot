@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Windows support** — named pipe server and client for Windows, with security hardening (DACL, SID validation), registry-based instance discovery, and platform-specific tests ([#64])
+
 ## [0.4.0] - 2026-04-17
 
 ### Added
@@ -189,3 +193,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#8]: https://github.com/mpiton/tauri-pilot/issues/8
 [#17]: https://github.com/mpiton/tauri-pilot/pull/17
 [#31]: https://github.com/mpiton/tauri-pilot/issues/31
+[#64]: https://github.com/mpiton/tauri-pilot/pull/64

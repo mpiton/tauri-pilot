@@ -21,9 +21,17 @@ pub async fn connect(path: &Path) -> Result<Client> {
 mod tests {
     use super::*;
     use crate::protocol::{Request, Response};
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
+
+    static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn unique_pipe_path() -> String {
+        let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        format!(r"\\.\pipe\tauri-pilot-test-{}-{}", std::process::id(), n)
+    }
 
     fn mock_server(path: &str) -> tokio::task::JoinHandle<()> {
         let server = ServerOptions::new()
@@ -64,10 +72,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_ping_returns_ok() {
-        let pipe = r"\\.\pipe\tauri-pilot-test-t05a";
-        let handle = mock_server(pipe);
+        let pipe = unique_pipe_path();
+        let handle = mock_server(&pipe);
 
-        let mut client = connect_with_retry(Path::new(pipe)).await;
+        let mut client = connect_with_retry(Path::new(&pipe)).await;
         let result = client.call("ping", None).await.unwrap();
         assert_eq!(result, serde_json::json!({"status": "ok"}));
 
@@ -76,9 +84,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_null_result_is_success() {
-        let pipe = r"\\.\pipe\tauri-pilot-test-t05c";
+        let pipe = unique_pipe_path();
         let server = ServerOptions::new()
-            .create(pipe)
+            .create(&pipe)
             .expect("create named pipe server");
         let handle = tokio::spawn(async move {
             server.connect().await.expect("server accept");
@@ -93,7 +101,7 @@ mod tests {
             writer.flush().await.unwrap();
         });
 
-        let mut client = connect_with_retry(Path::new(pipe)).await;
+        let mut client = connect_with_retry(Path::new(&pipe)).await;
         let result = client.call("eval", None).await.unwrap();
         assert_eq!(result, serde_json::Value::Null);
 
@@ -102,9 +110,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_missing_result_is_success() {
-        let pipe = r"\\.\pipe\tauri-pilot-test-t05d";
+        let pipe = unique_pipe_path();
         let server = ServerOptions::new()
-            .create(pipe)
+            .create(&pipe)
             .expect("create named pipe server");
         let handle = tokio::spawn(async move {
             server.connect().await.expect("server accept");
@@ -119,7 +127,7 @@ mod tests {
             writer.flush().await.unwrap();
         });
 
-        let mut client = connect_with_retry(Path::new(pipe)).await;
+        let mut client = connect_with_retry(Path::new(&pipe)).await;
         let result = client.call("eval", None).await.unwrap();
         assert_eq!(result, serde_json::Value::Null);
 
@@ -128,10 +136,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_unknown_method_returns_error() {
-        let pipe = r"\\.\pipe\tauri-pilot-test-t05b";
-        let handle = mock_server(pipe);
+        let pipe = unique_pipe_path();
+        let handle = mock_server(&pipe);
 
-        let mut client = connect_with_retry(Path::new(pipe)).await;
+        let mut client = connect_with_retry(Path::new(&pipe)).await;
         let result = client.call("nonexistent", None).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("-32601"));

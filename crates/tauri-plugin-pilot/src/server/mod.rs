@@ -30,6 +30,8 @@ pub(crate) async fn handle_connection<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
+    const MAX_LINE_LENGTH: usize = 1_048_576;
+
     let (mut reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(&mut reader);
     let mut line = String::new();
@@ -38,6 +40,15 @@ where
         line.clear();
         let n = reader.read_line(&mut line).await?;
         if n == 0 {
+            break;
+        }
+
+        if line.len() > MAX_LINE_LENGTH {
+            let response = Response::error(serde_json::Value::Null, -32700, "Request line exceeds maximum length");
+            let mut resp_bytes = serde_json::to_vec(&response)?;
+            resp_bytes.push(b'\n');
+            writer.write_all(&resp_bytes).await?;
+            writer.flush().await?;
             break;
         }
 
@@ -87,7 +98,7 @@ pub(crate) async fn dispatch_request(
         Ok(result) => Response::success(req.id, result),
         Err(rpc_err) => Response {
             jsonrpc: "2.0".to_owned(),
-            id: serde_json::Value::Number(req.id.into()),
+            id: serde_json::Value::from(req.id),
             result: None,
             error: Some(rpc_err),
         },

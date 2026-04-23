@@ -16,10 +16,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
 use windows::Win32::Security::{
-    ACL, ACL_REVISION, AddAccessAllowedAce, EqualSid, GetLengthSid, GetTokenInformation,
-    ImpersonateNamedPipeClient, InitializeAcl, InitializeSecurityDescriptor,
-    PSECURITY_DESCRIPTOR, RevertToSelf, SECURITY_ATTRIBUTES,
-    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACL, ACL_REVISION, AddAccessAllowedAce, EqualSid, GetAclInformation, GetLengthSid,
+    GetSecurityInfo, GetTokenInformation, ImpersonateNamedPipeClient, InitializeAcl,
+    InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, RevertToSelf, SECURITY_ATTRIBUTES,
+    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser, AclSizeInformation,
+    SE_DACL_SECURITY_INFORMATION,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenProcessToken};
 
@@ -598,5 +599,79 @@ mod tests {
 
         handle.abort();
         let _ = handle.await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[cfg(windows)]
+    async fn test_dacl_regression_every_pipe_instance_has_dacl_with_one_ace() {
+        use windows::Win32::Foundation::PHANDLE;
+        use windows::Win32::Storage::FileSystem::PACL;
+
+        let pipe = unique_pipe_path();
+        let (server, guard) = bind(&pipe).expect("bind test pipe");
+
+        // Get the raw handle from the NamedPipeServer.
+        let raw_handle = server.as_raw_handle();
+        let handle = HANDLE(raw_handle as *mut c_void);
+
+        // Retrieve the DACL via GetSecurityInfo.
+        let mut dacl_ptr: PACL = PACL::default();
+        let sd_result = unsafe {
+            GetSecurityInfo(
+                handle,
+                windows::Win32::Security::SE_KERNEL_OBJECT,
+                SE_DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(&mut dacl_ptr),
+                None,
+                None,
+                None,
+            )
+        };
+        assert_eq!(sd_result, Ok(()), "GetSecurityInfo should succeed");
+        assert!(
+            !dacl_ptr.is_null(),
+            "DACL pointer must not be NULL — every pipe instance must have a DACL"
+        );
+
+        // Query the ACL size to get the ACE count.
+        let mut acl_size = AclSizeInformation::default();
+        let size_result = unsafe {
+            GetAclInformation(
+                dacl_ptr,
+                &mut acl_size as *mut _ as *mut c_void,
+                std::mem::size_of::<AclSizeInformation>() as u32,
+                AclSizeInformation,
+            )
+        };
+        assert_eq!(size_result, Ok(()), "GetAclInformation should succeed");
+        assert_eq!(
+            acl_size.AceCount, 1,
+            "DACL must contain exactly 1 ACE (owner-only access)"
+        );
+
+        // Clean up the security descriptor allocated by GetSecurityInfo.
+        unsafe {
+            let _ = windows::Win32::Security::LocalFree(
+                windows::Win32::Foundation::HLOCAL(dacl_ptr.0 as *mut c_void),
+            );
+        }
+
+        // Now connect a client to trigger the accept_loop and create a new server instance.
+        // We need to poll the accept futures so the accept_loop can run.
+        let client = ClientOptions::new().open(&pipe).expect("client should connect");
+
+        // Give the accept_loop time to spawn the connection handler.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Close our server handle — this allows the accept_loop to exit its current
+        // connect() call and create a new instance with its own DACL.
+        drop(server);
+        drop(guard);
+
+        // Brief pause to let the accept_loop cycle.
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
