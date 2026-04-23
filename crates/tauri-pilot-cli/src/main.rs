@@ -1335,38 +1335,93 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
 
     #[cfg(windows)]
     {
-        let reg_path = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .map(|p| p.join("tauri-pilot").join("instances.json"));
-
-        if let Some(path) = reg_path
-            && let Ok(data) = std::fs::read_to_string(&path)
-            && let Ok(reg) = serde_json::from_str::<serde_json::Value>(&data)
-            && let Some(instances) = reg.get("instances").and_then(|v| v.as_object())
-        {
-            let mut newest: Option<(u64, PathBuf)> = None;
-            for (_, entry) in instances {
-                if let Some(created_at) =
-                    entry.get("created_at").and_then(serde_json::Value::as_u64)
-                    && let Some(pipe) = entry.get("pipe").and_then(|v| v.as_str())
-                {
-                    let should_update = match newest {
-                        None => true,
-                        Some((current_max, _)) => created_at > current_max,
-                    };
-                    if should_update {
-                        newest = Some((created_at, PathBuf::from(pipe)));
-                    }
-                }
-            }
-            if let Some((_, pipe)) = newest {
-                return Ok(pipe);
-            }
-        }
-        Err(anyhow::anyhow!(
-            "No tauri-pilot pipe found. Is a Tauri app running?"
-        ))
+        return resolve_socket_windows();
     }
+}
+
+#[cfg(windows)]
+fn resolve_socket_windows() -> Result<PathBuf> {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    fn is_pid_alive(pid: u32) -> bool {
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
+        match handle {
+            Ok(h) => {
+                let alive = unsafe {
+                    let mut exit_code: u32 = 0;
+                    GetExitCodeProcess(h, &mut exit_code).is_ok() && exit_code == STILL_ACTIVE.0
+                };
+                unsafe { CloseHandle(h) };
+                alive
+            }
+            Err(_) => false,
+        }
+    }
+
+    #[derive(serde::Deserialize)]
+    struct InstanceEntry {
+        pid: u32,
+        pipe: String,
+        created_at: u64,
+    }
+
+    let local_app_data =
+        std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "LOCALAPPDATA environment variable is not set or empty. \
+                 Is a Tauri app running?"
+            )
+        })?;
+
+    let instances_dir = PathBuf::from(local_app_data)
+        .join("tauri-pilot")
+        .join("instances");
+
+    if !instances_dir.exists() {
+        anyhow::bail!(
+            "No tauri-pilot instances directory found at {}. \
+             Is a Tauri app running?",
+            instances_dir.display()
+        );
+    }
+
+    let mut newest: Option<(u64, PathBuf)> = None;
+    for entry in std::fs::read_dir(&instances_dir)?.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping corrupted instance file");
+                continue;
+            }
+        };
+        let info: InstanceEntry = match serde_json::from_str(&content) {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping malformed instance file");
+                continue;
+            }
+        };
+        if !is_pid_alive(info.pid) {
+            tracing::debug!(pid = info.pid, path = %path.display(), "skipping stale instance");
+            continue;
+        }
+        let should_update = match newest {
+            None => true,
+            Some((current_max, _)) => info.created_at > current_max,
+        };
+        if should_update {
+            newest = Some((info.created_at, PathBuf::from(info.pipe)));
+        }
+    }
+
+    newest
+        .map(|(_, pipe)| pipe)
+        .ok_or_else(|| anyhow::anyhow!("No active tauri-pilot instance found. Is a Tauri app running?"))
 }
 
 #[cfg(not(windows))]

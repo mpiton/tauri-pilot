@@ -25,22 +25,6 @@ pub fn socket_path(identifier: &str) -> PathBuf {
     PathBuf::from(format!(r"\\.\pipe\tauri-pilot-{identifier}"))
 }
 
-fn registry_dir() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .map(|p| p.join("tauri-pilot"))
-}
-
-fn registry_path() -> Option<PathBuf> {
-    registry_dir().map(|d| d.join("instances.json"))
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Default)]
-struct Registry {
-    instances: std::collections::BTreeMap<String, InstanceEntry>,
-}
-
 #[derive(serde::Serialize, serde::Deserialize)]
 struct InstanceEntry {
     pipe: String,
@@ -48,49 +32,125 @@ struct InstanceEntry {
     created_at: u64,
 }
 
-fn read_registry(path: &Path) -> Registry {
-    match std::fs::read_to_string(path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
-        Err(_) => Registry::default(),
-    }
+fn instances_dir() -> std::io::Result<PathBuf> {
+    let local_app_data =
+        std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "LOCALAPPDATA environment variable is not set or empty",
+            )
+        })?;
+    Ok(PathBuf::from(local_app_data).join("tauri-pilot").join("instances"))
 }
 
-fn write_registry(path: &Path, reg: &Registry) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+fn instance_file_path(identifier: &str) -> std::io::Result<PathBuf> {
+    let dir = instances_dir()?;
+    if !dir.exists() {
+        let wide_path: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let mut sa = SECURITY_ATTRIBUTES {
+            nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
+                .expect("SECURITY_ATTRIBUTES size must fit in u32"),
+            lpSecurityDescriptor: std::ptr::null_mut(),
+            bInheritHandle: windows::Win32::Foundation::BOOL(0),
+        };
+        let sd = windows::Win32::Security::SECURITY_DESCRIPTOR {};
+        sa.lpSecurityDescriptor = &sd as *const _ as *mut _;
+        unsafe {
+            windows::Win32::FileSystem::CreateDirectoryW(
+                windows::core::PCWSTR::from_raw(wide_path.as_ptr()),
+                Some(&sa),
+            )
+        }
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
     }
-    let data = serde_json::to_string_pretty(reg)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &data)?;
-    std::fs::rename(&tmp, path)
+    Ok(dir.join(format!("{identifier}.json")))
+}
+
+fn atomic_write_instance(path: &Path, entry: &InstanceEntry) -> std::io::Result<()> {
+    let json = serde_json::to_string(entry)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
 }
 
 fn register_instance(identifier: &str, pipe_path: &Path) -> std::io::Result<()> {
-    let Some(reg_path) = registry_path() else {
-        return Ok(());
+    let path = instance_file_path(identifier)?;
+    let entry = InstanceEntry {
+        pipe: pipe_path.to_string_lossy().into_owned(),
+        pid: std::process::id(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
     };
-    let mut reg = read_registry(&reg_path);
-    reg.instances.insert(
-        identifier.to_string(),
-        InstanceEntry {
-            pipe: pipe_path.to_string_lossy().into_owned(),
-            pid: std::process::id(),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        },
-    );
-    write_registry(&reg_path, &reg)
+    atomic_write_instance(&path, &entry)
 }
 
-fn unregister_instance(identifier: &str) {
-    let Some(reg_path) = registry_path() else {
-        return;
-    };
-    let mut reg = read_registry(&reg_path);
-    reg.instances.remove(identifier);
-    let _ = write_registry(&reg_path, &reg);
+fn unregister_instance(identifier: &str) -> std::io::Result<()> {
+    let path = instance_file_path(identifier)?;
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
+fn is_pid_alive(pid: u32) -> bool {
+    use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
+    match handle {
+        Ok(h) => {
+            let alive = unsafe {
+                let mut exit_code: u32 = 0;
+                GetExitCodeProcess(h, &mut exit_code).is_ok() && exit_code == STILL_ACTIVE.0
+            };
+            unsafe { let _ = CloseHandle(h) };
+            alive
+        }
+        Err(_) => false,
+    }
+}
+
+pub(crate) fn discover_instances() -> std::io::Result<Vec<InstanceEntry>> {
+    let dir = instances_dir()?;
+    let mut instances = Vec::new();
+    if !dir.exists() {
+        return Ok(instances);
+    }
+    let entries = std::fs::read_dir(&dir)?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping corrupted instance file");
+                continue;
+            }
+        };
+        let info: InstanceEntry = match serde_json::from_str(&content) {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping malformed instance file");
+                continue;
+            }
+        };
+        if !is_pid_alive(info.pid) {
+            tracing::debug!(pid = info.pid, path = %path.display(), "skipping stale instance");
+            continue;
+        }
+        instances.push(info);
+    }
+    Ok(instances)
+}
+
+pub(crate) fn find_newest_instance() -> std::io::Result<Option<InstanceEntry>> {
+    let instances = discover_instances()?;
+    Ok(instances.into_iter().max_by_key(|i| i.created_at))
 }
 
 pub struct RegistryGuard {
@@ -99,8 +159,11 @@ pub struct RegistryGuard {
 
 impl Drop for RegistryGuard {
     fn drop(&mut self) {
-        unregister_instance(&self.identifier);
-        tracing::info!(identifier = %self.identifier, "registry entry removed");
+        if let Err(e) = unregister_instance(&self.identifier) {
+            tracing::warn!(identifier = %self.identifier, error = %e, "failed to remove registry entry");
+        } else {
+            tracing::info!(identifier = %self.identifier, "registry entry removed");
+        }
     }
 }
 
@@ -127,86 +190,82 @@ impl Drop for SecurityAttributesGuard {
     }
 }
 
-/// Build a [`SECURITY_ATTRIBUTES`] whose DACL grants `GENERIC_READ | GENERIC_WRITE`
-/// **only** to the current user.  No other principals receive access.
-///
-/// The returned guard must stay alive for as long as the `SECURITY_ATTRIBUTES` is
-/// passed to Windows APIs (the kernel copies the security descriptor, so the guard
-/// can be dropped immediately after the pipe is created).
+fn get_current_user_sid(
+    token: HANDLE,
+) -> std::io::Result<(*mut windows::Win32::Security::SID, HANDLE)> {
+    let mut return_length = 0u32;
+    let _ = GetTokenInformation(token, TokenUser, None, 0, &raw mut return_length);
+    let mut token_user_buf = vec![0u8; return_length as usize];
+    GetTokenInformation(
+        token,
+        TokenUser,
+        Some(token_user_buf.as_mut_ptr().cast::<c_void>()),
+        return_length,
+        &raw mut return_length,
+    )
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let token_user = &*token_user_buf.as_ptr().cast::<TOKEN_USER>();
+    Ok((token_user.User.Sid, token))
+}
+
+#[allow(clippy::cast_ptr_alignment)]
+fn create_security_descriptor_dacl(
+    user_sid: *mut windows::Win32::Security::SID,
+) -> std::io::Result<(Vec<u8>, Vec<u8>, *mut ACL)> {
+    let sid_length = GetLengthSid(user_sid) as usize;
+    let acl_size = (8 + 4 + 4 + sid_length + 3) & !3;
+    let mut acl_buf = vec![0u8; acl_size];
+    let acl_ptr = acl_buf.as_mut_ptr().cast::<ACL>();
+    InitializeAcl(
+        acl_ptr,
+        acl_size.try_into().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "ACL size too large")
+        })?,
+        ACL_REVISION,
+    )
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+    AddAccessAllowedAce(
+        acl_ptr,
+        ACL_REVISION,
+        (GENERIC_READ | GENERIC_WRITE).0,
+        user_sid,
+    )
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let mut sd_buf = vec![0u8; 40];
+    let sd_ptr = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr().cast::<c_void>());
+    InitializeSecurityDescriptor(sd_ptr, 1)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    SetSecurityDescriptorDacl(sd_ptr, true, Some(acl_ptr), false)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    Ok((sd_buf, acl_buf, acl_ptr))
+}
+
 #[allow(clippy::cast_ptr_alignment)]
 fn create_user_only_security_attributes()
 -> std::io::Result<(SECURITY_ATTRIBUTES, SecurityAttributesGuard)> {
     unsafe {
-        // 1. Open the current process token (TOKEN_QUERY only).
         let process = GetCurrentProcess();
         let mut token = HANDLE(0);
         OpenProcessToken(process, TOKEN_QUERY, &raw mut token)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-        // 2. Retrieve TokenUser information.
-        //    First call: discover required buffer size.
-        let mut return_length = 0u32;
-        let _ = GetTokenInformation(token, TokenUser, None, 0, &raw mut return_length);
-        let mut token_user_buf = vec![0u8; return_length as usize];
-        GetTokenInformation(
+        // Guard created immediately so CloseHandle is called on any early return.
+        let mut guard = SecurityAttributesGuard {
+            sd: Vec::new(),
+            acl: Vec::new(),
             token,
-            TokenUser,
-            Some(token_user_buf.as_mut_ptr().cast::<c_void>()),
-            return_length,
-            &raw mut return_length,
-        )
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+        };
 
-        let token_user = &*token_user_buf.as_ptr().cast::<TOKEN_USER>();
-        let user_sid = token_user.User.Sid;
+        let (user_sid, _token) = get_current_user_sid(guard.token)?;
+        let (sd, acl, _acl_ptr) = create_security_descriptor_dacl(user_sid)?;
+        guard.sd = sd;
+        guard.acl = acl;
 
-        // 3. Allocate and initialise an ACL with a single ACE for the user.
-        let sid_length = GetLengthSid(user_sid) as usize;
-        // ACL header (8) + ACE header (4) + access-mask (4) + SID
-        let acl_size = 8 + 4 + 4 + sid_length;
-        // Align to DWORD boundary.
-        let acl_size = (acl_size + 3) & !3;
-
-        let mut acl_buf = vec![0u8; acl_size];
-        let acl_ptr = acl_buf.as_mut_ptr().cast::<ACL>();
-
-        InitializeAcl(
-            acl_ptr,
-            acl_size.try_into().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::InvalidInput, "ACL size too large")
-            })?,
-            ACL_REVISION,
-        )
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-        AddAccessAllowedAce(
-            acl_ptr,
-            ACL_REVISION,
-            (GENERIC_READ | GENERIC_WRITE).0,
-            user_sid,
-        )
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-
-        // 4. Initialise an absolute security descriptor and attach the DACL.
-        let mut sd_buf = vec![0u8; 40];
-        let sd_ptr = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr().cast::<c_void>());
-
-        InitializeSecurityDescriptor(sd_ptr, 1)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        SetSecurityDescriptorDacl(sd_ptr, true, Some(acl_ptr), false)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-
-        // 5. Build SECURITY_ATTRIBUTES pointing into our buffers.
         let sa = SECURITY_ATTRIBUTES {
             nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
                 .expect("SECURITY_ATTRIBUTES size must fit in u32"),
-            lpSecurityDescriptor: sd_buf.as_mut_ptr().cast::<c_void>(),
+            lpSecurityDescriptor: guard.sd.as_mut_ptr().cast::<c_void>(),
             bInheritHandle: windows::Win32::Foundation::BOOL(0),
-        };
-
-        let guard = SecurityAttributesGuard {
-            sd: sd_buf,
-            acl: acl_buf,
-            token,
         };
 
         Ok((sa, guard))

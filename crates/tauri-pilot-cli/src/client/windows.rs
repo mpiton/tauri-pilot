@@ -25,7 +25,7 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    async fn mock_server(path: &str) -> tokio::task::JoinHandle<()> {
+    fn mock_server(path: &str) -> tokio::task::JoinHandle<()> {
         let server = ServerOptions::new()
             .create(path)
             .expect("create named pipe server");
@@ -65,7 +65,7 @@ mod tests {
     #[tokio::test]
     async fn test_client_ping_returns_ok() {
         let pipe = r"\\.\pipe\tauri-pilot-test-t05a";
-        let handle = mock_server(pipe).await;
+        let handle = mock_server(pipe);
 
         let mut client = connect_with_retry(Path::new(pipe)).await;
         let result = client.call("ping", None).await.unwrap();
@@ -129,7 +129,7 @@ mod tests {
     #[tokio::test]
     async fn test_client_unknown_method_returns_error() {
         let pipe = r"\\.\pipe\tauri-pilot-test-t05b";
-        let handle = mock_server(pipe).await;
+        let handle = mock_server(pipe);
 
         let mut client = connect_with_retry(Path::new(pipe)).await;
         let result = client.call("nonexistent", None).await;

@@ -90,7 +90,7 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
 
-    async fn mock_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
+    fn mock_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path).unwrap();
         tokio::spawn(async move {
@@ -130,7 +130,7 @@ mod tests {
     #[tokio::test]
     async fn test_client_ping_returns_ok() {
         let socket = PathBuf::from("/tmp/tauri-pilot-test-t05a.sock");
-        let handle = mock_server(&socket).await;
+        let handle = mock_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("ping", None).await.unwrap();
@@ -207,7 +207,7 @@ mod tests {
     #[tokio::test]
     async fn test_client_unknown_method_returns_error() {
         let socket = PathBuf::from("/tmp/tauri-pilot-test-t05b.sock");
-        let handle = mock_server(&socket).await;
+        let handle = mock_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("nonexistent", None).await;
