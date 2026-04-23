@@ -16,11 +16,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
 use windows::Win32::Security::{
-    ACL, ACL_REVISION, AddAccessAllowedAce, GetLengthSid, GetTokenInformation, InitializeAcl,
-    InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+    ACL, ACL_REVISION, AddAccessAllowedAce, EqualSid, GetLengthSid, GetTokenInformation,
+    ImpersonateNamedPipeClient, InitializeAcl, InitializeSecurityDescriptor,
+    PSECURITY_DESCRIPTOR, RevertToSelf, SECURITY_ATTRIBUTES,
     SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenProcessToken};
 
 pub fn socket_path(identifier: &str) -> PathBuf {
     PathBuf::from(format!(r"\\.\pipe\tauri-pilot-{identifier}"))
@@ -207,6 +208,85 @@ fn get_current_user_sid(
     Ok((token_user.User.Sid, token))
 }
 
+fn client_sid_matches_current_user(pipe: &NamedPipeServer) -> bool {
+    // Impersonate the client to get its token.
+    if ImpersonateNamedPipeClient(pipe.as_raw_handle() as _).is_err() {
+        tracing::warn!("failed to impersonate named pipe client");
+        return true; // Allow connection if impersonation fails (DACL is primary)
+    }
+
+    // Get the impersonation token from the current thread.
+    let thread = unsafe { GetCurrentThread() };
+    let mut impersonation_token = HANDLE(0);
+    if unsafe { OpenProcessToken(thread, TOKEN_QUERY, &raw mut impersonation_token) }.is_err() {
+        tracing::warn!("failed to open thread token for impersonation");
+        let _ = RevertToSelf();
+        return true;
+    }
+
+    // Get the client's SID.
+    let client_sid = unsafe {
+        let mut return_length = 0u32;
+        let _ = GetTokenInformation(impersonation_token, TokenUser, None, 0, &raw mut return_length);
+        if return_length == 0 {
+            let _ = CloseHandle(impersonation_token);
+            let _ = RevertToSelf();
+            return true;
+        }
+        let mut token_user_buf = vec![0u8; return_length as usize];
+        if GetTokenInformation(
+            impersonation_token,
+            TokenUser,
+            Some(token_user_buf.as_mut_ptr().cast::<c_void>()),
+            return_length,
+            &raw mut return_length,
+        ).is_err() {
+            let _ = CloseHandle(impersonation_token);
+            let _ = RevertToSelf();
+            return true;
+        }
+        let token_user = &*token_user_buf.as_ptr().cast::<TOKEN_USER>();
+        token_user.User.Sid
+    };
+
+    // Revert to self before getting our own SID.
+    let _ = RevertToSelf();
+    let _ = CloseHandle(impersonation_token);
+
+    // Get current process token and compare SIDs.
+    let matches = unsafe {
+        let process = GetCurrentProcess();
+        let mut token = HANDLE(0);
+        if OpenProcessToken(process, TOKEN_QUERY, &raw mut token).is_err() {
+            return true;
+        }
+        let mut return_length = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &raw mut return_length);
+        if return_length == 0 {
+            let _ = CloseHandle(token);
+            return true;
+        }
+        let mut token_user_buf = vec![0u8; return_length as usize];
+        let result = GetTokenInformation(
+            token,
+            TokenUser,
+            Some(token_user_buf.as_mut_ptr().cast::<c_void>()),
+            return_length,
+            &raw mut return_length,
+        );
+        if result.is_err() {
+            let _ = CloseHandle(token);
+            return true;
+        }
+        let token_user = &*token_user_buf.as_ptr().cast::<TOKEN_USER>();
+        let our_sid = token_user.User.Sid;
+        let _ = CloseHandle(token);
+        EqualSid(client_sid, our_sid).as_bool()
+    };
+
+    matches
+}
+
 fn create_security_descriptor_dacl(
     user_sid: *mut windows::Win32::Security::SID,
 ) -> std::io::Result<(
@@ -370,6 +450,11 @@ async fn accept_loop(
 
         let current = server;
         server = next_server;
+
+        if !client_sid_matches_current_user(&current) {
+            tracing::warn!("client SID does not match current user, closing connection");
+            continue;
+        }
 
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
