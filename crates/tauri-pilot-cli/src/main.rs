@@ -1626,24 +1626,23 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
+    #[serial]
     fn test_resolve_socket_windows_reads_registry() {
         let dir = std::env::temp_dir().join(format!("tauri-pilot-reg-test-{}", std::process::id()));
-        let tauri_dir = dir.join("tauri-pilot");
-        std::fs::create_dir_all(&tauri_dir).expect("create reg test dir");
+        let instances_dir = dir.join("tauri-pilot").join("instances");
+        std::fs::create_dir_all(&instances_dir).expect("create reg test dir");
 
-        let reg_path = tauri_dir.join("instances.json");
         let pipe = r"\\.\pipe\tauri-pilot-testapp";
-        let reg_data = serde_json::json!({
-            "instances": {
-                "testapp": {
-                    "pipe": pipe,
-                    "pid": 1234,
-                    "created_at": 1745200000
-                }
-            }
-        });
-        std::fs::write(&reg_path, serde_json::to_string(&reg_data).unwrap())
-            .expect("write mock registry");
+        std::fs::write(
+            instances_dir.join("testapp.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "pid": 1234,
+                "pipe": pipe,
+                "created_at": 1745200000
+            }))
+            .unwrap(),
+        )
+        .expect("write mock registry file");
 
         unsafe { std::env::set_var("LOCALAPPDATA", &dir) };
         let result = resolve_socket(None);
@@ -1664,31 +1663,29 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
+    #[serial]
     fn test_resolve_socket_windows_picks_newest_instance() {
         let dir = std::env::temp_dir().join(format!(
             "tauri-pilot-reg-newest-test-{}",
             std::process::id()
         ));
-        let tauri_dir = dir.join("tauri-pilot");
-        std::fs::create_dir_all(&tauri_dir).expect("create reg test dir");
+        let instances_dir = dir.join("tauri-pilot").join("instances");
+        std::fs::create_dir_all(&instances_dir).expect("create reg test dir");
 
-        let reg_path = tauri_dir.join("instances.json");
-        let reg_data = serde_json::json!({
-            "instances": {
-                "old_app": {
-                    "pipe": r"\\.\pipe\tauri-pilot-old",
-                    "pid": 1111,
-                    "created_at": 1000
-                },
-                "new_app": {
-                    "pipe": r"\\.\pipe\tauri-pilot-new",
-                    "pid": 2222,
-                    "created_at": 2000
-                }
-            }
+        let old_entry = serde_json::json!({
+            "pid": 1111,
+            "pipe": r"\\.\pipe\tauri-pilot-old",
+            "created_at": 1000
         });
-        std::fs::write(&reg_path, serde_json::to_string(&reg_data).unwrap())
-            .expect("write mock registry");
+        let new_entry = serde_json::json!({
+            "pid": 2222,
+            "pipe": r"\\.\pipe\tauri-pilot-new",
+            "created_at": 2000
+        });
+        std::fs::write(instances_dir.join("old_app.json"), serde_json::to_string(&old_entry).unwrap())
+            .expect("write mock old instance");
+        std::fs::write(instances_dir.join("new_app.json"), serde_json::to_string(&new_entry).unwrap())
+            .expect("write mock new instance");
 
         unsafe { std::env::set_var("LOCALAPPDATA", &dir) };
         let result = resolve_socket(None);

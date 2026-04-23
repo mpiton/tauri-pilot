@@ -373,17 +373,31 @@ fn create_user_only_security_attributes()
 // ---------------------------------------------------------------------------
 
 pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error> {
-    let (mut sa, _sec_guard) = create_user_only_security_attributes()?;
-
-    // SAFETY: `sa` and its backing buffers (owned by `_sec_guard`) are valid for
-    // the duration of this call.  The kernel copies the security descriptor, so
-    // `_sec_guard` may be dropped after the pipe is created.
-    let server = unsafe {
-        ServerOptions::new()
-            .first_pipe_instance(true)
-            .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
-            .create_with_security_attributes_raw(pipe_path, (&raw mut sa).cast::<c_void>())?
-    };
+    let server = match create_user_only_security_attributes() {
+        Ok((mut sa, _sec_guard)) => {
+            // SAFETY: `sa` and its backing buffers (owned by `_sec_guard`) are valid for
+            // the duration of this call.  The kernel copies the security descriptor, so
+            // `_sec_guard` may be dropped after the pipe is created.
+            unsafe {
+                ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
+                    .create_with_security_attributes_raw(pipe_path, (&raw mut sa).cast::<c_void>())
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                path = %pipe_path.display(),
+                error = %e,
+                "failed to create secure pipe, falling back to default security"
+            );
+            ServerOptions::new()
+                .first_pipe_instance(true)
+                .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
+                .create(pipe_path)
+        }
+    }
+    .map_err(Error::from)?;
 
     tracing::info!(path = %pipe_path.display(), "tauri-pilot named pipe listening");
 
@@ -441,12 +455,20 @@ async fn accept_loop(
     loop {
         server.connect().await?;
 
-        let (sa, _sec_guard) = create_user_only_security_attributes()?;
-        let next_server = unsafe {
-            ServerOptions::new()
-                .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
-                .create_with_security_attributes_raw(&pipe_path, (&raw mut sa).cast::<c_void>())?
-        };
+        let next_server = match create_user_only_security_attributes() {
+            Ok((mut sa, _sec_guard)) => unsafe {
+                ServerOptions::new()
+                    .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
+                    .create_with_security_attributes_raw(&pipe_path, (&raw mut sa).cast::<c_void>())
+            },
+            Err(e) => {
+                tracing::warn!("failed to create secure pipe: {e}, falling back to default security");
+                ServerOptions::new()
+                    .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
+                    .create(&pipe_path)
+            }
+        }
+        .map_err(Error::from)?;
 
         let current = server;
         server = next_server;
