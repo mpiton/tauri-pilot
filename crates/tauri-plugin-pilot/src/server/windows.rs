@@ -6,6 +6,7 @@ use crate::eval::EvalEngine;
 use crate::protocol::Response;
 use crate::recorder::Recorder;
 
+use std::alloc::{alloc_zeroed, Layout};
 use std::ffi::c_void;
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -172,11 +173,9 @@ impl Drop for RegistryGuard {
 // ---------------------------------------------------------------------------
 
 /// Owns the buffers backing a [`SECURITY_ATTRIBUTES`] and closes the token handle.
-/// Must outlive the `SECURITY_ATTRIBUTES` pointer passed to Windows APIs.
-#[allow(dead_code)]
 struct SecurityAttributesGuard {
-    sd: Vec<u8>,
-    acl: Vec<u8>,
+    sd: Box<MaybeUninit<windows::Win32::Security::SECURITY_DESCRIPTOR>>,
+    acl: Box<MaybeUninit<ACL>>,
     token: HANDLE,
 }
 
@@ -208,39 +207,54 @@ fn get_current_user_sid(
     Ok((token_user.User.Sid, token))
 }
 
-#[allow(clippy::cast_ptr_alignment)]
 fn create_security_descriptor_dacl(
     user_sid: *mut windows::Win32::Security::SID,
-) -> std::io::Result<(Vec<u8>, Vec<u8>, *mut ACL)> {
+) -> std::io::Result<(
+    Box<MaybeUninit<windows::Win32::Security::SECURITY_DESCRIPTOR>>,
+    Box<MaybeUninit<ACL>>,
+)> {
+    // Allocate ACL with proper alignment for ACL structure.
+    // SAFETY: Layout::new::<ACL>() guarantees alignment required by ACL.
+    // alloc_zeroed initializes memory to zero, which is valid for ACL.
+    let acl_layout = Layout::new::<ACL>();
     let sid_length = GetLengthSid(user_sid) as usize;
-    let acl_size = (8 + 4 + 4 + sid_length + 3) & !3;
-    let mut acl_buf = vec![0u8; acl_size];
-    let acl_ptr = acl_buf.as_mut_ptr().cast::<ACL>();
-    InitializeAcl(
-        acl_ptr,
-        acl_size.try_into().map_err(|_| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "ACL size too large")
-        })?,
-        ACL_REVISION,
-    )
-    .map_err(|e| std::io::Error::other(e.to_string()))?;
-    AddAccessAllowedAce(
-        acl_ptr,
-        ACL_REVISION,
-        (GENERIC_READ | GENERIC_WRITE).0,
-        user_sid,
-    )
-    .map_err(|e| std::io::Error::other(e.to_string()))?;
-    let mut sd_buf = vec![0u8; 40];
-    let sd_ptr = PSECURITY_DESCRIPTOR(sd_buf.as_mut_ptr().cast::<c_void>());
-    InitializeSecurityDescriptor(sd_ptr, 1)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-    SetSecurityDescriptorDacl(sd_ptr, true, Some(acl_ptr), false)
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
-    Ok((sd_buf, acl_buf, acl_ptr))
+    let acl_size = (8 + 4 + 4 + sid_length + 3) & !3; // DWORD-aligned
+    let acl_ptr = unsafe { alloc_zeroed(acl_layout) as *mut ACL };
+
+    // Initialize ACL or abort if allocation failed.
+    if acl_ptr.is_null() {
+        std::alloc::dealloc(acl_ptr as *mut u8, acl_layout);
+        return Err(std::io::Error::other("failed to allocate ACL"));
+    }
+
+    // SAFETY: acl_ptr is valid, non-null, and properly aligned for ACL.
+    // The size calculation ensures DWORD alignment (4-byte boundary).
+    unsafe {
+        InitializeAcl(acl_ptr, acl_size as u32, ACL_REVISION)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        AddAccessAllowedAce(acl_ptr, ACL_REVISION, (GENERIC_READ | GENERIC_WRITE).0, user_sid)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+    }
+
+    // Allocate security descriptor with proper alignment.
+    // SAFETY: Box::new(MaybeUninit::uninit()) provides properly aligned,
+    // uninitialized memory for SECURITY_DESCRIPTOR.
+    let sd_box = Box::new(MaybeUninit::<windows::Win32::Security::SECURITY_DESCRIPTOR>::uninit());
+    let sd_ptr = PSECURITY_DESCRIPTOR(sd_box.as_ptr() as *mut c_void);
+
+    // SAFETY: sd_ptr points to properly aligned, valid memory for SECURITY_DESCRIPTOR.
+    unsafe {
+        InitializeSecurityDescriptor(sd_ptr, 1)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        SetSecurityDescriptorDacl(sd_ptr, true, Some(acl_ptr), false)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+    }
+
+    // Wrap ACL pointer in Box for RAII cleanup.
+    let acl_box = unsafe { Box::from_raw(acl_ptr) };
+    Ok((sd_box, acl_box))
 }
 
-#[allow(clippy::cast_ptr_alignment)]
 fn create_user_only_security_attributes()
 -> std::io::Result<(SECURITY_ATTRIBUTES, SecurityAttributesGuard)> {
     unsafe {
@@ -251,20 +265,24 @@ fn create_user_only_security_attributes()
 
         // Guard created immediately so CloseHandle is called on any early return.
         let mut guard = SecurityAttributesGuard {
-            sd: Vec::new(),
-            acl: Vec::new(),
+            sd: Box::new(MaybeUninit::uninit()),
+            acl: Box::new(MaybeUninit::uninit()),
             token,
         };
 
         let (user_sid, _token) = get_current_user_sid(guard.token)?;
-        let (sd, acl, _acl_ptr) = create_security_descriptor_dacl(user_sid)?;
+        let (sd, acl) = create_security_descriptor_dacl(user_sid)?;
         guard.sd = sd;
         guard.acl = acl;
+
+        // SAFETY: sd box is valid, uninitialized memory that InitializeSecurityDescriptor
+        // will write to. PSECURITY_DESCRIPTOR is *mut SECURITY_DESCRIPTOR.
+        let sd_ptr = PSECURITY_DESCRIPTOR(guard.sd.as_ptr() as *mut c_void);
 
         let sa = SECURITY_ATTRIBUTES {
             nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
                 .expect("SECURITY_ATTRIBUTES size must fit in u32"),
-            lpSecurityDescriptor: guard.sd.as_mut_ptr().cast::<c_void>(),
+            lpSecurityDescriptor: sd_ptr.0,
             bInheritHandle: windows::Win32::Foundation::BOOL(0),
         };
 
@@ -343,9 +361,12 @@ async fn accept_loop(
     loop {
         server.connect().await?;
 
-        let next_server = ServerOptions::new()
-            .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
-            .create(&pipe_path)?;
+        let (sa, _sec_guard) = create_user_only_security_attributes()?;
+        let next_server = unsafe {
+            ServerOptions::new()
+                .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
+                .create_with_security_attributes_raw(&pipe_path, (&raw mut sa).cast::<c_void>())?
+        };
 
         let current = server;
         server = next_server;
