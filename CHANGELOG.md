@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `tauri-plugin-pilot` `init()` doc comment clarifies the no-op fallback now excludes Windows too and mentions the Named Pipe server path ([#64])
+- Bumped `indicatif` from `0.17` to `0.18` (brings the transitive `console` update to `0.16`; only `ProgressBar::new_spinner()` is used — API stable)
+- Bumped docs dependencies: `astro` `6.1.3` → `6.1.9`, `@astrojs/starlight` `0.38.2` → `0.38.4`, transitively `vite` `7.3.1` → `7.3.2`
+- Refreshed `Cargo.lock` patch-level updates: `libc` `0.2.184` → `0.2.186`, `clap` / `clap_derive` `4.6.0` → `4.6.1`, `assert_cmd` `2.2.0` → `2.2.1`
+
+### Security
+
+- Resolved Dependabot alerts #1–#4 (all in `docs/`):
+  - `astro` XSS via `define:vars` incomplete `</script>` sanitization ([GHSA-j687-52p2-xcff](https://github.com/advisories/GHSA-j687-52p2-xcff), CVE-2026-41067) — patched upstream in `astro@6.1.6`; included via bump to `astro@6.1.9`
+  - `vite` path traversal in optimized deps `.map` handling ([GHSA-4w7w-66w2-5vf9](https://github.com/advisories/GHSA-4w7w-66w2-5vf9), CVE-2026-39365)
+  - `vite` `server.fs.deny` bypass via query parameters ([GHSA-v2wj-q39q-566r](https://github.com/advisories/GHSA-v2wj-q39q-566r), CVE-2026-39364)
+  - `vite` arbitrary file read via dev-server WebSocket ([GHSA-p9ff-h696-f583](https://github.com/advisories/GHSA-p9ff-h696-f583), CVE-2026-39363)
+  - All three `vite` CVEs fixed transitively via `astro@6.1.9` → `vite@7.3.2`
 
 ### Removed
 
