@@ -16,10 +16,6 @@ Thumbs.db
 
 # AI Agents
 .claude/
-.sisyphus/
-.agents/
-skills-lock.json
-CLAUDE.md
 
 # Node (for bridge build step)
 node_modules/
