@@ -1335,7 +1335,7 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
 
     #[cfg(windows)]
     {
-        return resolve_socket_windows();
+        resolve_socket_windows()
     }
 }
 
@@ -1352,7 +1352,7 @@ fn resolve_socket_windows() -> Result<PathBuf> {
             Ok(h) => {
                 let alive = unsafe {
                     let mut exit_code: u32 = 0;
-                    GetExitCodeProcess(h, &mut exit_code).is_ok()
+                    GetExitCodeProcess(h, &raw mut exit_code).is_ok()
                         && exit_code == STILL_ACTIVE.0 as u32
                 };
                 unsafe {
