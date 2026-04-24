@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Windows support** — named pipe server and client for Windows, with security hardening (DACL, SID validation), registry-based instance discovery, and platform-specific tests ([#64])
 
+### Fixed
+
+- **Windows security hardening** — fixed heap overflow in ACL allocation, use-after-free on the SID buffer, a no-op peer-SID check (`OpenProcessToken` on the impersonated thread replaced with `OpenThreadToken`), UB on the alloc-failure path, silent fallback to a broader default DACL, and a permanently-aborting accept loop. Also switched `instances_dir` creation to `std::fs::create_dir_all` for correctness on clean profiles, and added a regression test asserting the bound pipe carries a user-only DACL with one ACE ([#64])
+
 ## [0.4.0] - 2026-04-17
 
 ### Added
