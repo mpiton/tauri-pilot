@@ -1560,10 +1560,13 @@ fn enum_prop(description: &str, values: &[&str]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::protocol::{Request, Response};
+    #[cfg(unix)]
     use serial_test::serial;
     #[cfg(unix)]
     use tokio::net::UnixListener;
+    #[cfg(unix)]
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
         task::JoinHandle,
@@ -1769,6 +1772,7 @@ mod tests {
         let _ = std::fs::remove_file(&socket);
     }
 
+    #[cfg(unix)]
     async fn call_click(pilot: &PilotMcpServer) -> CallToolResult {
         let mut args = Map::new();
         args.insert("target".to_owned(), json!("@e3"));
@@ -1778,6 +1782,7 @@ mod tests {
             .expect("tool call succeeds")
     }
 
+    #[cfg(unix)]
     fn tool_result_source(result: &CallToolResult) -> Option<&str> {
         result
             .structured_content

@@ -71,12 +71,13 @@ impl Recorder {
             return;
         }
 
-        #[allow(clippy::cast_possible_truncation)]
-        let timestamp = s
-            .start_time
-            .expect("start_time must be set when active")
-            .elapsed()
-            .as_millis() as u64;
+        let timestamp = u64::try_from(
+            s.start_time
+                .expect("start_time must be set when active")
+                .elapsed()
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX);
 
         let mut map = params
             .and_then(|v| v.as_object().cloned())
@@ -102,8 +103,9 @@ impl Recorder {
     /// Return a JSON status snapshot: active flag, entry count, elapsed ms.
     pub fn status(&self) -> Value {
         let s = self.state.lock().expect("recorder lock poisoned");
-        #[allow(clippy::cast_possible_truncation)]
-        let elapsed_ms: u64 = s.start_time.map_or(0, |t| t.elapsed().as_millis() as u64);
+        let elapsed_ms: u64 = s
+            .start_time
+            .map_or(0, |t| u64::try_from(t.elapsed().as_millis()).unwrap_or(u64::MAX));
         serde_json::json!({
             "active": s.active,
             "count": s.entries.len(),
@@ -159,7 +161,7 @@ mod tests {
         rec.record("click", Some(&json!({"ref": "e1"})));
         let entries = rec.stop();
         assert_eq!(entries[0].action, "click");
-        assert_eq!(entries[0].params.get("ref").unwrap(), "e1");
+        assert_eq!(entries[0].params.get("ref").expect("ref recorded"), "e1");
     }
 
     #[test]
@@ -183,7 +185,7 @@ mod tests {
         let entries = rec.stop();
         assert_eq!(entries.len(), 1);
         assert!(!entries[0].params.contains_key("window"));
-        assert_eq!(entries[0].params.get("value").unwrap(), "hello");
+        assert_eq!(entries[0].params.get("value").expect("value recorded"), "hello");
     }
 
     #[test]

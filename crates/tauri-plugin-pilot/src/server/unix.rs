@@ -2,17 +2,12 @@ use super::{EvalFn, FocusFn, ListWindowsFn, handle_connection};
 
 use crate::error::Error;
 use crate::eval::EvalEngine;
-#[allow(unused_imports)]
-use crate::protocol::Response;
 use crate::recorder::Recorder;
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
-#[allow(unused_imports)]
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-#[allow(unused_imports)]
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 
 /// RAII guard that removes the socket file on drop (normal shutdown or panic).
 /// Stores the inode at bind time so it only unlinks its own socket, not one
@@ -236,9 +231,12 @@ async fn accept_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use crate::protocol::Response;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
 
     static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -250,11 +248,11 @@ mod tests {
         ))
     }
 
-    async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
+    async fn start_test_server(path: &Path) -> tokio::task::JoinHandle<()> {
         let (listener, guard) = bind(path).expect("bind test socket");
         let engine = EvalEngine::new();
         let handle = tokio::spawn(async move {
-            run(listener, guard, engine, None, None, None, Recorder::new()).await
+            run(listener, guard, engine, None, None, None, Recorder::new()).await;
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
@@ -265,19 +263,19 @@ mod tests {
         let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
-        let stream = UnixStream::connect(&socket).await.unwrap();
+        let stream = UnixStream::connect(&socket).await.expect("connect test socket");
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
         writer
             .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n")
             .await
-            .unwrap();
-        writer.flush().await.unwrap();
+            .expect("write ping request");
+        writer.flush().await.expect("flush");
 
         let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        let resp: Response = serde_json::from_str(&line).unwrap();
+        reader.read_line(&mut line).await.expect("read response");
+        let resp: Response = serde_json::from_str(&line).expect("parse response");
 
         assert_eq!(resp.id, serde_json::json!(1));
         assert!(resp.error.is_none());
@@ -292,19 +290,19 @@ mod tests {
         let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
-        let stream = UnixStream::connect(&socket).await.unwrap();
+        let stream = UnixStream::connect(&socket).await.expect("connect test socket");
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
-        writer.write_all(b"not json\n").await.unwrap();
-        writer.flush().await.unwrap();
+        writer.write_all(b"not json\n").await.expect("write invalid request");
+        writer.flush().await.expect("flush");
 
         let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        let resp: Response = serde_json::from_str(&line).unwrap();
+        reader.read_line(&mut line).await.expect("read response");
+        let resp: Response = serde_json::from_str(&line).expect("parse response");
 
         assert_eq!(resp.id, serde_json::Value::Null);
-        let err = resp.error.unwrap();
+        let err = resp.error.expect("error payload present");
         assert_eq!(err.code, -32700);
 
         handle.abort();
@@ -316,18 +314,18 @@ mod tests {
         let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
-        let stream = UnixStream::connect(&socket).await.unwrap();
+        let stream = UnixStream::connect(&socket).await.expect("connect test socket");
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
         for i in 1..=3 {
             let req = format!("{{\"jsonrpc\":\"2.0\",\"id\":{i},\"method\":\"test\"}}\n");
-            writer.write_all(req.as_bytes()).await.unwrap();
-            writer.flush().await.unwrap();
+            writer.write_all(req.as_bytes()).await.expect("write request");
+            writer.flush().await.expect("flush");
 
             let mut line = String::new();
-            reader.read_line(&mut line).await.unwrap();
-            let resp: Response = serde_json::from_str(&line).unwrap();
+            reader.read_line(&mut line).await.expect("read response");
+            let resp: Response = serde_json::from_str(&line).expect("parse response");
             assert_eq!(resp.id, serde_json::json!(i));
         }
 
@@ -341,7 +339,8 @@ mod tests {
         // Create a private temp dir (0o700) to simulate a valid XDG_RUNTIME_DIR.
         let dir = std::env::temp_dir().join(format!("tauri-pilot-xdg-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .expect("set dir permissions");
         let result = socket_dir_from(Some(dir.as_os_str().to_owned()));
         let _ = std::fs::remove_dir(&dir);
         assert_eq!(result, dir);

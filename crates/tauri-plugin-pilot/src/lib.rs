@@ -1,6 +1,6 @@
 pub mod diff;
 mod error;
-#[allow(dead_code)]
+#[cfg(any(unix, windows))]
 pub(crate) mod eval;
 mod handler;
 #[cfg(feature = "press")]

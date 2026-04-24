@@ -1117,8 +1117,7 @@ fn export_shell_script(entries: &[Value]) -> String {
 
         let delta = timestamp.saturating_sub(prev_ts);
         if delta > 0 && i > 0 {
-            #[allow(clippy::cast_precision_loss)]
-            let secs = delta as f64 / 1000.0;
+            let secs = std::time::Duration::from_millis(delta).as_secs_f64();
             let _ = writeln!(script, "sleep {secs:.1}");
         }
         prev_ts = timestamp;
@@ -1231,10 +1230,9 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
         "drag" => {
             let src = resolve_export_target(entry.get("source"));
             let dst = resolve_export_target(entry.get("target"));
-            #[allow(clippy::cast_possible_truncation)]
             let offset = entry.get("offset").and_then(|o| {
-                let x = o.get("x").and_then(serde_json::Value::as_f64)? as i64;
-                let y = o.get("y").and_then(serde_json::Value::as_f64)? as i64;
+                let x = o.get("x").and_then(serde_json::Value::as_i64)?;
+                let y = o.get("y").and_then(serde_json::Value::as_i64)?;
                 Some(format!("{x},{y}"))
             });
             match (src, dst, offset) {
@@ -1646,9 +1644,9 @@ mod tests {
             serde_json::to_string_pretty(&serde_json::json!({
                 "pid": std::process::id(),
                 "pipe": pipe,
-                "created_at": 1745200000u64
+                "created_at": 1_745_200_000_u64
             }))
-            .unwrap(),
+            .expect("serialize mock entry"),
         )
         .expect("write mock registry file");
 
@@ -1696,12 +1694,12 @@ mod tests {
         });
         std::fs::write(
             instances_dir.join("old_app.json"),
-            serde_json::to_string(&old_entry).unwrap(),
+            serde_json::to_string(&old_entry).expect("serialize old entry"),
         )
         .expect("write mock old instance");
         std::fs::write(
             instances_dir.join("new_app.json"),
-            serde_json::to_string(&new_entry).unwrap(),
+            serde_json::to_string(&new_entry).expect("serialize new entry"),
         )
         .expect("write mock new instance");
 
@@ -1718,25 +1716,25 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::unwrap_used)]
     fn test_read_script_valid() {
         let mut reader = std::io::Cursor::new(b"document.title");
-        assert_eq!(read_script(&mut reader).unwrap(), "document.title");
+        assert_eq!(
+            read_script(&mut reader).expect("read_script succeeds"),
+            "document.title"
+        );
     }
 
     #[test]
-    #[allow(clippy::unwrap_used)]
     fn test_read_script_empty_errors() {
         let mut reader = std::io::Cursor::new(b"");
-        let err = read_script(&mut reader).unwrap_err();
+        let err = read_script(&mut reader).expect_err("empty input rejected");
         assert!(err.to_string().contains("empty or blank"), "got: {err}");
     }
 
     #[test]
-    #[allow(clippy::unwrap_used)]
     fn test_read_script_blank_errors() {
         let mut reader = std::io::Cursor::new(b"   \n  ");
-        let err = read_script(&mut reader).unwrap_err();
+        let err = read_script(&mut reader).expect_err("blank input rejected");
         assert!(err.to_string().contains("empty or blank"), "got: {err}");
     }
 }

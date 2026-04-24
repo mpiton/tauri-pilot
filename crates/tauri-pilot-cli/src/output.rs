@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -737,8 +738,8 @@ pub(crate) fn format_record(value: &serde_json::Value) -> String {
                 .get("elapsed_ms")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
-            #[allow(clippy::cast_precision_loss)]
-            let secs = elapsed_ms as f64 / 1000.0;
+            // Precision below ~285 million years of ms is exact in f64; safe for display.
+            let secs = Duration::from_millis(elapsed_ms).as_secs_f64();
             return format!(
                 "{} Recording: {count} actions ({secs:.1}s)",
                 crate::style::info("\u{25cf}")
@@ -818,9 +819,8 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    #[allow(clippy::unwrap_used)]
     fn test_format_json_does_not_panic() {
-        format_json(&json!({"status": "ok"})).unwrap();
+        format_json(&json!({"status": "ok"})).expect("format_json succeeds");
     }
 
     #[test]

@@ -64,9 +64,12 @@ pub(crate) async fn dispatch(
     engine: &EvalEngine,
     eval_fn: Option<&EvalFn>,
     list_fn: Option<&ListWindowsFn>,
-    #[cfg_attr(not(feature = "press"), allow(unused_variables))] focus_fn: Option<&FocusFn>,
+    focus_fn: Option<&FocusFn>,
     recorder: &Recorder,
 ) -> Result<serde_json::Value, RpcError> {
+    #[cfg(not(feature = "press"))]
+    let _ = focus_fn;
+
     // Save original params before window extraction so the recorder can strip
     // "window" internally.
     let original_params = params.cloned();
@@ -495,8 +498,17 @@ pub(crate) fn handle_callback(
 }
 
 /// Tauri IPC command for the `__callback` handler.
+///
+/// `#[tauri::command]` binds `State<'_, T>` by value — the generated wrapper
+/// is the true consumer, so clippy's view of the body is incomplete. Cannot
+/// be rewritten as `&State` (tauri command macro rejects it). Documented
+/// here rather than suppressed; this is the only call site that cannot
+/// satisfy `needless_pass_by_value`.
 #[tauri::command]
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "tauri::command contract — macro wrapper is the real consumer"
+)]
 pub(crate) fn __callback(
     eval_engine: tauri::State<'_, EvalEngine>,
     id: u64,
@@ -515,7 +527,7 @@ mod tests {
     async fn test_dispatch_ping_returns_ok() {
         let engine = EvalEngine::new();
         let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new()).await;
-        assert_eq!(result.unwrap(), json!({"status": "ok"}));
+        assert_eq!(result.expect("dispatch succeeds"), json!({"status": "ok"}));
     }
 
     #[cfg(feature = "press")]
@@ -534,7 +546,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("invalid press combo"));
     }
@@ -556,7 +568,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("focus"));
     }
@@ -566,7 +578,7 @@ mod tests {
     async fn test_dispatch_press_with_missing_key_returns_invalid_params() {
         let engine = EvalEngine::new();
         let result = dispatch("press", None, &engine, None, None, None, &Recorder::new()).await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
     }
 
@@ -583,7 +595,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32601);
     }
 
@@ -600,7 +612,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -609,7 +621,7 @@ mod tests {
     async fn test_dispatch_diff_without_eval_fn() {
         let engine = EvalEngine::new();
         let result = dispatch("diff", None, &engine, None, None, None, &Recorder::new()).await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -638,7 +650,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("No previous snapshot"));
     }
@@ -646,14 +658,14 @@ mod tests {
     #[test]
     fn test_build_bridge_call_snapshot() {
         let params = json!({"interactive": true, "selector": null, "depth": 3});
-        let script = build_bridge_call("snapshot", Some(&params)).unwrap();
+        let script = build_bridge_call("snapshot", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.snapshot("));
         assert!(script.contains("\"interactive\":true"));
     }
 
     #[test]
     fn test_build_bridge_call_no_params() {
-        let script = build_bridge_call("snapshot", None).unwrap();
+        let script = build_bridge_call("snapshot", None).expect("build_bridge_call");
         assert_eq!(script, "window.__PILOT__.snapshot({})");
     }
 
@@ -661,7 +673,7 @@ mod tests {
     fn test_build_bridge_call_ipc_missing_command() {
         let result = build_bridge_call("ipc", None);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("command"));
+        assert!(result.expect_err("ipc rejects missing command").contains("command"));
     }
 
     #[tokio::test]
@@ -669,7 +681,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         handle_callback(&engine, id, Some(r#"{"title":"hello"}"#.to_owned()), None);
-        let val = rx.await.unwrap().unwrap();
+        let val = rx.await.expect("channel not dropped").expect("eval ok");
         assert_eq!(val, json!({"title": "hello"}));
     }
 
@@ -681,7 +693,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         handle_callback(&engine, id, Some("null".to_owned()), None);
-        let val = rx.await.unwrap().unwrap();
+        let val = rx.await.expect("channel not dropped").expect("eval ok");
         assert_eq!(val, serde_json::Value::Null);
     }
 
@@ -690,7 +702,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         handle_callback(&engine, id, None, Some("TypeError: x".to_owned()));
-        let result = rx.await.unwrap();
+        let result = rx.await.expect("channel not dropped");
         assert_eq!(result, Err("TypeError: x".to_owned()));
     }
 
@@ -707,7 +719,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -725,7 +737,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -733,14 +745,14 @@ mod tests {
     #[test]
     fn test_build_bridge_call_console_logs() {
         let params = json!({"level": "error", "last": 10});
-        let script = build_bridge_call("consoleLogs", Some(&params)).unwrap();
+        let script = build_bridge_call("consoleLogs", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.consoleLogs("));
         assert!(script.contains("\"level\":\"error\""));
     }
 
     #[test]
     fn test_build_bridge_call_clear_logs() {
-        let script = build_bridge_call("clearLogs", None).unwrap();
+        let script = build_bridge_call("clearLogs", None).expect("build_bridge_call");
         assert_eq!(script, "window.__PILOT__.clearLogs({})");
     }
 
@@ -757,7 +769,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -775,7 +787,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -783,21 +795,21 @@ mod tests {
     #[test]
     fn test_build_bridge_call_network_requests() {
         let params = json!({"filter": "/api", "failedOnly": true, "last": 10});
-        let script = build_bridge_call("networkRequests", Some(&params)).unwrap();
+        let script = build_bridge_call("networkRequests", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.networkRequests("));
         assert!(script.contains("\"filter\":\"/api\""));
     }
 
     #[test]
     fn test_build_bridge_call_clear_network() {
-        let script = build_bridge_call("clearNetwork", None).unwrap();
+        let script = build_bridge_call("clearNetwork", None).expect("build_bridge_call");
         assert_eq!(script, "window.__PILOT__.clearNetwork({})");
     }
 
     #[test]
     fn test_build_bridge_call_visible() {
         let params = json!({"ref": "el-1"});
-        let script = build_bridge_call("visible", Some(&params)).unwrap();
+        let script = build_bridge_call("visible", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.visible("));
         assert!(script.contains("\"ref\":\"el-1\""));
     }
@@ -805,7 +817,7 @@ mod tests {
     #[test]
     fn test_build_bridge_call_count() {
         let params = json!({"selector": ".item"});
-        let script = build_bridge_call("count", Some(&params)).unwrap();
+        let script = build_bridge_call("count", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.count("));
         assert!(script.contains("\"selector\":\".item\""));
     }
@@ -813,7 +825,7 @@ mod tests {
     #[test]
     fn test_build_bridge_call_checked() {
         let params = json!({"ref": "el-2"});
-        let script = build_bridge_call("checked", Some(&params)).unwrap();
+        let script = build_bridge_call("checked", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.checked("));
         assert!(script.contains("\"ref\":\"el-2\""));
     }
@@ -822,7 +834,7 @@ mod tests {
     async fn test_dispatch_watch_without_eval_fn() {
         let engine = EvalEngine::new();
         let result = dispatch("watch", None, &engine, None, None, None, &Recorder::new()).await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -830,7 +842,7 @@ mod tests {
     #[test]
     fn test_build_bridge_call_watch() {
         let params = json!({"timeout": 5000, "selector": ".results", "stable": 500});
-        let script = build_bridge_call("watch", Some(&params)).unwrap();
+        let script = build_bridge_call("watch", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.watch("));
         assert!(script.contains("\"timeout\":5000"));
     }
@@ -839,7 +851,7 @@ mod tests {
     async fn test_dispatch_drag_routes_to_eval() {
         let engine = EvalEngine::new();
         let result = dispatch("drag", None, &engine, None, None, None, &Recorder::new()).await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_ne!(err.code, -32601);
     }
 
@@ -847,21 +859,21 @@ mod tests {
     async fn test_dispatch_drop_routes_to_eval() {
         let engine = EvalEngine::new();
         let result = dispatch("drop", None, &engine, None, None, None, &Recorder::new()).await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_ne!(err.code, -32601);
     }
 
     #[test]
     fn test_build_bridge_call_drag() {
         let params = json!({"source": {"ref": "e5"}, "target": {"ref": "e6"}});
-        let script = build_bridge_call("drag", Some(&params)).unwrap();
+        let script = build_bridge_call("drag", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.drag("));
     }
 
     #[test]
     fn test_build_bridge_call_drop() {
         let params = json!({"ref": "e3", "files": []});
-        let script = build_bridge_call("drop", Some(&params)).unwrap();
+        let script = build_bridge_call("drop", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.drop("));
     }
 
@@ -878,7 +890,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -896,7 +908,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -914,7 +926,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -932,7 +944,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -940,7 +952,7 @@ mod tests {
     #[test]
     fn test_build_bridge_call_storage_get() {
         let params = json!({"key": "auth_token", "session": false});
-        let script = build_bridge_call("storageGet", Some(&params)).unwrap();
+        let script = build_bridge_call("storageGet", Some(&params)).expect("build_bridge_call");
         assert_eq!(
             script,
             r#"window.__PILOT__.storageGet({"key":"auth_token","session":false})"#
@@ -950,7 +962,7 @@ mod tests {
     #[test]
     fn test_build_bridge_call_storage_set() {
         let params = json!({"key": "theme", "value": "dark", "session": false});
-        let script = build_bridge_call("storageSet", Some(&params)).unwrap();
+        let script = build_bridge_call("storageSet", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.storageSet("));
         assert!(script.contains("\"key\":\"theme\""));
         assert!(script.contains("\"value\":\"dark\""));
@@ -960,7 +972,7 @@ mod tests {
     #[test]
     fn test_build_bridge_call_storage_list() {
         let params = json!({"session": true});
-        let script = build_bridge_call("storageList", Some(&params)).unwrap();
+        let script = build_bridge_call("storageList", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.storageList("));
         assert!(script.contains("\"session\":true"));
     }
@@ -968,21 +980,21 @@ mod tests {
     #[test]
     fn test_build_bridge_call_storage_clear() {
         let params = json!({"session": false});
-        let script = build_bridge_call("storageClear", Some(&params)).unwrap();
+        let script = build_bridge_call("storageClear", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.storageClear("));
         assert!(script.contains("\"session\":false"));
     }
 
     #[test]
     fn test_build_bridge_call_form_dump() {
-        let script = build_bridge_call("formDump", None).unwrap();
+        let script = build_bridge_call("formDump", None).expect("build_bridge_call");
         assert_eq!(script, "window.__PILOT__.formDump({})");
     }
 
     #[test]
     fn test_build_bridge_call_form_dump_with_selector() {
         let params = json!({"selector": "#login-form"});
-        let script = build_bridge_call("formDump", Some(&params)).unwrap();
+        let script = build_bridge_call("formDump", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.formDump("));
         assert!(script.contains("\"selector\":\"#login-form\""));
     }
@@ -1000,7 +1012,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
     }
@@ -1018,7 +1030,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let err = result.unwrap_err();
+        let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No window manager"));
     }
@@ -1039,10 +1051,17 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let val = result.unwrap();
-        let windows = val.get("windows").unwrap().as_array().unwrap();
+        let val = result.expect("dispatch succeeds");
+        let windows = val
+            .get("windows")
+            .expect("windows key present")
+            .as_array()
+            .expect("windows is array");
         assert_eq!(windows.len(), 1);
-        assert_eq!(windows[0].get("label").unwrap(), "main");
+        assert_eq!(
+            windows[0].get("label").expect("label key present"),
+            "main"
+        );
     }
 
     #[tokio::test]
@@ -1056,7 +1075,7 @@ mod tests {
         let engine_clone = engine.clone();
         let eval_fn: crate::server::EvalFn =
             std::sync::Arc::new(move |_w: Option<&str>, script: String| {
-                *captured_clone.lock().unwrap() = script;
+                *captured_clone.lock().expect("captured mutex") = script;
                 // Resolve the callback immediately to avoid blocking for the default 10s timeout.
                 // ID 1 is the first registered callback on a fresh EvalEngine.
                 engine_clone.resolve(1, Ok(serde_json::json!({"ok": true})));
@@ -1073,7 +1092,7 @@ mod tests {
             &Recorder::new(),
         )
         .await;
-        let script = captured.lock().unwrap().clone();
+        let script = captured.lock().expect("captured mutex").clone();
         // "window" param must not appear in the JS call args
         assert!(!script.contains("\"window\""));
         assert!(script.contains("\"ref\""));
@@ -1085,7 +1104,7 @@ mod tests {
         let recorder = Recorder::new();
         let result = dispatch("record.start", None, &engine, None, None, None, &recorder)
             .await
-            .unwrap();
+            .expect("dispatch succeeds");
         assert_eq!(result["status"], "recording");
         assert!(recorder.is_active());
     }
@@ -1098,7 +1117,7 @@ mod tests {
         recorder.record("click", Some(&json!({"ref": "e1"})));
         let result = dispatch("record.stop", None, &engine, None, None, None, &recorder)
             .await
-            .unwrap();
+            .expect("dispatch succeeds");
         assert_eq!(result["count"], 1);
         assert!(result["entries"].as_array().is_some());
         assert!(!recorder.is_active());
@@ -1111,7 +1130,7 @@ mod tests {
         recorder.start();
         let result = dispatch("record.status", None, &engine, None, None, None, &recorder)
             .await
-            .unwrap();
+            .expect("dispatch succeeds");
         assert_eq!(result["active"], true);
         assert_eq!(result["count"], 0);
     }
@@ -1132,7 +1151,7 @@ mod tests {
             &recorder,
         )
         .await
-        .unwrap();
+        .expect("dispatch succeeds");
         assert_eq!(result["status"], "ok");
         let entries = recorder.stop();
         assert_eq!(entries.len(), 1);

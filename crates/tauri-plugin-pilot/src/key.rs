@@ -251,58 +251,58 @@ pub fn simulate_press(combo: &str) -> Result<(), KeyError> {
 mod tests {
     use super::*;
 
-    fn key_eq(a: &Key, b: &Key) -> bool {
+    fn key_eq(a: Key, b: Key) -> bool {
         // Key doesn't impl PartialEq for all variants in older versions; format!-compare.
         format!("{a:?}") == format!("{b:?}")
     }
 
     #[test]
     fn test_parse_single_char_returns_unicode() {
-        let combo = parse_combo("a").unwrap();
+        let combo = parse_combo("a").expect("parse_combo succeeds");
         assert!(combo.modifiers.is_empty());
-        assert!(key_eq(&combo.key, &Key::Unicode('a')));
+        assert!(key_eq(combo.key, Key::Unicode('a')));
     }
 
     #[test]
     fn test_parse_ctrl_plus_one() {
-        let combo = parse_combo("Control+1").unwrap();
+        let combo = parse_combo("Control+1").expect("parse_combo succeeds");
         assert_eq!(combo.modifiers.len(), 1);
-        assert!(key_eq(&combo.modifiers[0], &Key::Control));
-        assert!(key_eq(&combo.key, &Key::Unicode('1')));
+        assert!(key_eq(combo.modifiers[0], Key::Control));
+        assert!(key_eq(combo.key, Key::Unicode('1')));
     }
 
     #[test]
     fn test_parse_ctrl_shift_p() {
-        let combo = parse_combo("Ctrl+Shift+P").unwrap();
+        let combo = parse_combo("Ctrl+Shift+P").expect("parse_combo succeeds");
         assert_eq!(combo.modifiers.len(), 2);
-        assert!(key_eq(&combo.modifiers[0], &Key::Control));
-        assert!(key_eq(&combo.modifiers[1], &Key::Shift));
-        assert!(key_eq(&combo.key, &Key::Unicode('P')));
+        assert!(key_eq(combo.modifiers[0], Key::Control));
+        assert!(key_eq(combo.modifiers[1], Key::Shift));
+        assert!(key_eq(combo.key, Key::Unicode('P')));
     }
 
     #[test]
     fn test_parse_named_key_enter() {
-        let combo = parse_combo("Enter").unwrap();
-        assert!(key_eq(&combo.key, &Key::Return));
+        let combo = parse_combo("Enter").expect("parse_combo succeeds");
+        assert!(key_eq(combo.key, Key::Return));
     }
 
     #[test]
     fn test_parse_function_key_f5() {
-        let combo = parse_combo("F5").unwrap();
-        assert!(key_eq(&combo.key, &Key::F5));
+        let combo = parse_combo("F5").expect("parse_combo succeeds");
+        assert!(key_eq(combo.key, Key::F5));
     }
 
     #[test]
     fn test_parse_arrow_key() {
-        let combo = parse_combo("ArrowUp").unwrap();
-        assert!(key_eq(&combo.key, &Key::UpArrow));
+        let combo = parse_combo("ArrowUp").expect("parse_combo succeeds");
+        assert!(key_eq(combo.key, Key::UpArrow));
     }
 
     #[test]
     fn test_parse_meta_aliases_resolve_to_meta() {
         for alias in ["Meta+a", "Cmd+a", "Super+a", "Win+a", "Command+a"] {
-            let combo = parse_combo(alias).unwrap();
-            assert!(key_eq(&combo.modifiers[0], &Key::Meta), "alias: {alias}");
+            let combo = parse_combo(alias).expect("parse_combo succeeds");
+            assert!(key_eq(combo.modifiers[0], Key::Meta), "alias: {alias}");
         }
     }
 
@@ -310,31 +310,31 @@ mod tests {
     fn test_parse_dash_is_treated_as_minus_key() {
         // `-` is no longer a separator (review #45 finding 3): "Shift+-" must
         // parse as Shift + the literal `-` key, not as nonsense.
-        let combo = parse_combo("Shift+-").unwrap();
+        let combo = parse_combo("Shift+-").expect("parse_combo succeeds");
         assert_eq!(combo.modifiers.len(), 1);
-        assert!(key_eq(&combo.modifiers[0], &Key::Shift));
-        assert!(key_eq(&combo.key, &Key::Unicode('-')));
+        assert!(key_eq(combo.modifiers[0], Key::Shift));
+        assert!(key_eq(combo.key, Key::Unicode('-')));
     }
 
     #[test]
     fn test_parse_plus_alone_is_plus_key() {
-        let combo = parse_combo("+").unwrap();
+        let combo = parse_combo("+").expect("parse_combo succeeds");
         assert!(combo.modifiers.is_empty());
-        assert!(key_eq(&combo.key, &Key::Unicode('+')));
+        assert!(key_eq(combo.key, Key::Unicode('+')));
     }
 
     #[test]
     fn test_parse_trailing_plus_is_plus_key_with_modifiers() {
-        let combo = parse_combo("Control++").unwrap();
+        let combo = parse_combo("Control++").expect("parse_combo succeeds");
         assert_eq!(combo.modifiers.len(), 1);
-        assert!(key_eq(&combo.modifiers[0], &Key::Control));
-        assert!(key_eq(&combo.key, &Key::Unicode('+')));
+        assert!(key_eq(combo.modifiers[0], Key::Control));
+        assert!(key_eq(combo.key, Key::Unicode('+')));
     }
 
     #[test]
     fn test_parse_case_insensitive_modifiers() {
-        let combo = parse_combo("CONTROL+a").unwrap();
-        assert!(key_eq(&combo.modifiers[0], &Key::Control));
+        let combo = parse_combo("CONTROL+a").expect("parse_combo succeeds");
+        assert!(key_eq(combo.modifiers[0], Key::Control));
     }
 
     #[test]

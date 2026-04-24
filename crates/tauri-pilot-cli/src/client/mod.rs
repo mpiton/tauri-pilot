@@ -82,7 +82,6 @@ pub mod unix;
 pub mod windows;
 
 #[cfg(all(test, unix))]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
@@ -108,14 +107,14 @@ mod tests {
 
     fn mock_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let _ = std::fs::remove_file(path);
-        let listener = UnixListener::bind(path).unwrap();
+        let listener = UnixListener::bind(path).expect("bind mock socket");
         tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = listener.accept().await.expect("accept");
             let (reader, mut writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
-            while reader.read_line(&mut line).await.unwrap() > 0 {
-                let req: Request = serde_json::from_str(line.trim()).unwrap();
+            while reader.read_line(&mut line).await.expect("read line") > 0 {
+                let req: Request = serde_json::from_str(line.trim()).expect("parse request");
                 let resp = if req.method == "ping" {
                     Response::success(req.id, serde_json::json!({"status": "ok"}))
                 } else {
@@ -125,10 +124,10 @@ mod tests {
                         "Method not found",
                     )
                 };
-                let mut bytes = serde_json::to_vec(&resp).unwrap();
+                let mut bytes = serde_json::to_vec(&resp).expect("serialize response");
                 bytes.push(b'\n');
-                writer.write_all(&bytes).await.unwrap();
-                writer.flush().await.unwrap();
+                writer.write_all(&bytes).await.expect("write bytes");
+                writer.flush().await.expect("flush");
                 line.clear();
             }
         })
@@ -153,7 +152,7 @@ mod tests {
         let handle = mock_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
-        let result = client.call("ping", None).await.unwrap();
+        let result = client.call("ping", None).await.expect("ping call");
         assert_eq!(result, serde_json::json!({"status": "ok"}));
 
         handle.abort();
@@ -168,23 +167,23 @@ mod tests {
         // `element.click()`, void functions). Regression test for #48.
         let socket = unique_socket_path("t05c");
         let _ = std::fs::remove_file(&socket);
-        let listener = UnixListener::bind(&socket).unwrap();
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
         let handle = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = listener.accept().await.expect("accept");
             let (reader, mut writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
-            reader.read_line(&mut line).await.unwrap();
-            let req: Request = serde_json::from_str(line.trim()).unwrap();
+            reader.read_line(&mut line).await.expect("read line");
+            let req: Request = serde_json::from_str(line.trim()).expect("parse request");
             // Write `{"result": null}` explicitly to simulate a void JS expr.
             let raw = format!(r#"{{"jsonrpc":"2.0","id":{},"result":null}}"#, req.id);
-            writer.write_all(raw.as_bytes()).await.unwrap();
-            writer.write_all(b"\n").await.unwrap();
-            writer.flush().await.unwrap();
+            writer.write_all(raw.as_bytes()).await.expect("write raw");
+            writer.write_all(b"\n").await.expect("write newline");
+            writer.flush().await.expect("flush");
         });
 
         let mut client = connect_with_retry(&socket).await;
-        let result = client.call("eval", None).await.unwrap();
+        let result = client.call("eval", None).await.expect("eval call");
         assert_eq!(result, serde_json::Value::Null);
 
         handle.abort();
@@ -201,23 +200,23 @@ mod tests {
         // `unwrap_or`.
         let socket = unique_socket_path("t05d");
         let _ = std::fs::remove_file(&socket);
-        let listener = UnixListener::bind(&socket).unwrap();
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
         let handle = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = listener.accept().await.expect("accept");
             let (reader, mut writer) = stream.into_split();
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
-            reader.read_line(&mut line).await.unwrap();
-            let req: Request = serde_json::from_str(line.trim()).unwrap();
+            reader.read_line(&mut line).await.expect("read line");
+            let req: Request = serde_json::from_str(line.trim()).expect("parse request");
             // Neither `result` nor `error` present
             let raw = format!(r#"{{"jsonrpc":"2.0","id":{}}}"#, req.id);
-            writer.write_all(raw.as_bytes()).await.unwrap();
-            writer.write_all(b"\n").await.unwrap();
-            writer.flush().await.unwrap();
+            writer.write_all(raw.as_bytes()).await.expect("write raw");
+            writer.write_all(b"\n").await.expect("write newline");
+            writer.flush().await.expect("flush");
         });
 
         let mut client = connect_with_retry(&socket).await;
-        let result = client.call("eval", None).await.unwrap();
+        let result = client.call("eval", None).await.expect("eval call");
         assert_eq!(result, serde_json::Value::Null);
 
         handle.abort();
@@ -232,7 +231,7 @@ mod tests {
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("nonexistent", None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("-32601"));
+        assert!(result.expect_err("call returns error").to_string().contains("-32601"));
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);

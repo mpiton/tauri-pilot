@@ -2,8 +2,6 @@ use super::{EvalFn, FocusFn, ListWindowsFn, handle_connection};
 
 use crate::error::Error;
 use crate::eval::EvalEngine;
-#[allow(unused_imports)]
-use crate::protocol::Response;
 use crate::recorder::Recorder;
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
@@ -14,8 +12,6 @@ use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-#[allow(unused_imports)]
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
 use windows::Win32::Security::{
@@ -91,74 +87,6 @@ fn unregister_instance(identifier: &str) -> std::io::Result<()> {
         std::fs::remove_file(&path)?;
     }
     Ok(())
-}
-
-#[allow(dead_code)] // used by `discover_instances`, kept for symmetry with the CLI resolver
-fn is_pid_alive(pid: u32) -> bool {
-    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-    use windows::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    // SAFETY: OpenProcess is a Win32 call that returns a HANDLE or an error.
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
-    match handle {
-        Ok(h) => {
-            // SAFETY: `h` is a valid handle returned by OpenProcess.
-            let alive = unsafe {
-                let mut exit_code: u32 = 0;
-                GetExitCodeProcess(h, &raw mut exit_code).is_ok()
-                    && exit_code == STILL_ACTIVE.0 as u32
-            };
-            // SAFETY: closing the handle we just opened.
-            unsafe {
-                let _ = CloseHandle(h);
-            };
-            alive
-        }
-        Err(_) => false,
-    }
-}
-
-#[allow(dead_code)] // public helper for future CLI integration; not currently called
-pub(crate) fn discover_instances() -> std::io::Result<Vec<InstanceEntry>> {
-    let dir = instances_dir()?;
-    let mut instances = Vec::new();
-    if !dir.exists() {
-        return Ok(instances);
-    }
-    let entries = std::fs::read_dir(&dir)?;
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "skipping corrupted instance file");
-                continue;
-            }
-        };
-        let info: InstanceEntry = match serde_json::from_str(&content) {
-            Ok(i) => i,
-            Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "skipping malformed instance file");
-                continue;
-            }
-        };
-        if !is_pid_alive(info.pid) {
-            tracing::debug!(pid = info.pid, path = %path.display(), "skipping stale instance");
-            continue;
-        }
-        instances.push(info);
-    }
-    Ok(instances)
-}
-
-#[allow(dead_code)] // public helper for future CLI integration; not currently called
-pub(crate) fn find_newest_instance() -> std::io::Result<Option<InstanceEntry>> {
-    let instances = discover_instances()?;
-    Ok(instances.into_iter().max_by_key(|i| i.created_at))
 }
 
 pub struct RegistryGuard {
@@ -600,9 +528,11 @@ async fn accept_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::Response;
     use serial_test::serial;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::windows::named_pipe::ClientOptions;
 
     static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -613,11 +543,11 @@ mod tests {
         PathBuf::from(format!(r"\\.\pipe\{name}"))
     }
 
-    async fn start_test_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
+    async fn start_test_server(path: &Path) -> tokio::task::JoinHandle<()> {
         let (listener, guard) = bind(path).expect("bind test pipe");
         let engine = EvalEngine::new();
         let handle = tokio::spawn(async move {
-            run(listener, guard, engine, None, None, None, Recorder::new()).await
+            run(listener, guard, engine, None, None, None, Recorder::new()).await;
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
@@ -629,19 +559,19 @@ mod tests {
         let pipe = unique_pipe_path();
         let handle = start_test_server(&pipe).await;
 
-        let client = ClientOptions::new().open(&pipe).unwrap();
+        let client = ClientOptions::new().open(&pipe).expect("open test pipe");
         let (reader, mut writer) = tokio::io::split(client);
         let mut reader = BufReader::new(reader);
 
         writer
             .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n")
             .await
-            .unwrap();
-        writer.flush().await.unwrap();
+            .expect("write ping request");
+        writer.flush().await.expect("flush");
 
         let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        let resp: Response = serde_json::from_str(&line).unwrap();
+        reader.read_line(&mut line).await.expect("read response");
+        let resp: Response = serde_json::from_str(&line).expect("parse response");
 
         assert_eq!(resp.id, serde_json::json!(1));
         assert!(resp.error.is_none());
@@ -657,19 +587,19 @@ mod tests {
         let pipe = unique_pipe_path();
         let handle = start_test_server(&pipe).await;
 
-        let client = ClientOptions::new().open(&pipe).unwrap();
+        let client = ClientOptions::new().open(&pipe).expect("open test pipe");
         let (reader, mut writer) = tokio::io::split(client);
         let mut reader = BufReader::new(reader);
 
-        writer.write_all(b"not json\n").await.unwrap();
-        writer.flush().await.unwrap();
+        writer.write_all(b"not json\n").await.expect("write invalid request");
+        writer.flush().await.expect("flush");
 
         let mut line = String::new();
-        reader.read_line(&mut line).await.unwrap();
-        let resp: Response = serde_json::from_str(&line).unwrap();
+        reader.read_line(&mut line).await.expect("read response");
+        let resp: Response = serde_json::from_str(&line).expect("parse response");
 
         assert_eq!(resp.id, serde_json::Value::Null);
-        let err = resp.error.unwrap();
+        let err = resp.error.expect("error payload present");
         assert_eq!(err.code, -32700);
 
         handle.abort();
@@ -682,18 +612,18 @@ mod tests {
         let pipe = unique_pipe_path();
         let handle = start_test_server(&pipe).await;
 
-        let client = ClientOptions::new().open(&pipe).unwrap();
+        let client = ClientOptions::new().open(&pipe).expect("open test pipe");
         let (reader, mut writer) = tokio::io::split(client);
         let mut reader = BufReader::new(reader);
 
         for i in 1..=3 {
             let req = format!("{{\"jsonrpc\":\"2.0\",\"id\":{i},\"method\":\"test\"}}\n");
-            writer.write_all(req.as_bytes()).await.unwrap();
-            writer.flush().await.unwrap();
+            writer.write_all(req.as_bytes()).await.expect("write request");
+            writer.flush().await.expect("flush");
 
             let mut line = String::new();
-            reader.read_line(&mut line).await.unwrap();
-            let resp: Response = serde_json::from_str(&line).unwrap();
+            reader.read_line(&mut line).await.expect("read response");
+            let resp: Response = serde_json::from_str(&line).expect("parse response");
             assert_eq!(resp.id, serde_json::json!(i));
         }
 
@@ -739,11 +669,13 @@ mod tests {
         assert!(!dacl_ptr.is_null(), "bound pipe must carry a non-NULL DACL");
 
         let mut info = ACL_SIZE_INFORMATION::default();
+        let info_size = u32::try_from(std::mem::size_of::<ACL_SIZE_INFORMATION>())
+            .expect("ACL_SIZE_INFORMATION fits in u32");
         unsafe {
             GetAclInformation(
                 dacl_ptr,
                 (&raw mut info).cast::<c_void>(),
-                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                info_size,
                 AclSizeInformation,
             )
         }
