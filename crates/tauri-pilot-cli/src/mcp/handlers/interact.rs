@@ -86,7 +86,7 @@ pub(super) async fn dispatch(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use serde_json::{Map, json};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};

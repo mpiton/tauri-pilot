@@ -6,7 +6,7 @@
 mod asserts;
 mod calls;
 mod file_ops;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests;
 
 use std::{

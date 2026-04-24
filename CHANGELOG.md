@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Phase C (PR1)** — refactor pass on the CLI crate (issue [#70]):
+  - Split `output.rs` (1172 lines) into `output/` per-domain modules (json, text, snapshot, logs, network, storage, forms, watch, diff, windows, record), each ≤ 150 lines. Unit tests redistributed into per-domain `mod tests` blocks; three test files extracted (`diff_tests.rs`, `forms_tests.rs`, `watch_tests.rs`) where inline tests would breach the cap.
+  - Split `mcp.rs` (1815 lines) into `mcp/` modules: `server/`, `handlers/`, `tools/` (per-domain `core/interact/inspect/eval/observe/storage/assert/record`), `tools/schemas/`, `banner.rs`, `responses.rs`, `args.rs`, `schemas.rs`. Every file ≤ 150 lines.
+  - Renamed scenario types to drop `module_name_repetitions` / `struct_field_names` allows: `Scenario → Config`, `ScenarioMeta → Meta`, `ScenarioReport → Report`, `Step.step_ref → Step.reference`. TOML schema preserved via `#[serde(rename = ...)]` — no user-facing break.
+  - Removed 6 `#[allow(...)]` attributes (4 in `scenario.rs`, 2 in mcp dispatchers via prefix-router rewrite + per-domain split). Workspace allow count: 12 → 6.
+  - Added characterization tests: `tests/output_smoke.rs` and `mcp::tools::tests` (registry uniqueness, baseline, count).
+  - Introduced `crates/tauri-pilot-cli/src/lib.rs` facade so integration tests under `tests/` can reach `output` and `style` modules.
 - Clippy cleanup / no-suppression policy: remove speculative Windows helpers (`discover_instances`, `find_newest_instance`, `is_pid_alive`), scope test-only imports inside `mod tests` blocks, replace `.unwrap()`/`.unwrap_err()` in tests with `.expect()`/`.expect_err()` to satisfy the workspace `clippy::unwrap_used = "deny"` without module-level `#[allow]` escapes, and fix `cast_precision_loss`/`cast_possible_truncation` via `Duration::as_secs_f64` and `Value::as_i64`. Also retry on `ERROR_PIPE_BUSY` when connecting to the Windows Named Pipe so `client::windows::connect` has a genuine await instead of `#[allow(clippy::unused_async)]`
 - `tauri-plugin-pilot` `init()` doc comment clarifies the no-op fallback now excludes Windows too and mentions the Named Pipe server path ([#64])
 - Bumped `windows` crate `0.52` → `0.61` on both `tauri-plugin-pilot` and `tauri-pilot-cli`, aligning with the version already pulled transitively by `tauri`/`tao`/`wry`/`webview2-com`/`enigo`. Deduplicates the Windows dependency graph (removes the parallel `windows-targets` tree shipped with 0.52) and picks up the `HANDLE(*mut c_void)` layout matching `std::os::windows::raw::HANDLE`. Mechanical breaking changes: `HANDLE(0)` → `HANDLE(std::ptr::null_mut())`, `HANDLE(raw as isize)` → `HANDLE(raw)`, `self.0.0 != 0` → `!self.0.0.is_null()`, `PSID` import relocated from `Win32::Foundation` to `Win32::Security`, `BOOL` now lives in `windows::core`, `SetSecurityDescriptorDacl` takes `Option<*const ACL>` (cast via `.cast_const()`), `GetSecurityInfo` returns `WIN32_ERROR` (use `.ok()`), `LocalFree` takes `Option<HLOCAL>` ([#68])
@@ -234,3 +241,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#31]: https://github.com/mpiton/tauri-pilot/issues/31
 [#64]: https://github.com/mpiton/tauri-pilot/pull/64
 [#68]: https://github.com/mpiton/tauri-pilot/issues/68
+[#70]: https://github.com/mpiton/tauri-pilot/issues/70
