@@ -86,9 +86,25 @@ pub mod windows;
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
+
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// Build a unique socket path per test invocation so parallel `cargo test`
+    /// runs (same process, different tests) don't clobber each other's sockets
+    /// or leak a previous test's bind into the next one.
+    fn unique_socket_path(tag: &str) -> PathBuf {
+        let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        PathBuf::from(format!(
+            "/tmp/tauri-pilot-test-{}-{}-{}.sock",
+            tag,
+            std::process::id(),
+            n
+        ))
+    }
 
     fn mock_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let _ = std::fs::remove_file(path);
@@ -103,7 +119,11 @@ mod tests {
                 let resp = if req.method == "ping" {
                     Response::success(req.id, serde_json::json!({"status": "ok"}))
                 } else {
-                    Response::error(serde_json::Value::Number(req.id.into()), -32601, "Method not found")
+                    Response::error(
+                        serde_json::Value::Number(req.id.into()),
+                        -32601,
+                        "Method not found",
+                    )
                 };
                 let mut bytes = serde_json::to_vec(&resp).unwrap();
                 bytes.push(b'\n');
@@ -129,7 +149,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_ping_returns_ok() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05a.sock");
+        let socket = unique_socket_path("t05a");
         let handle = mock_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
@@ -146,7 +166,7 @@ mod tests {
         // success with Value::Null — not a protocol error. This happens when an
         // eval'd JS expression legitimately returns `undefined` (e.g.,
         // `element.click()`, void functions). Regression test for #48.
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05c.sock");
+        let socket = unique_socket_path("t05c");
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = tokio::spawn(async move {
@@ -179,7 +199,7 @@ mod tests {
         // `"result": null`); this test pins down the companion shape where
         // the field is omitted entirely. Both end up as `Value::Null` via
         // `unwrap_or`.
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05d.sock");
+        let socket = unique_socket_path("t05d");
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = tokio::spawn(async move {
@@ -206,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_unknown_method_returns_error() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05b.sock");
+        let socket = unique_socket_path("t05b");
         let handle = mock_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
