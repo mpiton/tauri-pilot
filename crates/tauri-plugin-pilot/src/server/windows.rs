@@ -17,14 +17,18 @@ use std::time::Duration;
 #[allow(unused_imports)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
-use windows::Win32::Security::{
-    ACL, ACL_REVISION, AclSizeInformation, AddAccessAllowedAce, EqualSid, GetAclInformation,
-    GetLengthSid, GetSecurityInfo, GetTokenInformation, ImpersonateNamedPipeClient, InitializeAcl,
-    InitializeSecurityDescriptor, OpenThreadToken, PSECURITY_DESCRIPTOR, RevertToSelf,
-    SE_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SetSecurityDescriptorDacl, TOKEN_QUERY,
-    TOKEN_USER, TokenUser,
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE, HLOCAL,
 };
+use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+use windows::Win32::Security::{
+    ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation, AddAccessAllowedAce, EqualSid,
+    GetAclInformation, GetLengthSid, GetTokenInformation, ImpersonateNamedPipeClient,
+    InitializeAcl, InitializeSecurityDescriptor, OpenThreadToken, PACL, PSECURITY_DESCRIPTOR,
+    RevertToSelf, SE_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SetSecurityDescriptorDacl,
+    TOKEN_QUERY, TOKEN_USER, TokenUser,
+};
+use windows::Win32::System::Memory::LocalFree;
 use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenProcessToken};
 
 pub fn socket_path(identifier: &str) -> PathBuf {
@@ -694,53 +698,49 @@ mod tests {
     #[serial]
     #[cfg(windows)]
     async fn test_dacl_regression_every_pipe_instance_has_dacl_with_one_ace() {
-        use windows::Win32::Storage::FileSystem::PACL;
-
         let pipe = unique_pipe_path();
         let (server, guard) = bind(&pipe).expect("bind test pipe");
 
         let raw_handle = server.as_raw_handle();
-        let handle = HANDLE(raw_handle as *mut c_void);
+        let handle = HANDLE(raw_handle as isize);
 
         let mut dacl_ptr: PACL = PACL::default();
+        let mut sd_ptr = PSECURITY_DESCRIPTOR::default();
         let sd_result = unsafe {
             GetSecurityInfo(
                 handle,
-                windows::Win32::Security::SE_KERNEL_OBJECT,
+                SE_KERNEL_OBJECT,
                 SE_DACL_SECURITY_INFORMATION,
                 None,
                 None,
                 Some(&mut dacl_ptr),
                 None,
-                None,
-                None,
+                Some(&mut sd_ptr),
             )
         };
-        assert_eq!(sd_result, Ok(()), "GetSecurityInfo should succeed");
+        assert_eq!(sd_result, ERROR_SUCCESS, "GetSecurityInfo should succeed");
         assert!(
             !dacl_ptr.is_null(),
             "DACL pointer must not be NULL — every pipe instance must have a DACL"
         );
 
-        let mut acl_size = AclSizeInformation::default();
+        let mut acl_size = ACL_SIZE_INFORMATION::default();
         let size_result = unsafe {
             GetAclInformation(
                 dacl_ptr,
                 &mut acl_size as *mut _ as *mut c_void,
-                std::mem::size_of::<AclSizeInformation>() as u32,
+                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
                 AclSizeInformation,
             )
         };
-        assert_eq!(size_result, Ok(()), "GetAclInformation should succeed");
+        size_result.expect("GetAclInformation should succeed");
         assert_eq!(
             acl_size.AceCount, 1,
             "DACL must contain exactly 1 ACE (owner-only access)"
         );
 
         unsafe {
-            let _ = windows::Win32::Security::LocalFree(windows::Win32::Foundation::HLOCAL(
-                dacl_ptr.0 as *mut c_void,
-            ));
+            let _ = LocalFree(HLOCAL(sd_ptr.0));
         }
 
         // Trigger a new accept cycle and drop the server.
@@ -757,53 +757,52 @@ mod tests {
     #[serial]
     #[cfg(windows)]
     async fn test_bound_pipe_carries_user_only_dacl() {
-        use windows::Win32::Storage::FileSystem::PACL;
-
         let pipe = unique_pipe_path();
         let (server, guard) = bind(&pipe).expect("bind test pipe");
 
         let raw_handle = server.as_raw_handle();
-        let handle = HANDLE(raw_handle as *mut c_void);
+        let handle = HANDLE(raw_handle as isize);
 
         // Retrieve the DACL from the freshly-bound pipe and assert:
         //   - the DACL pointer is non-NULL (the pipe is not running with a NULL DACL),
         //   - the DACL contains exactly one ACE (our owner-only ACE).
         let mut dacl_ptr: PACL = PACL::default();
+        let mut sd_ptr = PSECURITY_DESCRIPTOR::default();
         let rc = unsafe {
             GetSecurityInfo(
                 handle,
-                windows::Win32::Security::SE_KERNEL_OBJECT,
+                SE_KERNEL_OBJECT,
                 SE_DACL_SECURITY_INFORMATION,
                 None,
                 None,
                 Some(&mut dacl_ptr),
                 None,
-                None,
-                None,
+                Some(&mut sd_ptr),
             )
         };
-        assert_eq!(rc, Ok(()), "GetSecurityInfo must succeed on a bound pipe");
+        assert_eq!(
+            rc, ERROR_SUCCESS,
+            "GetSecurityInfo must succeed on a bound pipe"
+        );
         assert!(!dacl_ptr.is_null(), "bound pipe must carry a non-NULL DACL");
 
-        let mut info = AclSizeInformation::default();
+        let mut info = ACL_SIZE_INFORMATION::default();
         let rc = unsafe {
             GetAclInformation(
                 dacl_ptr,
                 &mut info as *mut _ as *mut c_void,
-                std::mem::size_of::<AclSizeInformation>() as u32,
+                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
                 AclSizeInformation,
             )
         };
-        assert_eq!(rc, Ok(()), "GetAclInformation must succeed");
+        rc.expect("GetAclInformation must succeed");
         assert_eq!(
             info.AceCount, 1,
             "bound pipe DACL must contain exactly one ACE (owner-only)"
         );
 
         unsafe {
-            let _ = windows::Win32::Security::LocalFree(windows::Win32::Foundation::HLOCAL(
-                dacl_ptr.0 as *mut c_void,
-            ));
+            let _ = LocalFree(HLOCAL(sd_ptr.0));
         }
 
         drop(server);

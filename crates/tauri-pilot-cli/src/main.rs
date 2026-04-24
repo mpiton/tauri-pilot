@@ -1354,7 +1354,9 @@ fn resolve_socket_windows() -> Result<PathBuf> {
                     let mut exit_code: u32 = 0;
                     GetExitCodeProcess(h, &mut exit_code).is_ok() && exit_code == STILL_ACTIVE.0
                 };
-                unsafe { CloseHandle(h) };
+                unsafe {
+                    let _ = CloseHandle(h);
+                }
                 alive
             }
             Err(_) => false,
