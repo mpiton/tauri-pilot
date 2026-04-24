@@ -17,29 +17,26 @@ use std::time::Duration;
 #[allow(unused_imports)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-use windows::Win32::Foundation::{
-    CloseHandle, ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE, HLOCAL,
-};
-use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, PSID};
 use windows::Win32::Security::{
-    ACL, ACL_REVISION, ACL_SIZE_INFORMATION, AclSizeInformation, AddAccessAllowedAce, EqualSid,
-    GetAclInformation, GetLengthSid, GetTokenInformation, ImpersonateNamedPipeClient,
-    InitializeAcl, InitializeSecurityDescriptor, OpenThreadToken, PACL, PSECURITY_DESCRIPTOR,
-    RevertToSelf, SE_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SetSecurityDescriptorDacl,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACL, ACL_REVISION, AddAccessAllowedAce, EqualSid, GetLengthSid, GetTokenInformation,
+    InitializeAcl, InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, RevertToSelf,
+    SECURITY_ATTRIBUTES, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows::Win32::System::Memory::LocalFree;
-use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenProcessToken};
+use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
+};
 
 pub fn socket_path(identifier: &str) -> PathBuf {
     PathBuf::from(format!(r"\\.\pipe\tauri-pilot-{identifier}"))
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct InstanceEntry {
-    pipe: String,
-    pid: u32,
-    created_at: u64,
+pub(crate) struct InstanceEntry {
+    pub pipe: String,
+    pub pid: u32,
+    pub created_at: u64,
 }
 
 fn instances_dir() -> std::io::Result<PathBuf> {
@@ -96,6 +93,7 @@ fn unregister_instance(identifier: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)] // used by `discover_instances`, kept for symmetry with the CLI resolver
 fn is_pid_alive(pid: u32) -> bool {
     use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
     use windows::Win32::System::Threading::{
@@ -108,7 +106,8 @@ fn is_pid_alive(pid: u32) -> bool {
             // SAFETY: `h` is a valid handle returned by OpenProcess.
             let alive = unsafe {
                 let mut exit_code: u32 = 0;
-                GetExitCodeProcess(h, &mut exit_code).is_ok() && exit_code == STILL_ACTIVE.0
+                GetExitCodeProcess(h, &raw mut exit_code).is_ok()
+                    && exit_code == STILL_ACTIVE.0 as u32
             };
             // SAFETY: closing the handle we just opened.
             unsafe {
@@ -120,6 +119,7 @@ fn is_pid_alive(pid: u32) -> bool {
     }
 }
 
+#[allow(dead_code)] // public helper for future CLI integration; not currently called
 pub(crate) fn discover_instances() -> std::io::Result<Vec<InstanceEntry>> {
     let dir = instances_dir()?;
     let mut instances = Vec::new();
@@ -155,6 +155,7 @@ pub(crate) fn discover_instances() -> std::io::Result<Vec<InstanceEntry>> {
     Ok(instances)
 }
 
+#[allow(dead_code)] // public helper for future CLI integration; not currently called
 pub(crate) fn find_newest_instance() -> std::io::Result<Option<InstanceEntry>> {
     let instances = discover_instances()?;
     Ok(instances.into_iter().max_by_key(|i| i.created_at))
@@ -263,9 +264,7 @@ fn open_thread_impersonation_token() -> std::io::Result<OwnedHandle> {
 /// Returns the SID owned by `token`, along with the backing buffer that the SID
 /// pointer references. The caller MUST keep the returned `Vec<u8>` alive for as
 /// long as the pointer is dereferenced (fix for the prior use-after-free).
-fn get_user_sid(
-    token: &OwnedHandle,
-) -> std::io::Result<(Vec<u8>, *mut windows::Win32::Security::SID)> {
+fn get_user_sid(token: &OwnedHandle) -> std::io::Result<(Vec<u8>, PSID)> {
     let mut return_length = 0u32;
     // First call is expected to fail with ERROR_INSUFFICIENT_BUFFER — it just
     // writes the required size into `return_length`.
@@ -293,9 +292,11 @@ fn get_user_sid(
     }
     .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-    // SAFETY: `buf` holds a valid `TOKEN_USER` laid out by the kernel. The `Sid`
-    // pointer it contains references memory inside `buf`, which we keep alive by
-    // returning it to the caller.
+    // SAFETY: `buf` holds a valid `TOKEN_USER` laid out by the kernel with the
+    // correct alignment for `TOKEN_USER` (padded by `GetTokenInformation`). The
+    // `Sid` pointer it contains references memory inside `buf`, which we keep
+    // alive by returning the buffer to the caller.
+    #[allow(clippy::cast_ptr_alignment)]
     let sid = unsafe { (*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid };
     Ok((buf, sid))
 }
@@ -306,7 +307,7 @@ fn get_user_sid(
 /// remains the source of truth and this serves purely as a defence-in-depth check.
 fn client_sid_matches_current_user(pipe: &NamedPipeServer) -> bool {
     // SAFETY: `pipe.as_raw_handle()` returns the kernel handle for the pipe server.
-    if unsafe { ImpersonateNamedPipeClient(pipe.as_raw_handle() as _) }.is_err() {
+    if unsafe { ImpersonateNamedPipeClient(HANDLE(pipe.as_raw_handle() as isize)) }.is_err() {
         tracing::warn!("failed to impersonate named pipe client");
         return true;
     }
@@ -358,13 +359,13 @@ fn client_sid_matches_current_user(pipe: &NamedPipeServer) -> bool {
 
     // SAFETY: both SID pointers are backed by `_client_buf` and `_our_buf`, which
     // stay alive for the duration of this call.
-    unsafe { EqualSid(client_sid, our_sid) }.as_bool()
+    unsafe { EqualSid(client_sid, our_sid) }.is_ok()
 }
 
 /// Allocates and initializes the ACL granting the given SID access.
 /// Fixes the prior heap overflow: the layout now matches the `acl_size` we pass
 /// to `InitializeAcl`, not `sizeof::<ACL>()`.
-fn build_acl(user_sid: *mut windows::Win32::Security::SID) -> std::io::Result<AclBuffer> {
+fn build_acl(user_sid: PSID) -> std::io::Result<AclBuffer> {
     // SAFETY: `user_sid` points to a valid SID owned by the caller's buffer.
     let sid_length = unsafe { GetLengthSid(user_sid) } as usize;
 
@@ -375,7 +376,9 @@ fn build_acl(user_sid: *mut windows::Win32::Security::SID) -> std::io::Result<Ac
     let layout = Layout::from_size_align(acl_size, mem::align_of::<ACL>())
         .map_err(|e| std::io::Error::other(format!("invalid ACL layout: {e}")))?;
 
-    // SAFETY: `layout` has a non-zero size and an alignment that is a power of two.
+    // SAFETY: `layout` has a non-zero size and an alignment that matches `ACL`'s
+    // alignment requirement (enforced by `from_size_align` above).
+    #[allow(clippy::cast_ptr_alignment)]
     let ptr = unsafe { alloc_zeroed(layout) }.cast::<ACL>();
     if ptr.is_null() {
         // Do NOT dealloc a null pointer — it is UB. Just return.
@@ -386,8 +389,16 @@ fn build_acl(user_sid: *mut windows::Win32::Security::SID) -> std::io::Result<Ac
     let buffer = AclBuffer { ptr, layout };
 
     // SAFETY: `ptr` is valid, aligned, zeroed memory of exactly `acl_size` bytes.
-    unsafe { InitializeAcl(buffer.as_ptr(), acl_size as u32, ACL_REVISION) }
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    // `acl_size` fits in u32: ACL header (8) + ACE header (4) + access mask (4)
+    // + SID (max ~68 bytes) rounded up to DWORD is well under 64 KB.
+    unsafe {
+        InitializeAcl(
+            buffer.as_ptr(),
+            u32::try_from(acl_size).expect("ACL size fits in u32"),
+            ACL_REVISION,
+        )
+    }
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     // SAFETY: `buffer.as_ptr()` is a freshly-initialised ACL with room for this ACE
     // (our `acl_size` accounted for the SID length), and `user_sid` is valid.
@@ -530,27 +541,24 @@ async fn accept_loop(
         // retry after a short back-off. Silent downgrade to default DACL is
         // refused — we'd rather drop a connection than weaken security.
         let next_server = loop {
-            let sa_result = create_user_only_security_attributes();
-            let (mut sa, _sec_guard) = match sa_result {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "failed to build security attributes, retrying"
-                    );
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
+            // Build SA, create the pipe, and drop the guard buffers in one scope so
+            // no `*mut ACL` or `*mut c_void` crosses the retry `.await` below —
+            // `CreateNamedPipe` copies the security descriptor by the time it returns.
+            let create_result: std::io::Result<NamedPipeServer> = (|| {
+                let (mut sa, _sec_guard) = create_user_only_security_attributes()?;
+                // SAFETY: `sa` and its backing buffers are valid for this call.
+                unsafe {
+                    ServerOptions::new()
+                        .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
+                        .create_with_security_attributes_raw(
+                            &pipe_path,
+                            (&raw mut sa).cast::<c_void>(),
+                        )
                 }
-            };
+                .map_err(std::io::Error::other)
+            })();
 
-            // SAFETY: `sa` and its backing buffers are valid for this call.
-            let created = unsafe {
-                ServerOptions::new()
-                    .pipe_mode(tokio::net::windows::named_pipe::PipeMode::Byte)
-                    .create_with_security_attributes_raw(&pipe_path, (&raw mut sa).cast::<c_void>())
-            };
-
-            match created {
+            match create_result {
                 Ok(s) => break s,
                 Err(e) => {
                     tracing::warn!(
@@ -559,7 +567,6 @@ async fn accept_loop(
                         "transient failure creating next pipe instance, retrying"
                     );
                     tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
                 }
             }
         };
@@ -697,66 +704,13 @@ mod tests {
     #[tokio::test]
     #[serial]
     #[cfg(windows)]
-    async fn test_dacl_regression_every_pipe_instance_has_dacl_with_one_ace() {
-        let pipe = unique_pipe_path();
-        let (server, guard) = bind(&pipe).expect("bind test pipe");
-
-        let raw_handle = server.as_raw_handle();
-        let handle = HANDLE(raw_handle as isize);
-
-        let mut dacl_ptr: PACL = PACL::default();
-        let mut sd_ptr = PSECURITY_DESCRIPTOR::default();
-        let sd_result = unsafe {
-            GetSecurityInfo(
-                handle,
-                SE_KERNEL_OBJECT,
-                SE_DACL_SECURITY_INFORMATION,
-                None,
-                None,
-                Some(&mut dacl_ptr),
-                None,
-                Some(&mut sd_ptr),
-            )
-        };
-        assert_eq!(sd_result, ERROR_SUCCESS, "GetSecurityInfo should succeed");
-        assert!(
-            !dacl_ptr.is_null(),
-            "DACL pointer must not be NULL — every pipe instance must have a DACL"
-        );
-
-        let mut acl_size = ACL_SIZE_INFORMATION::default();
-        let size_result = unsafe {
-            GetAclInformation(
-                dacl_ptr,
-                &mut acl_size as *mut _ as *mut c_void,
-                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
-                AclSizeInformation,
-            )
-        };
-        size_result.expect("GetAclInformation should succeed");
-        assert_eq!(
-            acl_size.AceCount, 1,
-            "DACL must contain exactly 1 ACE (owner-only access)"
-        );
-
-        unsafe {
-            let _ = LocalFree(HLOCAL(sd_ptr.0));
-        }
-
-        // Trigger a new accept cycle and drop the server.
-        let _client = ClientOptions::new()
-            .open(&pipe)
-            .expect("client should connect");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        drop(server);
-        drop(guard);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    #[tokio::test]
-    #[serial]
-    #[cfg(windows)]
     async fn test_bound_pipe_carries_user_only_dacl() {
+        use windows::Win32::Foundation::LocalFree;
+        use windows::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+        use windows::Win32::Security::{
+            ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION, GetAclInformation,
+        };
+
         let pipe = unique_pipe_path();
         let (server, guard) = bind(&pipe).expect("bind test pipe");
 
@@ -766,43 +720,43 @@ mod tests {
         // Retrieve the DACL from the freshly-bound pipe and assert:
         //   - the DACL pointer is non-NULL (the pipe is not running with a NULL DACL),
         //   - the DACL contains exactly one ACE (our owner-only ACE).
-        let mut dacl_ptr: PACL = PACL::default();
+        let mut dacl_ptr: *mut ACL = std::ptr::null_mut();
         let mut sd_ptr = PSECURITY_DESCRIPTOR::default();
-        let rc = unsafe {
+        unsafe {
             GetSecurityInfo(
                 handle,
                 SE_KERNEL_OBJECT,
-                SE_DACL_SECURITY_INFORMATION,
+                DACL_SECURITY_INFORMATION,
                 None,
                 None,
-                Some(&mut dacl_ptr),
+                Some(&raw mut dacl_ptr),
                 None,
-                Some(&mut sd_ptr),
+                Some(&raw mut sd_ptr),
             )
-        };
-        assert_eq!(
-            rc, ERROR_SUCCESS,
-            "GetSecurityInfo must succeed on a bound pipe"
-        );
+        }
+        .expect("GetSecurityInfo must succeed on a bound pipe");
         assert!(!dacl_ptr.is_null(), "bound pipe must carry a non-NULL DACL");
 
         let mut info = ACL_SIZE_INFORMATION::default();
-        let rc = unsafe {
+        unsafe {
             GetAclInformation(
                 dacl_ptr,
-                &mut info as *mut _ as *mut c_void,
+                (&raw mut info).cast::<c_void>(),
                 std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
                 AclSizeInformation,
             )
-        };
-        rc.expect("GetAclInformation must succeed");
+        }
+        .expect("GetAclInformation must succeed");
         assert_eq!(
             info.AceCount, 1,
             "bound pipe DACL must contain exactly one ACE (owner-only)"
         );
 
+        // SAFETY: `sd_ptr` was allocated by `GetSecurityInfo`; documented contract
+        // requires the caller to release it with `LocalFree`. `dacl_ptr` points
+        // into the same allocation and must not be freed separately.
         unsafe {
-            let _ = LocalFree(HLOCAL(sd_ptr.0));
+            let _ = LocalFree(windows::Win32::Foundation::HLOCAL(sd_ptr.0));
         }
 
         drop(server);
