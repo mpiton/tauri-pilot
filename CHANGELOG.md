@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Resolved Dependabot alerts #1–#4 (all in `docs/`):
-  - `astro` XSS via `define:vars` incomplete `</script>` sanitization ([GHSA-j687-52p2-xcff](https://github.com/advisories/GHSA-j687-52p2-xcff), CVE-2026-41067) — fixed by bumping to `astro@6.1.9`
+  - `astro` XSS via `define:vars` incomplete `</script>` sanitization ([GHSA-j687-52p2-xcff](https://github.com/advisories/GHSA-j687-52p2-xcff), CVE-2026-41067) — patched upstream in `astro@6.1.6`; included via bump to `astro@6.1.9`
   - `vite` path traversal in optimized deps `.map` handling ([GHSA-4w7w-66w2-5vf9](https://github.com/advisories/GHSA-4w7w-66w2-5vf9), CVE-2026-39365)
   - `vite` `server.fs.deny` bypass via query parameters ([GHSA-v2wj-q39q-566r](https://github.com/advisories/GHSA-v2wj-q39q-566r), CVE-2026-39364)
   - `vite` arbitrary file read via dev-server WebSocket ([GHSA-p9ff-h696-f583](https://github.com/advisories/GHSA-p9ff-h696-f583), CVE-2026-39363)
