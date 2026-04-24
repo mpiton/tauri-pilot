@@ -1,14 +1,50 @@
 use super::Client;
 use anyhow::{Context, Result};
 use std::path::Path;
+use std::time::Duration;
 use tokio::io::BufReader;
 use tokio::net::windows::named_pipe::ClientOptions;
+use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
-#[allow(clippy::unused_async)]
+/// Maximum time spent retrying when all server pipe instances are busy.
+/// Matches typical Unix socket `connect()` latency under contention — longer
+/// and the CLI feels hung; shorter and transient bursts falsely fail.
+const CONNECT_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Delay between `ERROR_PIPE_BUSY` retries. Keeps CPU idle while the server
+/// accepts pending connections.
+const RETRY_INTERVAL: Duration = Duration::from_millis(20);
+
+/// Connect to a Named Pipe, retrying briefly on `ERROR_PIPE_BUSY`.
+///
+/// Named Pipe `open()` is synchronous and fails immediately with
+/// `ERROR_PIPE_BUSY` when all server instances are in use. The caller expects
+/// an async contract, so we mirror the Unix socket behavior by yielding
+/// between retries, giving up after `CONNECT_DEADLINE` so a stuck server
+/// never hangs the CLI.
 pub async fn connect(path: &Path) -> Result<Client> {
-    let client = ClientOptions::new()
-        .open(path)
-        .with_context(|| format!("Cannot connect to named pipe: {}", path.display()))?;
+    let deadline = tokio::time::Instant::now() + CONNECT_DEADLINE;
+    let client = loop {
+        match ClientOptions::new().open(path) {
+            Ok(c) => break c,
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY.0.cast_signed()) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "Named pipe {} remained busy for {}s",
+                            path.display(),
+                            CONNECT_DEADLINE.as_secs()
+                        )
+                    });
+                }
+                tokio::time::sleep(RETRY_INTERVAL).await;
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("Cannot connect to named pipe: {}", path.display()));
+            }
+        }
+    };
     let (reader, writer) = tokio::io::split(client);
     Ok(Client {
         reader: BufReader::new(reader),
@@ -42,8 +78,8 @@ mod tests {
             let (reader, mut writer) = tokio::io::split(server);
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
-            while reader.read_line(&mut line).await.unwrap() > 0 {
-                let req: Request = serde_json::from_str(line.trim()).unwrap();
+            while reader.read_line(&mut line).await.expect("read line") > 0 {
+                let req: Request = serde_json::from_str(line.trim()).expect("parse request");
                 let resp = if req.method == "ping" {
                     Response::success(req.id, serde_json::json!({"status": "ok"}))
                 } else {
@@ -53,10 +89,10 @@ mod tests {
                         "Method not found",
                     )
                 };
-                let mut bytes = serde_json::to_vec(&resp).unwrap();
+                let mut bytes = serde_json::to_vec(&resp).expect("serialize response");
                 bytes.push(b'\n');
-                writer.write_all(&bytes).await.unwrap();
-                writer.flush().await.unwrap();
+                writer.write_all(&bytes).await.expect("write bytes");
+                writer.flush().await.expect("flush");
                 line.clear();
             }
         })
@@ -80,7 +116,7 @@ mod tests {
         let handle = mock_server(&pipe);
 
         let mut client = connect_with_retry(Path::new(&pipe)).await;
-        let result = client.call("ping", None).await.unwrap();
+        let result = client.call("ping", None).await.expect("ping call");
         assert_eq!(result, serde_json::json!({"status": "ok"}));
 
         handle.abort();
@@ -97,16 +133,16 @@ mod tests {
             let (reader, mut writer) = tokio::io::split(server);
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
-            reader.read_line(&mut line).await.unwrap();
-            let req: Request = serde_json::from_str(line.trim()).unwrap();
+            reader.read_line(&mut line).await.expect("read line");
+            let req: Request = serde_json::from_str(line.trim()).expect("parse request");
             let raw = format!(r#"{{"jsonrpc":"2.0","id":{},"result":null}}"#, req.id);
-            writer.write_all(raw.as_bytes()).await.unwrap();
-            writer.write_all(b"\n").await.unwrap();
-            writer.flush().await.unwrap();
+            writer.write_all(raw.as_bytes()).await.expect("write raw");
+            writer.write_all(b"\n").await.expect("write newline");
+            writer.flush().await.expect("flush");
         });
 
         let mut client = connect_with_retry(Path::new(&pipe)).await;
-        let result = client.call("eval", None).await.unwrap();
+        let result = client.call("eval", None).await.expect("eval call");
         assert_eq!(result, serde_json::Value::Null);
 
         handle.abort();
@@ -123,16 +159,16 @@ mod tests {
             let (reader, mut writer) = tokio::io::split(server);
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
-            reader.read_line(&mut line).await.unwrap();
-            let req: Request = serde_json::from_str(line.trim()).unwrap();
+            reader.read_line(&mut line).await.expect("read line");
+            let req: Request = serde_json::from_str(line.trim()).expect("parse request");
             let raw = format!(r#"{{"jsonrpc":"2.0","id":{}}}"#, req.id);
-            writer.write_all(raw.as_bytes()).await.unwrap();
-            writer.write_all(b"\n").await.unwrap();
-            writer.flush().await.unwrap();
+            writer.write_all(raw.as_bytes()).await.expect("write raw");
+            writer.write_all(b"\n").await.expect("write newline");
+            writer.flush().await.expect("flush");
         });
 
         let mut client = connect_with_retry(Path::new(&pipe)).await;
-        let result = client.call("eval", None).await.unwrap();
+        let result = client.call("eval", None).await.expect("eval call");
         assert_eq!(result, serde_json::Value::Null);
 
         handle.abort();
@@ -146,7 +182,12 @@ mod tests {
         let mut client = connect_with_retry(Path::new(&pipe)).await;
         let result = client.call("nonexistent", None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("-32601"));
+        assert!(
+            result
+                .expect_err("call returns error")
+                .to_string()
+                .contains("-32601")
+        );
 
         handle.abort();
     }

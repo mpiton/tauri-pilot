@@ -164,7 +164,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         engine.resolve(id, Ok(json!(42)));
-        let result = rx.await.unwrap();
+        let result = rx.await.expect("resolve channel dropped");
         assert_eq!(result, Ok(json!(42)));
     }
 
@@ -173,7 +173,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         engine.resolve(id, Err("ReferenceError: x is not defined".to_owned()));
-        let result = rx.await.unwrap();
+        let result = rx.await.expect("resolve channel dropped");
         assert!(result.is_err());
     }
 
@@ -200,7 +200,7 @@ mod tests {
         let (id, rx) = engine.register();
         engine.resolve(id, Ok(json!({"title": "hello"})));
         let result = engine.wait(id, rx, Duration::from_secs(10)).await;
-        assert_eq!(result.unwrap(), json!({"title": "hello"}));
+        assert_eq!(result.expect("wait succeeds"), json!({"title": "hello"}));
     }
 
     #[tokio::test]
