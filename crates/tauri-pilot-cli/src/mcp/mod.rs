@@ -10,7 +10,9 @@
 mod _legacy;
 mod args;
 mod banner;
+mod handlers;
 mod responses;
 mod schemas;
+mod server;
 
-pub(crate) use _legacy::run_mcp_server;
+pub(crate) use server::run_mcp_server;

@@ -1,622 +1,19 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, OnceLock},
-};
+//! TEMPORARY — shrinks step-by-step toward zero (PR1 Tasks 5-8).
+//!
+//! Contains: `tools()` registry, schema builders.
+//! Removed in Task 5: `PilotMcpServer` struct, `run_mcp_server`, impl blocks.
+//! Remaining for Task 6: split `tools()` per domain.
+//! Remaining for Task 8: delete this file.
 
-use anyhow::Result;
-use rmcp::{
-    ErrorData as McpError, ServerHandler, ServiceExt,
-    model::{
-        CallToolRequestParams, CallToolResult, ErrorCode, Implementation, JsonObject,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
-        ToolAnnotations,
-    },
-    service::{MaybeSendFuture, RequestContext, RoleServer},
-    transport::stdio,
-};
+use std::sync::{Arc, OnceLock};
+
+use rmcp::model::{JsonObject, Tool, ToolAnnotations};
 use serde_json::{Map, Value, json};
 
-use super::args::{
-    insert_optional_string, insert_optional_usize, optional_bool, optional_i32, optional_ref,
-    optional_string, optional_u8, optional_u64, required_string, required_string_array,
-    required_u64,
-};
-use super::banner::print_startup_banner;
-use super::responses::{invalid_params, tool_error, tool_error_msg, tool_success};
 use super::schemas::{
     any_prop, array_string_prop, bool_prop, enum_prop, integer_prop, object_schema, props,
     string_prop,
 };
-use crate::{
-    client::Client, export_replay_file, resolve_socket, run_drop_command, run_replay_command,
-    target_params, with_window,
-};
-
-#[derive(Debug, Clone)]
-pub(crate) struct PilotMcpServer {
-    socket: Option<PathBuf>,
-    window: Option<String>,
-    resolved_socket: Arc<OnceLock<PathBuf>>,
-}
-
-pub(crate) async fn run_mcp_server(socket: Option<PathBuf>, window: Option<String>) -> Result<()> {
-    print_startup_banner(socket.as_deref(), window.as_deref());
-    let service = PilotMcpServer::new(socket, window)
-        .serve(stdio())
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to initialize MCP server: {e}"))?;
-    service
-        .waiting()
-        .await
-        .map_err(|e| anyhow::anyhow!("MCP server failed: {e}"))?;
-    Ok(())
-}
-
-impl PilotMcpServer {
-    fn new(socket: Option<PathBuf>, window: Option<String>) -> Self {
-        Self {
-            socket,
-            window,
-            resolved_socket: Arc::new(OnceLock::new()),
-        }
-    }
-
-    async fn connect_client(&self) -> Result<Client> {
-        if let Some(socket) = &self.socket {
-            return Client::connect(socket).await;
-        }
-
-        if let Some(socket) = self.resolved_socket.get() {
-            return Client::connect(socket).await;
-        }
-
-        let socket = resolve_socket(None)?;
-        let client = Client::connect(&socket).await?;
-        let _ = self.resolved_socket.set(socket);
-        Ok(client)
-    }
-
-    async fn call_app(
-        &self,
-        method: &'static str,
-        params: Option<Value>,
-        window: Option<String>,
-    ) -> Result<Value> {
-        let mut client = self.connect_client().await?;
-        client
-            .call(method, with_window(params, window.as_deref()))
-            .await
-    }
-
-    async fn call_app_tool(
-        &self,
-        method: &'static str,
-        params: Option<Value>,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(match self.call_app(method, params, window).await {
-            Ok(result) => tool_success(result),
-            Err(err) => tool_error(err),
-        })
-    }
-
-    #[allow(clippy::too_many_lines)]
-    async fn call_tool_by_name(
-        &self,
-        name: &str,
-        args: JsonObject,
-    ) -> Result<CallToolResult, McpError> {
-        let window = self.window_arg(&args)?;
-        match name {
-            "ping" => self.call_app_tool("ping", None, window).await,
-            "windows" => self.call_app_tool("windows.list", None, None).await,
-            "state" => self.call_app_tool("state", None, window).await,
-            "snapshot" => self
-                .call_app_tool(
-                    "snapshot",
-                    Some(json!({
-                        "interactive": optional_bool(&args, "interactive")?.unwrap_or(false),
-                        "selector": optional_string(&args, "selector")?,
-                        "depth": optional_u8(&args, "depth")?,
-                    })),
-                    window,
-                )
-                .await,
-            "diff" => {
-                let mut params = json!({
-                    "interactive": optional_bool(&args, "interactive")?.unwrap_or(false),
-                    "selector": optional_string(&args, "selector")?,
-                    "depth": optional_u8(&args, "depth")?,
-                });
-                if let Some(reference) = args.get("reference") {
-                    params["reference"] = reference.clone();
-                }
-                self.call_app_tool("diff", Some(params), window).await
-            }
-            "click" => self.target_call("click", &args, window).await,
-            "fill" => {
-                let mut params = target_params(&required_string(&args, "target")?);
-                params["value"] = json!(required_string(&args, "value")?);
-                self.call_app_tool("fill", Some(params), window).await
-            }
-            "type" => {
-                let mut params = target_params(&required_string(&args, "target")?);
-                params["text"] = json!(required_string(&args, "text")?);
-                self.call_app_tool("type", Some(params), window).await
-            }
-            "press" => {
-                self.call_app_tool(
-                    "press",
-                    Some(json!({"key": required_string(&args, "key")?})),
-                    window,
-                )
-                .await
-            }
-            "select" => {
-                let mut params = target_params(&required_string(&args, "target")?);
-                params["value"] = json!(required_string(&args, "value")?);
-                self.call_app_tool("select", Some(params), window).await
-            }
-            "check" => self.target_call("check", &args, window).await,
-            "scroll" => {
-                self.call_app_tool(
-                    "scroll",
-                    Some(json!({
-                        "direction": optional_string(&args, "direction")?.unwrap_or_else(|| "down".to_owned()),
-                        "amount": optional_i32(&args, "amount")?,
-                        "ref": optional_ref(&args)?,
-                    })),
-                    window,
-                )
-                .await
-            }
-            "drag" => {
-                let source = required_string(&args, "source")?;
-                let mut params = json!({"source": target_params(&source)});
-                let target = optional_string(&args, "target")?;
-                let offset = args.get("offset").cloned();
-                match (target, offset) {
-                    (Some(_), Some(_)) => {
-                        return Err(invalid_params(
-                            "drag accepts either 'target' or 'offset', not both",
-                        ));
-                    }
-                    (None, None) => {
-                        return Err(invalid_params("drag requires either 'target' or 'offset'"));
-                    }
-                    (Some(target), None) => {
-                        params["target"] = target_params(&target);
-                    }
-                    (None, Some(offset)) => {
-                        params["offset"] = offset;
-                    }
-                }
-                self.call_app_tool("drag", Some(params), window).await
-            }
-            "drop" => self.call_drop_tool(args, window).await,
-            "text" => self.target_call("text", &args, window).await,
-            "html" => {
-                let params =
-                    optional_string(&args, "target")?.map(|target| target_params(&target));
-                self.call_app_tool("html", params, window).await
-            }
-            "value" => self.target_call("value", &args, window).await,
-            "attrs" => self.target_call("attrs", &args, window).await,
-            "eval" => {
-                self.call_app_tool(
-                    "eval",
-                    Some(json!({"script": required_string(&args, "script")?})),
-                    window,
-                )
-                .await
-            }
-            "ipc" => {
-                self.call_app_tool(
-                    "ipc",
-                    Some(json!({
-                        "command": required_string(&args, "command")?,
-                        "args": args.get("args").cloned(),
-                    })),
-                    window,
-                )
-                .await
-            }
-            "screenshot" => {
-                self.call_app_tool(
-                    "screenshot",
-                    Some(json!({"selector": optional_string(&args, "selector")?})),
-                    window,
-                )
-                .await
-            }
-            "navigate" => {
-                self.call_app_tool(
-                    "navigate",
-                    Some(json!({"url": required_string(&args, "url")?})),
-                    window,
-                )
-                .await
-            }
-            "url" => self.call_app_tool("url", None, window).await,
-            "title" => self.call_app_tool("title", None, window).await,
-            "wait" => {
-                self.call_app_tool(
-                    "wait",
-                    Some(json!({
-                        "target": optional_string(&args, "target")?,
-                        "selector": optional_string(&args, "selector")?,
-                        "gone": optional_bool(&args, "gone")?.unwrap_or(false),
-                        "timeout": optional_u64(&args, "timeout")?.unwrap_or(10_000),
-                    })),
-                    window,
-                )
-                .await
-            }
-            "watch" => {
-                let mut watch_params = json!({
-                    "selector": optional_string(&args, "selector")?,
-                    "timeout": optional_u64(&args, "timeout")?.unwrap_or(10_000),
-                    "stable": optional_u64(&args, "stable")?.unwrap_or(300),
-                });
-                if optional_bool(&args, "require_mutation")?.unwrap_or(false) {
-                    watch_params["requireMutation"] = json!(true);
-                }
-                self.call_app_tool("watch", Some(watch_params), window).await
-            }
-            "logs" => self.call_logs_tool(&args, window).await,
-            "network" => self.call_network_tool(&args, window).await,
-            "storage_get" => {
-                self.call_app_tool(
-                    "storage.get",
-                    Some(json!({
-                        "key": required_string(&args, "key")?,
-                        "session": optional_bool(&args, "session")?.unwrap_or(false),
-                    })),
-                    window,
-                )
-                .await
-            }
-            "storage_set" => {
-                self.call_app_tool(
-                    "storage.set",
-                    Some(json!({
-                        "key": required_string(&args, "key")?,
-                        "value": required_string(&args, "value")?,
-                        "session": optional_bool(&args, "session")?.unwrap_or(false),
-                    })),
-                    window,
-                )
-                .await
-            }
-            "storage_list" => {
-                self.call_app_tool(
-                    "storage.list",
-                    Some(json!({"session": optional_bool(&args, "session")?.unwrap_or(false)})),
-                    window,
-                )
-                .await
-            }
-            "storage_clear" => {
-                self.call_app_tool(
-                    "storage.clear",
-                    Some(json!({"session": optional_bool(&args, "session")?.unwrap_or(false)})),
-                    window,
-                )
-                .await
-            }
-            "forms" => {
-                let params =
-                    optional_string(&args, "selector")?.map(|selector| json!({ "selector": selector }));
-                self.call_app_tool("forms.dump", params, window).await
-            }
-            "assert_text" => self.assert_text(args, window, false).await,
-            "assert_contains" => self.assert_text(args, window, true).await,
-            "assert_visible" => self.assert_bool("visible", args, window, true).await,
-            "assert_hidden" => self.assert_bool("visible", args, window, false).await,
-            "assert_value" => self.assert_value(args, window).await,
-            "assert_count" => self.assert_count(args, window).await,
-            "assert_checked" => self.assert_bool("checked", args, window, true).await,
-            "assert_url" => self.assert_url(args, window).await,
-            "record_start" => self.call_app_tool("record.start", None, window).await,
-            "record_stop" => self.call_app_tool("record.stop", None, window).await,
-            "record_status" => self.call_app_tool("record.status", None, window).await,
-            "replay" => self.call_replay_tool(args, window).await,
-            _ => Err(McpError::new(
-                ErrorCode::METHOD_NOT_FOUND,
-                format!("unknown tool: {name}"),
-                None,
-            )),
-        }
-    }
-
-    async fn target_call(
-        &self,
-        method: &'static str,
-        args: &JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        let target = required_string(args, "target")?;
-        self.call_app_tool(method, Some(target_params(&target)), window)
-            .await
-    }
-
-    async fn call_logs_tool(
-        &self,
-        args: &JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        if optional_bool(args, "clear")?.unwrap_or(false) {
-            return self.call_app_tool("console.clear", None, window).await;
-        }
-        let mut params = Map::new();
-        insert_optional_string(&mut params, args, "level")?;
-        insert_optional_usize(&mut params, args, "last")?;
-        self.call_app_tool("console.getLogs", Some(Value::Object(params)), window)
-            .await
-    }
-
-    async fn call_network_tool(
-        &self,
-        args: &JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        if optional_bool(args, "clear")?.unwrap_or(false) {
-            return self.call_app_tool("network.clear", None, window).await;
-        }
-        let mut params = Map::new();
-        insert_optional_string(&mut params, args, "filter")?;
-        insert_optional_usize(&mut params, args, "last")?;
-        if optional_bool(args, "failed")?.unwrap_or(false) {
-            params.insert("failedOnly".into(), json!(true));
-        }
-        self.call_app_tool("network.getRequests", Some(Value::Object(params)), window)
-            .await
-    }
-
-    async fn call_drop_tool(
-        &self,
-        args: JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        let target = required_string(&args, "target")?;
-        let files: Vec<PathBuf> = required_string_array(&args, "files")?
-            .into_iter()
-            .map(PathBuf::from)
-            .collect();
-        if files.is_empty() {
-            return Err(invalid_params("'files' must contain at least one path"));
-        }
-        let mut client = match self.connect_client().await {
-            Ok(client) => client,
-            Err(err) => return Ok(tool_error(err)),
-        };
-        Ok(
-            match run_drop_command(&mut client, &target, files, window.as_deref()).await {
-                Ok(result) => tool_success(result),
-                Err(err) => tool_error(err),
-            },
-        )
-    }
-
-    async fn call_replay_tool(
-        &self,
-        args: JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        let path = PathBuf::from(required_string(&args, "path")?);
-        let export = optional_string(&args, "export")?;
-        if let Some(export) = export.as_deref() {
-            return Ok(match export_replay_file(&path, export) {
-                Ok(result) => tool_success(result),
-                Err(err) => tool_error(err),
-            });
-        }
-        let mut client = match self.connect_client().await {
-            Ok(client) => client,
-            Err(err) => return Ok(tool_error(err)),
-        };
-        Ok(
-            match run_replay_command(&mut client, &path, None, window.as_deref()).await {
-                Ok(result) => tool_success(result),
-                Err(err) => tool_error(err),
-            },
-        )
-    }
-
-    async fn assert_text(
-        &self,
-        args: JsonObject,
-        window: Option<String>,
-        contains: bool,
-    ) -> Result<CallToolResult, McpError> {
-        let expected = required_string(&args, "expected")?;
-        let target = required_string(&args, "target")?;
-        let actual = match self
-            .call_app("text", Some(target_params(&target)), window)
-            .await
-        {
-            Ok(Value::String(actual)) => actual,
-            Ok(other) => {
-                return Ok(tool_error_msg(format!(
-                    "expected string response, got {other}"
-                )));
-            }
-            Err(err) => return Ok(tool_error(err)),
-        };
-        let passed = if contains {
-            actual.contains(&expected)
-        } else {
-            actual == expected
-        };
-        if passed {
-            Ok(tool_success(json!({"ok": true})))
-        } else {
-            let message = if contains {
-                format!("text does not contain \"{expected}\", got \"{actual}\"")
-            } else {
-                format!("expected text \"{expected}\", got \"{actual}\"")
-            };
-            Ok(tool_error_msg(message))
-        }
-    }
-
-    async fn assert_value(
-        &self,
-        args: JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        let expected = required_string(&args, "expected")?;
-        let target = required_string(&args, "target")?;
-        let actual = match self
-            .call_app("value", Some(target_params(&target)), window)
-            .await
-        {
-            Ok(Value::String(actual)) => actual,
-            Ok(other) => {
-                return Ok(tool_error_msg(format!(
-                    "expected string response, got {other}"
-                )));
-            }
-            Err(err) => return Ok(tool_error(err)),
-        };
-        if actual == expected {
-            Ok(tool_success(json!({"ok": true})))
-        } else {
-            Ok(tool_error_msg(format!(
-                "expected value \"{expected}\", got \"{actual}\""
-            )))
-        }
-    }
-
-    async fn assert_bool(
-        &self,
-        method: &'static str,
-        args: JsonObject,
-        window: Option<String>,
-        expected: bool,
-    ) -> Result<CallToolResult, McpError> {
-        let target = required_string(&args, "target")?;
-        let field = method;
-        let actual = match self
-            .call_app(method, Some(target_params(&target)), window)
-            .await
-        {
-            Ok(result) => match result.get(field).and_then(Value::as_bool) {
-                Some(value) => value,
-                None => return Ok(tool_error_msg(format!("missing boolean field '{field}'"))),
-            },
-            Err(err) => return Ok(tool_error(err)),
-        };
-        if actual == expected {
-            Ok(tool_success(json!({"ok": true})))
-        } else if method == "visible" && expected {
-            Ok(tool_error_msg("element is not visible"))
-        } else if method == "visible" {
-            Ok(tool_error_msg("element is visible"))
-        } else if method == "checked" && expected {
-            Ok(tool_error_msg("element is not checked"))
-        } else if method == "checked" {
-            Ok(tool_error_msg("element is checked"))
-        } else {
-            Ok(tool_error_msg(format!(
-                "element '{method}' state mismatch: expected {expected}"
-            )))
-        }
-    }
-
-    async fn assert_count(
-        &self,
-        args: JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        let selector = required_string(&args, "selector")?;
-        let expected = required_u64(&args, "expected")?;
-        let actual = match self
-            .call_app("count", Some(json!({"selector": selector})), window)
-            .await
-        {
-            Ok(result) => match result.get("count").and_then(Value::as_u64) {
-                Some(value) => value,
-                None => return Ok(tool_error_msg("missing 'count' field")),
-            },
-            Err(err) => return Ok(tool_error(err)),
-        };
-        if actual == expected {
-            Ok(tool_success(json!({"ok": true})))
-        } else {
-            Ok(tool_error_msg(format!(
-                "expected {expected} elements, found {actual}"
-            )))
-        }
-    }
-
-    async fn assert_url(
-        &self,
-        args: JsonObject,
-        window: Option<String>,
-    ) -> Result<CallToolResult, McpError> {
-        let expected = required_string(&args, "expected")?;
-        let actual = match self.call_app("url", None, window).await {
-            Ok(Value::String(actual)) => actual,
-            Ok(other) => {
-                return Ok(tool_error_msg(format!(
-                    "expected string response, got {other}"
-                )));
-            }
-            Err(err) => return Ok(tool_error(err)),
-        };
-        if actual.contains(&expected) {
-            Ok(tool_success(json!({"ok": true})))
-        } else {
-            Ok(tool_error_msg(format!(
-                "URL does not contain \"{expected}\", got \"{actual}\""
-            )))
-        }
-    }
-
-    fn window_arg(&self, args: &JsonObject) -> Result<Option<String>, McpError> {
-        optional_string(args, "window").map(|window| window.or_else(|| self.window.clone()))
-    }
-}
-
-impl ServerHandler for PilotMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(
-                Implementation::new("tauri-pilot", env!("CARGO_PKG_VERSION"))
-                    .with_title("tauri-pilot")
-                    .with_description("MCP server for testing Tauri apps through tauri-pilot"),
-            )
-            .with_instructions(
-                "Use these tools to inspect and control a running Tauri app through tauri-pilot.",
-            )
-    }
-
-    fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<ListToolsResult, McpError>> + MaybeSendFuture + '_ {
-        std::future::ready(Ok(ListToolsResult::with_all_items(tools())))
-    }
-
-    fn call_tool(
-        &self,
-        request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<CallToolResult, McpError>> + MaybeSendFuture + '_ {
-        let name = request.name.to_string();
-        let args = request.arguments.unwrap_or_default();
-        async move { self.call_tool_by_name(&name, args).await }
-    }
-
-    fn get_tool(&self, name: &str) -> Option<Tool> {
-        cached_tools()
-            .iter()
-            .find(|tool| tool.name == name)
-            .cloned()
-    }
-}
 
 struct ToolSpec {
     name: &'static str,
@@ -993,11 +390,11 @@ fn tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-fn tools() -> Vec<Tool> {
+pub(super) fn tools() -> Vec<Tool> {
     cached_tools().clone()
 }
 
-fn cached_tools() -> &'static Vec<Tool> {
+pub(super) fn cached_tools() -> &'static Vec<Tool> {
     static TOOLS: OnceLock<Vec<Tool>> = OnceLock::new();
     TOOLS.get_or_init(build_tools)
 }
@@ -1360,9 +757,12 @@ fn replay_schema() -> Arc<JsonObject> {
 #[cfg(test)]
 mod tests {
     use super::super::banner::startup_banner;
+    use super::super::server::PilotMcpServer;
     use super::*;
     #[cfg(unix)]
     use crate::protocol::{Request, Response};
+    use rmcp::model::CallToolResult;
+    use serde_json::{Map, Value, json};
     #[cfg(unix)]
     use serial_test::serial;
     #[cfg(unix)]
@@ -1482,8 +882,7 @@ mod tests {
         args.insert("path".to_owned(), json!(recording.display().to_string()));
         args.insert("export".to_owned(), json!("sh"));
 
-        let result = pilot
-            .call_tool_by_name("replay", args)
+        let result = super::super::handlers::call_tool_by_name(&pilot, "replay", args)
             .await
             .expect("tool call succeeds");
 
@@ -1561,8 +960,7 @@ mod tests {
         let pilot = PilotMcpServer::new(Some(socket.clone()), None);
         let mut args = Map::new();
         args.insert("target".to_owned(), json!("@e3"));
-        let result = pilot
-            .call_tool_by_name("click", args)
+        let result = super::super::handlers::call_tool_by_name(&pilot, "click", args)
             .await
             .expect("tool call succeeds");
         assert_eq!(result.is_error, Some(false));
@@ -1579,8 +977,7 @@ mod tests {
     async fn call_click(pilot: &PilotMcpServer) -> CallToolResult {
         let mut args = Map::new();
         args.insert("target".to_owned(), json!("@e3"));
-        pilot
-            .call_tool_by_name("click", args)
+        super::super::handlers::call_tool_by_name(pilot, "click", args)
             .await
             .expect("tool call succeeds")
     }
