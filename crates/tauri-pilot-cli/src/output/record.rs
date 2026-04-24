@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use super::strip_ansi;
-use crate::output::text::format_text;
+use super::text::format_text;
 
 /// Format a record command result.
 ///
