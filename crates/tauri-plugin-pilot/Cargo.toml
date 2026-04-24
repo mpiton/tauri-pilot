@@ -45,7 +45,7 @@ windows = { version = "0.52", features = [
 ] }
 
 [target.'cfg(target_os="linux")'.dependencies]
-enigo = { version = "0.6.1", features = ["wayland"] }
+enigo = { version = "0.6.1", features = ["wayland"], optional = true }
 
 [dev-dependencies]
 serial_test = "3"
