@@ -23,8 +23,8 @@ use rmcp::{
 
 use super::args::optional_string;
 use super::banner::print_startup_banner;
+use super::tools;
 use crate::client::Client;
-use crate::mcp::_legacy;
 use crate::resolve_socket;
 
 /// MCP server that bridges Claude/LLM tool calls to a live Tauri app via Unix socket.
@@ -121,7 +121,7 @@ impl ServerHandler for PilotMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<ListToolsResult, McpError>> + MaybeSendFuture + '_ {
-        std::future::ready(Ok(ListToolsResult::with_all_items(_legacy::tools())))
+        std::future::ready(Ok(ListToolsResult::with_all_items(tools::tools())))
     }
 
     fn call_tool(
@@ -135,7 +135,7 @@ impl ServerHandler for PilotMcpServer {
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        _legacy::cached_tools()
+        tools::cached_tools()
             .iter()
             .find(|tool| tool.name == name)
             .cloned()

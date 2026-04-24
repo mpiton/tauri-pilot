@@ -14,5 +14,6 @@ mod handlers;
 mod responses;
 mod schemas;
 mod server;
+mod tools;
 
 pub(crate) use server::run_mcp_server;
