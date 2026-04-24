@@ -52,3 +52,31 @@ pub fn format_snapshot(value: &serde_json::Value) {
         println!("{line}");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_snapshot_with_elements() {
+        let snapshot = json!({
+            "elements": [
+                {"ref": "e1", "role": "heading", "name": "Title", "depth": 0},
+                {"ref": "e2", "role": "textbox", "name": "Search", "depth": 1, "value": ""},
+                {"ref": "e3", "role": "button", "name": "Submit", "depth": 1},
+                {"ref": "e4", "role": "checkbox", "name": "Agree", "depth": 1, "checked": true},
+                {"ref": "e5", "role": "button", "name": "Disabled", "depth": 2, "disabled": true},
+            ]
+        });
+        // Just verify it doesn't panic — output goes to stdout
+        format_snapshot(&snapshot);
+    }
+
+    #[test]
+    fn test_format_snapshot_empty() {
+        format_snapshot(&json!({"elements": []}));
+        format_snapshot(&json!({}));
+        format_snapshot(&json!(null));
+    }
+}

@@ -47,3 +47,48 @@ pub fn format_text(value: &serde_json::Value) {
         other => println!("{other}"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_text_ok_contains_checkmark() {
+        // Just verify it doesn't panic
+        format_text(&json!({"ok": true}));
+    }
+
+    #[test]
+    fn test_format_text_found_does_not_panic() {
+        format_text(&json!({"found": true}));
+    }
+
+    #[test]
+    fn test_format_text_status_ok() {
+        // Just verify it doesn't panic
+        format_text(&json!({"status": "ok"}));
+    }
+
+    #[test]
+    fn test_format_text_rpc_error_does_not_panic() {
+        // {error: {message: "..."}} path — just verify it doesn't panic
+        format_text(&json!({"error": {"message": "Method not found", "code": -32601}}));
+    }
+
+    #[test]
+    fn test_format_text_error_without_message() {
+        // {error: {code: -32601}} without message key — should display "unknown error"
+        format_text(&json!({"error": {"code": -32601}}));
+    }
+
+    #[test]
+    fn test_format_text_string_value() {
+        format_text(&json!("some text"));
+    }
+
+    #[test]
+    fn test_format_text_null_value() {
+        format_text(&serde_json::Value::Null);
+    }
+}

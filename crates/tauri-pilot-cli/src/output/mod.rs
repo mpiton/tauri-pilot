@@ -15,6 +15,13 @@ mod text;
 mod watch;
 mod windows;
 
+#[cfg(test)]
+mod diff_tests;
+#[cfg(test)]
+mod forms_tests;
+#[cfg(test)]
+mod watch_tests;
+
 pub use diff::format_diff;
 pub use forms::format_forms;
 pub use json::format_json;
@@ -78,4 +85,37 @@ pub(super) fn format_timestamp(timestamp: u64) -> String {
     let m = (secs % 3600) / 60;
     let s = secs % 60;
     format!("{h:02}:{m:02}:{s:02}.{ms:03}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_ansi;
+
+    #[test]
+    fn test_strip_ansi_removes_csi_sequences() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+        assert_eq!(strip_ansi("\x1b[2J\x1b[Hcleared"), "cleared");
+    }
+
+    #[test]
+    fn test_strip_ansi_removes_osc_sequences() {
+        // BEL terminator
+        assert_eq!(strip_ansi("\x1b]0;title\x07text"), "text");
+        // ST terminator (ESC \)
+        assert_eq!(strip_ansi("\x1b]0;title\x1b\\text"), "text");
+    }
+
+    #[test]
+    fn test_strip_ansi_preserves_backslash_in_osc() {
+        // Bare backslash inside OSC should not terminate early
+        assert_eq!(
+            strip_ansi("\x1b]8;;http://host/path\\to\\file\x07link"),
+            "link"
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi_preserves_plain_text() {
+        assert_eq!(strip_ansi("hello world"), "hello world");
+    }
 }

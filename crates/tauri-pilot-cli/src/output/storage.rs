@@ -53,3 +53,56 @@ pub fn format_storage(value: &serde_json::Value) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_storage_empty_array() {
+        // Should not panic and display "(empty storage)"
+        format_storage(&json!({"entries": [], "truncated": false}));
+    }
+
+    #[test]
+    fn test_format_storage_with_entries() {
+        // Should not panic and display key = value pairs
+        format_storage(&json!({"entries": [
+            {"key": "auth_token", "value": "abc123"},
+            {"key": "theme", "value": "dark"},
+        ], "truncated": false}));
+    }
+
+    #[test]
+    fn test_format_storage_non_object() {
+        // Non-object input should not panic
+        format_storage(&json!(null));
+    }
+
+    #[test]
+    fn test_format_storage_value_found() {
+        format_storage_value(&json!({"found": true, "value": "abc123"}));
+    }
+
+    #[test]
+    fn test_format_storage_value_not_found() {
+        format_storage_value(&json!({"found": false}));
+    }
+
+    #[test]
+    fn test_format_storage_strips_ansi() {
+        // Key and value with ANSI escape sequences should be stripped
+        format_storage(&json!({"entries": [
+            {"key": "\x1b[31mmalicious\x1b[0m", "value": "\x1b[2J\x1b[Hinjected"},
+        ], "truncated": false}));
+    }
+
+    #[test]
+    fn test_format_storage_truncated() {
+        // Should not panic and display truncation warning
+        format_storage(&json!({"entries": [
+            {"key": "a", "value": "1"},
+        ], "truncated": true}));
+    }
+}

@@ -65,3 +65,37 @@ pub fn format_network(value: &serde_json::Value) -> String {
     }
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_network_with_entries() {
+        let requests = json!([
+            {"id": 1, "timestamp": 3_661_123_u64, "method": "GET", "url": "/api/users", "status": 200, "duration_ms": 150, "error": null, "request_size": 0, "response_size": 1024},
+            {"id": 2, "timestamp": 3_661_500_u64, "method": "POST", "url": "/api/login", "status": 500, "duration_ms": 2000, "error": "Internal Server Error", "request_size": 42, "response_size": 128},
+        ]);
+        let output = format_network(&requests);
+        assert!(output.contains("01:01:01.123"));
+        assert!(output.contains("GET"));
+        assert!(output.contains("/api/users"));
+        assert!(output.contains("150ms"));
+        assert!(output.contains("POST"));
+        assert!(output.contains("/api/login"));
+        assert!(output.contains("Internal Server Error"));
+    }
+
+    #[test]
+    fn test_format_network_empty_array() {
+        let output = format_network(&json!([]));
+        assert!(output.contains("No requests captured"));
+    }
+
+    #[test]
+    fn test_format_network_non_array() {
+        let output = format_network(&json!({"unexpected": true}));
+        assert!(output.contains("Unexpected"));
+    }
+}

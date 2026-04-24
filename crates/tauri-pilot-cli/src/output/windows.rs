@@ -70,3 +70,52 @@ pub fn format_windows(value: &serde_json::Value) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_windows_empty() {
+        format_windows(&json!({"windows": []}));
+    }
+
+    #[test]
+    fn test_format_windows_single() {
+        let value = json!({
+            "windows": [
+                {"label": "main", "url": "http://localhost:1420/", "title": "My Tauri App"}
+            ]
+        });
+        format_windows(&value);
+    }
+
+    #[test]
+    fn test_format_windows_multiple() {
+        let value = json!({
+            "windows": [
+                {"label": "main", "url": "http://localhost:1420/", "title": "My Tauri App"},
+                {"label": "settings", "url": "http://localhost:1420/settings", "title": "Settings"},
+            ]
+        });
+        format_windows(&value);
+    }
+
+    #[test]
+    fn test_format_windows_missing_fields() {
+        let value = json!({
+            "windows": [
+                {"label": "main"},
+                {"url": "http://localhost:1420/"},
+                {},
+            ]
+        });
+        format_windows(&value);
+    }
+
+    #[test]
+    fn test_format_windows_no_windows_key() {
+        format_windows(&json!({}));
+    }
+}

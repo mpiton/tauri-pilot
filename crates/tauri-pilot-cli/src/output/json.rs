@@ -13,3 +13,14 @@ pub fn format_json(value: &serde_json::Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_json_does_not_panic() {
+        format_json(&json!({"status": "ok"})).expect("format_json succeeds");
+    }
+}

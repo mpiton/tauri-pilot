@@ -52,3 +52,33 @@ pub fn format_logs(value: &serde_json::Value) -> String {
     }
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_logs_with_entries() {
+        let logs = json!([
+            {"id": 1, "timestamp": 3_661_123_u64, "level": "error", "args": ["fail"], "source": null},
+            {"id": 2, "timestamp": 3_661_500_u64, "level": "info", "args": ["ok", 42], "source": null},
+        ]);
+        let output = format_logs(&logs);
+        assert!(output.contains("01:01:01.123"));
+        assert!(output.contains("fail"));
+        assert!(output.contains("ok 42"));
+    }
+
+    #[test]
+    fn test_format_logs_empty_array() {
+        let output = format_logs(&json!([]));
+        assert!(output.contains("No logs captured"));
+    }
+
+    #[test]
+    fn test_format_logs_non_array() {
+        let output = format_logs(&json!({"unexpected": true}));
+        assert!(output.contains("Unexpected"));
+    }
+}
