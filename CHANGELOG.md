@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Windows security hardening** — fixed heap overflow in ACL allocation, use-after-free on the SID buffer, a no-op peer-SID check (`OpenProcessToken` on the impersonated thread replaced with `OpenThreadToken`), UB on the alloc-failure path, silent fallback to a broader default DACL, and a permanently-aborting accept loop. Also switched `instances_dir` creation to `std::fs::create_dir_all` for correctness on clean profiles, and added a regression test asserting the bound pipe carries a user-only DACL with one ACE ([#64])
+- `tauri-pilot-cli` Windows builds now enable the `Win32_Foundation` and `Win32_System_Threading` features on the `windows` crate so `is_pid_alive` compiles on Windows CI ([#64])
+- `tauri-plugin-pilot` marks the Linux-target `enigo` entry as `optional = true` so `--no-default-features` actually drops the dependency — previously the `press` feature gate was silently defeated by cargo merging the target-specific entry with the top-level one ([#64])
+- `tauri-plugin-pilot` server now caps per-line reads using `AsyncReadExt::take` before invoking `read_line`, so a peer flooding bytes without a newline can no longer OOM the host process — the existing `MAX_LINE_LENGTH` check was applied after the full line had already been buffered ([#64])
+- `tauri-pilot-cli` Unix client tests use a per-process, atomic-counter socket path instead of hard-coded `/tmp/tauri-pilot-test-*.sock` paths, so parallel `cargo test` runs no longer cross-wire through the same socket file ([#64])
+- `tauri-pilot-cli` Windows registry-resolution tests mock entries with `std::process::id()` instead of a fabricated dead PID, so the liveness filter added in the Windows support work doesn't skip them ([#64])
+
+### Changed
+
+- `tauri-plugin-pilot` `init()` doc comment clarifies the no-op fallback now excludes Windows too and mentions the Named Pipe server path ([#64])
+
+### Removed
+
+- `.gitignore` no longer ignores `CLAUDE.md`, `.sisyphus/`, `.agents/`, or `skills-lock.json` — these are personal tooling entries that belong in a user-level `~/.gitignore_global`, not in the repo ([#64])
 
 ## [0.4.0] - 2026-04-17
 

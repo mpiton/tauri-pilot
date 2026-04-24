@@ -1342,7 +1342,9 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
 #[cfg(windows)]
 fn resolve_socket_windows() -> Result<PathBuf> {
     use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-    use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
 
     fn is_pid_alive(pid: u32) -> bool {
         let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
@@ -1366,8 +1368,9 @@ fn resolve_socket_windows() -> Result<PathBuf> {
         created_at: u64,
     }
 
-    let local_app_data =
-        std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).ok_or_else(|| {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
             anyhow::anyhow!(
                 "LOCALAPPDATA environment variable is not set or empty. \
                  Is a Tauri app running?"
@@ -1419,9 +1422,9 @@ fn resolve_socket_windows() -> Result<PathBuf> {
         }
     }
 
-    newest
-        .map(|(_, pipe)| pipe)
-        .ok_or_else(|| anyhow::anyhow!("No active tauri-pilot instance found. Is a Tauri app running?"))
+    newest.map(|(_, pipe)| pipe).ok_or_else(|| {
+        anyhow::anyhow!("No active tauri-pilot instance found. Is a Tauri app running?")
+    })
 }
 
 #[cfg(not(windows))]
@@ -1633,12 +1636,14 @@ mod tests {
         std::fs::create_dir_all(&instances_dir).expect("create reg test dir");
 
         let pipe = r"\\.\pipe\tauri-pilot-testapp";
+        // Use the current process id so the liveness check in
+        // `resolve_socket_windows` doesn't skip this mock entry as stale.
         std::fs::write(
             instances_dir.join("testapp.json"),
             serde_json::to_string_pretty(&serde_json::json!({
-                "pid": 1234,
+                "pid": std::process::id(),
                 "pipe": pipe,
-                "created_at": 1745200000
+                "created_at": 1745200000u64
             }))
             .unwrap(),
         )
@@ -1672,20 +1677,30 @@ mod tests {
         let instances_dir = dir.join("tauri-pilot").join("instances");
         std::fs::create_dir_all(&instances_dir).expect("create reg test dir");
 
+        // Both entries must use live PIDs — otherwise the liveness filter in
+        // `resolve_socket_windows` would skip them as stale and the test
+        // would flake. Using the current process id keeps both "alive".
+        let live_pid = std::process::id();
         let old_entry = serde_json::json!({
-            "pid": 1111,
+            "pid": live_pid,
             "pipe": r"\\.\pipe\tauri-pilot-old",
             "created_at": 1000
         });
         let new_entry = serde_json::json!({
-            "pid": 2222,
+            "pid": live_pid,
             "pipe": r"\\.\pipe\tauri-pilot-new",
             "created_at": 2000
         });
-        std::fs::write(instances_dir.join("old_app.json"), serde_json::to_string(&old_entry).unwrap())
-            .expect("write mock old instance");
-        std::fs::write(instances_dir.join("new_app.json"), serde_json::to_string(&new_entry).unwrap())
-            .expect("write mock new instance");
+        std::fs::write(
+            instances_dir.join("old_app.json"),
+            serde_json::to_string(&old_entry).unwrap(),
+        )
+        .expect("write mock old instance");
+        std::fs::write(
+            instances_dir.join("new_app.json"),
+            serde_json::to_string(&new_entry).unwrap(),
+        )
+        .expect("write mock new instance");
 
         unsafe { std::env::set_var("LOCALAPPDATA", &dir) };
         let result = resolve_socket(None);
