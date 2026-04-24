@@ -32,9 +32,11 @@ const BRIDGE_JS: &str = concat!(
 
 /// Initialize the tauri-pilot plugin.
 ///
-/// On non-Unix platforms or in release builds, returns a no-op plugin.
+/// On non-Unix, non-Windows platforms or in release builds, returns a no-op plugin.
 /// In debug builds on Unix, injects the JS bridge, stores an `EvalEngine`,
 /// and starts a Unix socket server at `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` (falls back to `/tmp` if unavailable).
+/// In debug builds on Windows, starts a Named Pipe server at
+/// `\\.\pipe\tauri-pilot-{identifier}` and registers the instance under `%LOCALAPPDATA%\tauri-pilot\instances\`.
 #[must_use]
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     #[cfg(not(all(any(unix, windows), debug_assertions)))]
