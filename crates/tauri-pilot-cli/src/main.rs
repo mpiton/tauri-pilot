@@ -13,7 +13,9 @@ use base64::Engine;
 use clap::Parser;
 use serde_json::{Value, json};
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use cli::{
@@ -229,10 +231,8 @@ async fn follow_logs(
         if let Some(l) = level {
             params.insert("level".into(), json!(l));
         }
-        if first_poll {
-            if let Some(n) = last {
-                params.insert("last".into(), json!(n));
-            }
+        if first_poll && let Some(n) = last {
+            params.insert("last".into(), json!(n));
             first_poll = false;
         }
         let result = client
@@ -283,10 +283,8 @@ async fn follow_network(
         if failed {
             params.insert("failedOnly".into(), json!(true));
         }
-        if first_poll {
-            if let Some(n) = last {
-                params.insert("last".into(), json!(n));
-            }
+        if first_poll && let Some(n) = last {
+            params.insert("last".into(), json!(n));
             first_poll = false;
         }
         let result = client
@@ -1322,17 +1320,117 @@ pub(crate) fn resolve_socket(explicit: Option<PathBuf>) -> Result<PathBuf> {
         return Ok(path);
     }
 
-    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
-        let xdg = PathBuf::from(xdg);
-        if let Some(socket) = newest_socket_in_dir(&xdg) {
-            return Ok(socket);
+    #[cfg(unix)]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+            let xdg = PathBuf::from(xdg);
+            if let Some(socket) = newest_socket_in_dir(&xdg) {
+                return Ok(socket);
+            }
+        }
+
+        newest_socket_in_dir(Path::new("/tmp"))
+            .ok_or_else(|| anyhow::anyhow!("No tauri-pilot socket found. Is a Tauri app running?"))
+    }
+
+    #[cfg(windows)]
+    {
+        resolve_socket_windows()
+    }
+}
+
+#[cfg(windows)]
+fn resolve_socket_windows() -> Result<PathBuf> {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    fn is_pid_alive(pid: u32) -> bool {
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
+        match handle {
+            Ok(h) => {
+                let alive = unsafe {
+                    let mut exit_code: u32 = 0;
+                    GetExitCodeProcess(h, &raw mut exit_code).is_ok()
+                        && exit_code == STILL_ACTIVE.0 as u32
+                };
+                unsafe {
+                    let _ = CloseHandle(h);
+                }
+                alive
+            }
+            Err(_) => false,
         }
     }
 
-    newest_socket_in_dir(Path::new("/tmp"))
-        .ok_or_else(|| anyhow::anyhow!("No tauri-pilot socket found. Is a Tauri app running?"))
+    #[derive(serde::Deserialize)]
+    struct InstanceEntry {
+        pid: u32,
+        pipe: String,
+        created_at: u64,
+    }
+
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "LOCALAPPDATA environment variable is not set or empty. \
+                 Is a Tauri app running?"
+            )
+        })?;
+
+    let instances_dir = PathBuf::from(local_app_data)
+        .join("tauri-pilot")
+        .join("instances");
+
+    if !instances_dir.exists() {
+        anyhow::bail!(
+            "No tauri-pilot instances directory found at {}. \
+             Is a Tauri app running?",
+            instances_dir.display()
+        );
+    }
+
+    let mut newest: Option<(u64, PathBuf)> = None;
+    for entry in std::fs::read_dir(&instances_dir)?.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping corrupted instance file");
+                continue;
+            }
+        };
+        let info: InstanceEntry = match serde_json::from_str(&content) {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "skipping malformed instance file");
+                continue;
+            }
+        };
+        if !is_pid_alive(info.pid) {
+            tracing::debug!(pid = info.pid, path = %path.display(), "skipping stale instance");
+            continue;
+        }
+        let should_update = match newest {
+            None => true,
+            Some((current_max, _)) => info.created_at > current_max,
+        };
+        if should_update {
+            newest = Some((info.created_at, PathBuf::from(info.pipe)));
+        }
+    }
+
+    newest.map(|(_, pipe)| pipe).ok_or_else(|| {
+        anyhow::anyhow!("No active tauri-pilot instance found. Is a Tauri app running?")
+    })
 }
 
+#[cfg(not(windows))]
 fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
@@ -1441,6 +1539,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_finds_socket_in_xdg_runtime_dir() {
         let dir =
@@ -1462,6 +1561,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_prefers_xdg_runtime_dir_over_tmp() {
         let dir = std::env::temp_dir().join(format!(
@@ -1491,6 +1591,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_falls_back_to_tmp_when_xdg_unset() {
         let tmp_sock = std::path::PathBuf::from(format!(
@@ -1514,7 +1615,10 @@ mod tests {
             .and_then(|n| n.to_str())
             .expect("socket has a filename");
         assert!(
-            name.starts_with("tauri-pilot-") && name.ends_with(".sock"),
+            name.starts_with("tauri-pilot-")
+                && std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("sock")),
             "expected a tauri-pilot-*.sock path, got: {found:?}"
         );
     }
@@ -1527,12 +1631,101 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
+    #[serial]
+    fn test_resolve_socket_windows_reads_registry() {
+        let dir = std::env::temp_dir().join(format!("tauri-pilot-reg-test-{}", std::process::id()));
+        let instances_dir = dir.join("tauri-pilot").join("instances");
+        std::fs::create_dir_all(&instances_dir).expect("create reg test dir");
+
+        let pipe = r"\\.\pipe\tauri-pilot-testapp";
+        // Use the current process id so the liveness check in
+        // `resolve_socket_windows` doesn't skip this mock entry as stale.
+        std::fs::write(
+            instances_dir.join("testapp.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "pid": std::process::id(),
+                "pipe": pipe,
+                "created_at": 1745200000u64
+            }))
+            .unwrap(),
+        )
+        .expect("write mock registry file");
+
+        unsafe { std::env::set_var("LOCALAPPDATA", &dir) };
+        let result = resolve_socket(None);
+        unsafe { std::env::remove_var("LOCALAPPDATA") };
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(result.expect("pipe found"), std::path::PathBuf::from(pipe));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_resolve_socket_windows_returns_explicit() {
+        let explicit = std::path::PathBuf::from(r"\\.\pipe\my-explicit");
+        let result = resolve_socket(Some(explicit.clone()));
+        assert_eq!(result.expect("explicit path returned"), explicit);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    #[serial]
+    fn test_resolve_socket_windows_picks_newest_instance() {
+        let dir = std::env::temp_dir().join(format!(
+            "tauri-pilot-reg-newest-test-{}",
+            std::process::id()
+        ));
+        let instances_dir = dir.join("tauri-pilot").join("instances");
+        std::fs::create_dir_all(&instances_dir).expect("create reg test dir");
+
+        // Both entries must use live PIDs — otherwise the liveness filter in
+        // `resolve_socket_windows` would skip them as stale and the test
+        // would flake. Using the current process id keeps both "alive".
+        let live_pid = std::process::id();
+        let old_entry = serde_json::json!({
+            "pid": live_pid,
+            "pipe": r"\\.\pipe\tauri-pilot-old",
+            "created_at": 1000
+        });
+        let new_entry = serde_json::json!({
+            "pid": live_pid,
+            "pipe": r"\\.\pipe\tauri-pilot-new",
+            "created_at": 2000
+        });
+        std::fs::write(
+            instances_dir.join("old_app.json"),
+            serde_json::to_string(&old_entry).unwrap(),
+        )
+        .expect("write mock old instance");
+        std::fs::write(
+            instances_dir.join("new_app.json"),
+            serde_json::to_string(&new_entry).unwrap(),
+        )
+        .expect("write mock new instance");
+
+        unsafe { std::env::set_var("LOCALAPPDATA", &dir) };
+        let result = resolve_socket(None);
+        unsafe { std::env::remove_var("LOCALAPPDATA") };
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            result.expect("pipe found"),
+            std::path::PathBuf::from(r"\\.\pipe\tauri-pilot-new")
+        );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_read_script_valid() {
         let mut reader = std::io::Cursor::new(b"document.title");
         assert_eq!(read_script(&mut reader).unwrap(), "document.title");
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_read_script_empty_errors() {
         let mut reader = std::io::Cursor::new(b"");
         let err = read_script(&mut reader).unwrap_err();
@@ -1540,6 +1733,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn test_read_script_blank_errors() {
         let mut reader = std::io::Cursor::new(b"   \n  ");
         let err = read_script(&mut reader).unwrap_err();

@@ -1,31 +1,33 @@
 use crate::protocol::{Request, Response};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
-/// JSON-RPC client over a Unix socket.
+/// JSON-RPC client over a platform-specific transport (Unix socket or Named Pipe).
 pub(crate) struct Client {
-    reader: BufReader<OwnedReadHalf>,
-    writer: OwnedWriteHalf,
+    #[cfg(unix)]
+    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
+    #[cfg(unix)]
+    writer: tokio::net::unix::OwnedWriteHalf,
+    #[cfg(windows)]
+    reader: BufReader<tokio::io::ReadHalf<tokio::net::windows::named_pipe::NamedPipeClient>>,
+    #[cfg(windows)]
+    writer: tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>,
     next_id: u64,
 }
 
 impl Client {
-    /// Connect to the tauri-pilot socket.
+    /// Connect to the tauri-pilot transport.
     pub async fn connect(path: &Path) -> Result<Self> {
-        let stream = UnixStream::connect(path)
-            .await
-            .with_context(|| format!("Cannot connect to socket: {}", path.display()))?;
-
-        let (reader, writer) = stream.into_split();
-        Ok(Self {
-            reader: BufReader::new(reader),
-            writer,
-            next_id: 1,
-        })
+        #[cfg(unix)]
+        {
+            unix::connect(path).await
+        }
+        #[cfg(windows)]
+        {
+            windows::connect(path).await
+        }
     }
 
     /// Send a JSON-RPC request and return the result value.
@@ -57,7 +59,7 @@ impl Client {
 
         let response: Response = serde_json::from_str(line.trim())?;
 
-        if response.id != id {
+        if response.id != serde_json::Value::Number(id.into()) {
             bail!("Response ID mismatch: expected {id}, got {}", response.id);
         }
 
@@ -74,15 +76,37 @@ impl Client {
     }
 }
 
-#[cfg(test)]
+#[cfg(unix)]
+pub mod unix;
+#[cfg(windows)]
+pub mod windows;
+
+#[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
 
-    async fn mock_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// Build a unique socket path per test invocation so parallel `cargo test`
+    /// runs (same process, different tests) don't clobber each other's sockets
+    /// or leak a previous test's bind into the next one.
+    fn unique_socket_path(tag: &str) -> PathBuf {
+        let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        PathBuf::from(format!(
+            "/tmp/tauri-pilot-test-{}-{}-{}.sock",
+            tag,
+            std::process::id(),
+            n
+        ))
+    }
+
+    fn mock_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path).unwrap();
         tokio::spawn(async move {
@@ -95,7 +119,11 @@ mod tests {
                 let resp = if req.method == "ping" {
                     Response::success(req.id, serde_json::json!({"status": "ok"}))
                 } else {
-                    Response::error(req.id, -32601, "Method not found")
+                    Response::error(
+                        serde_json::Value::Number(req.id.into()),
+                        -32601,
+                        "Method not found",
+                    )
                 };
                 let mut bytes = serde_json::to_vec(&resp).unwrap();
                 bytes.push(b'\n');
@@ -121,8 +149,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_ping_returns_ok() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05a.sock");
-        let handle = mock_server(&socket).await;
+        let socket = unique_socket_path("t05a");
+        let handle = mock_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("ping", None).await.unwrap();
@@ -138,7 +166,7 @@ mod tests {
         // success with Value::Null — not a protocol error. This happens when an
         // eval'd JS expression legitimately returns `undefined` (e.g.,
         // `element.click()`, void functions). Regression test for #48.
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05c.sock");
+        let socket = unique_socket_path("t05c");
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = tokio::spawn(async move {
@@ -171,7 +199,7 @@ mod tests {
         // `"result": null`); this test pins down the companion shape where
         // the field is omitted entirely. Both end up as `Value::Null` via
         // `unwrap_or`.
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05d.sock");
+        let socket = unique_socket_path("t05d");
         let _ = std::fs::remove_file(&socket);
         let listener = UnixListener::bind(&socket).unwrap();
         let handle = tokio::spawn(async move {
@@ -198,8 +226,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_unknown_method_returns_error() {
-        let socket = PathBuf::from("/tmp/tauri-pilot-test-t05b.sock");
-        let handle = mock_server(&socket).await;
+        let socket = unique_socket_path("t05b");
+        let handle = mock_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("nonexistent", None).await;

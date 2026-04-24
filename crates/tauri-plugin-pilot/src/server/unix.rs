@@ -1,31 +1,23 @@
+use super::{EvalFn, FocusFn, ListWindowsFn, handle_connection};
+
 use crate::error::Error;
 use crate::eval::EvalEngine;
-use crate::handler;
-use crate::protocol::{Request, Response};
+#[allow(unused_imports)]
+use crate::protocol::Response;
 use crate::recorder::Recorder;
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
+#[allow(unused_imports)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[allow(unused_imports)]
 use tokio::net::{UnixListener, UnixStream};
-
-/// A function that evaluates JS in the webview.
-/// The first argument is an optional window label (`None` means "use default window").
-pub(crate) type EvalFn = Arc<dyn Fn(Option<&str>, String) -> Result<(), String> + Send + Sync>;
-
-/// A function that lists all available webview windows and returns their metadata.
-pub(crate) type ListWindowsFn = Arc<dyn Fn() -> serde_json::Value + Send + Sync>;
-
-/// A function that requests focus for a webview window.
-/// `None` means "default window" (same resolution as `EvalFn`).
-/// Used before native key injection so synthesised OS events reach the right window.
-pub(crate) type FocusFn = Arc<dyn Fn(Option<&str>) -> Result<(), String> + Send + Sync>;
 
 /// RAII guard that removes the socket file on drop (normal shutdown or panic).
 /// Stores the inode at bind time so it only unlinks its own socket, not one
 /// created by an overlapping instance.
-pub(crate) struct SocketGuard {
+pub struct SocketGuard {
     path: std::path::PathBuf,
     inode: u64,
 }
@@ -94,7 +86,7 @@ fn socket_dir() -> std::path::PathBuf {
 }
 
 /// Build the full socket path for the given app identifier.
-pub(crate) fn socket_path(identifier: &str) -> std::path::PathBuf {
+pub fn socket_path(identifier: &str) -> std::path::PathBuf {
     socket_dir().join(format!("tauri-pilot-{identifier}.sock"))
 }
 
@@ -104,7 +96,7 @@ pub(crate) fn socket_path(identifier: &str) -> std::path::PathBuf {
 /// Tries bind first; only removes stale files on `AddrInUse` after verifying
 /// no live server is listening.
 /// Returns a std listener and a [`SocketGuard`] that cleans up on drop.
-pub(crate) fn bind(
+pub fn bind(
     socket_path: &std::path::Path,
 ) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
     // SAFETY: umask is always safe to call; we restore the old mask immediately.
@@ -164,8 +156,8 @@ pub(crate) fn bind(
 
 /// Run the accept loop on a pre-bound std listener. Converts to tokio internally.
 /// The `_guard` is held for its `Drop` cleanup.
-pub(crate) async fn run(
-    std_listener: std::os::unix::net::UnixListener,
+pub async fn run(
+    listener: std::os::unix::net::UnixListener,
     _guard: SocketGuard,
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
@@ -173,7 +165,7 @@ pub(crate) async fn run(
     focus_fn: Option<FocusFn>,
     recorder: Recorder,
 ) {
-    let listener = match UnixListener::from_std(std_listener) {
+    let listener = match UnixListener::from_std(listener) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!("failed to convert listener to tokio: {e}");
@@ -203,6 +195,7 @@ async fn accept_loop(
                 continue;
             }
         };
+
         // Verify the connecting process belongs to the same user.
         match stream.peer_cred() {
             Ok(cred) => {
@@ -237,78 +230,6 @@ async fn accept_loop(
                 tracing::warn!("connection error: {e}");
             }
         });
-    }
-}
-
-async fn handle_connection(
-    stream: UnixStream,
-    engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
-    list_fn: Option<&ListWindowsFn>,
-    focus_fn: Option<&FocusFn>,
-    recorder: &Recorder,
-) -> Result<(), Error> {
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-    let mut line = String::new();
-
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line).await?;
-        if n == 0 {
-            break;
-        }
-
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let response = match serde_json::from_str::<Request>(trimmed) {
-            Ok(req) if req.jsonrpc != "2.0" => Response::error(
-                req.id,
-                -32600,
-                "Invalid JSON-RPC version (expected \"2.0\")",
-            ),
-            Ok(req) => dispatch_request(&req, engine, eval_fn, list_fn, focus_fn, recorder).await,
-            Err(e) => Response::error(0, -32700, format!("Parse error: {e}")),
-        };
-
-        let mut resp_bytes = serde_json::to_vec(&response)?;
-        resp_bytes.push(b'\n');
-        writer.write_all(&resp_bytes).await?;
-        writer.flush().await?;
-    }
-
-    Ok(())
-}
-
-async fn dispatch_request(
-    req: &Request,
-    engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
-    list_fn: Option<&ListWindowsFn>,
-    focus_fn: Option<&FocusFn>,
-    recorder: &Recorder,
-) -> Response {
-    match handler::dispatch(
-        &req.method,
-        req.params.as_ref(),
-        engine,
-        eval_fn,
-        list_fn,
-        focus_fn,
-        recorder,
-    )
-    .await
-    {
-        Ok(result) => Response::success(req.id, result),
-        Err(rpc_err) => Response {
-            jsonrpc: "2.0".to_owned(),
-            id: req.id,
-            result: None,
-            error: Some(rpc_err),
-        },
     }
 }
 
@@ -358,7 +279,7 @@ mod tests {
         reader.read_line(&mut line).await.unwrap();
         let resp: Response = serde_json::from_str(&line).unwrap();
 
-        assert_eq!(resp.id, 1);
+        assert_eq!(resp.id, serde_json::json!(1));
         assert!(resp.error.is_none());
         assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
 
@@ -382,7 +303,7 @@ mod tests {
         reader.read_line(&mut line).await.unwrap();
         let resp: Response = serde_json::from_str(&line).unwrap();
 
-        assert_eq!(resp.id, 0);
+        assert_eq!(resp.id, serde_json::Value::Null);
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32700);
 
@@ -407,7 +328,7 @@ mod tests {
             let mut line = String::new();
             reader.read_line(&mut line).await.unwrap();
             let resp: Response = serde_json::from_str(&line).unwrap();
-            assert_eq!(resp.id, i);
+            assert_eq!(resp.id, serde_json::json!(i));
         }
 
         handle.abort();
