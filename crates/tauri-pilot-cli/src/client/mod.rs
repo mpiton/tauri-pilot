@@ -231,7 +231,12 @@ mod tests {
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("nonexistent", None).await;
         assert!(result.is_err());
-        assert!(result.expect_err("call returns error").to_string().contains("-32601"));
+        assert!(
+            result
+                .expect_err("call returns error")
+                .to_string()
+                .contains("-32601")
+        );
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);

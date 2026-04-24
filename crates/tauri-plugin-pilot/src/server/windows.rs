@@ -591,7 +591,10 @@ mod tests {
         let (reader, mut writer) = tokio::io::split(client);
         let mut reader = BufReader::new(reader);
 
-        writer.write_all(b"not json\n").await.expect("write invalid request");
+        writer
+            .write_all(b"not json\n")
+            .await
+            .expect("write invalid request");
         writer.flush().await.expect("flush");
 
         let mut line = String::new();
@@ -618,7 +621,10 @@ mod tests {
 
         for i in 1..=3 {
             let req = format!("{{\"jsonrpc\":\"2.0\",\"id\":{i},\"method\":\"test\"}}\n");
-            writer.write_all(req.as_bytes()).await.expect("write request");
+            writer
+                .write_all(req.as_bytes())
+                .await
+                .expect("write request");
             writer.flush().await.expect("flush");
 
             let mut line = String::new();

@@ -673,7 +673,11 @@ mod tests {
     fn test_build_bridge_call_ipc_missing_command() {
         let result = build_bridge_call("ipc", None);
         assert!(result.is_err());
-        assert!(result.expect_err("ipc rejects missing command").contains("command"));
+        assert!(
+            result
+                .expect_err("ipc rejects missing command")
+                .contains("command")
+        );
     }
 
     #[tokio::test]
@@ -795,7 +799,8 @@ mod tests {
     #[test]
     fn test_build_bridge_call_network_requests() {
         let params = json!({"filter": "/api", "failedOnly": true, "last": 10});
-        let script = build_bridge_call("networkRequests", Some(&params)).expect("build_bridge_call");
+        let script =
+            build_bridge_call("networkRequests", Some(&params)).expect("build_bridge_call");
         assert!(script.starts_with("window.__PILOT__.networkRequests("));
         assert!(script.contains("\"filter\":\"/api\""));
     }
@@ -1058,10 +1063,7 @@ mod tests {
             .as_array()
             .expect("windows is array");
         assert_eq!(windows.len(), 1);
-        assert_eq!(
-            windows[0].get("label").expect("label key present"),
-            "main"
-        );
+        assert_eq!(windows[0].get("label").expect("label key present"), "main");
     }
 
     #[tokio::test]

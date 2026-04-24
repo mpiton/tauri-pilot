@@ -103,9 +103,9 @@ impl Recorder {
     /// Return a JSON status snapshot: active flag, entry count, elapsed ms.
     pub fn status(&self) -> Value {
         let s = self.state.lock().expect("recorder lock poisoned");
-        let elapsed_ms: u64 = s
-            .start_time
-            .map_or(0, |t| u64::try_from(t.elapsed().as_millis()).unwrap_or(u64::MAX));
+        let elapsed_ms: u64 = s.start_time.map_or(0, |t| {
+            u64::try_from(t.elapsed().as_millis()).unwrap_or(u64::MAX)
+        });
         serde_json::json!({
             "active": s.active,
             "count": s.entries.len(),
@@ -185,7 +185,10 @@ mod tests {
         let entries = rec.stop();
         assert_eq!(entries.len(), 1);
         assert!(!entries[0].params.contains_key("window"));
-        assert_eq!(entries[0].params.get("value").expect("value recorded"), "hello");
+        assert_eq!(
+            entries[0].params.get("value").expect("value recorded"),
+            "hello"
+        );
     }
 
     #[test]

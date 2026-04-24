@@ -263,7 +263,9 @@ mod tests {
         let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
-        let stream = UnixStream::connect(&socket).await.expect("connect test socket");
+        let stream = UnixStream::connect(&socket)
+            .await
+            .expect("connect test socket");
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
@@ -290,11 +292,16 @@ mod tests {
         let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
-        let stream = UnixStream::connect(&socket).await.expect("connect test socket");
+        let stream = UnixStream::connect(&socket)
+            .await
+            .expect("connect test socket");
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
-        writer.write_all(b"not json\n").await.expect("write invalid request");
+        writer
+            .write_all(b"not json\n")
+            .await
+            .expect("write invalid request");
         writer.flush().await.expect("flush");
 
         let mut line = String::new();
@@ -314,13 +321,18 @@ mod tests {
         let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;
 
-        let stream = UnixStream::connect(&socket).await.expect("connect test socket");
+        let stream = UnixStream::connect(&socket)
+            .await
+            .expect("connect test socket");
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
 
         for i in 1..=3 {
             let req = format!("{{\"jsonrpc\":\"2.0\",\"id\":{i},\"method\":\"test\"}}\n");
-            writer.write_all(req.as_bytes()).await.expect("write request");
+            writer
+                .write_all(req.as_bytes())
+                .await
+                .expect("write request");
             writer.flush().await.expect("flush");
 
             let mut line = String::new();

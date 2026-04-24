@@ -40,9 +40,8 @@ pub async fn connect(path: &Path) -> Result<Client> {
                 tokio::time::sleep(RETRY_INTERVAL).await;
             }
             Err(e) => {
-                return Err(e).with_context(|| {
-                    format!("Cannot connect to named pipe: {}", path.display())
-                });
+                return Err(e)
+                    .with_context(|| format!("Cannot connect to named pipe: {}", path.display()));
             }
         }
     };
@@ -183,7 +182,12 @@ mod tests {
         let mut client = connect_with_retry(Path::new(&pipe)).await;
         let result = client.call("nonexistent", None).await;
         assert!(result.is_err());
-        assert!(result.expect_err("call returns error").to_string().contains("-32601"));
+        assert!(
+            result
+                .expect_err("call returns error")
+                .to_string()
+                .contains("-32601")
+        );
 
         handle.abort();
     }
