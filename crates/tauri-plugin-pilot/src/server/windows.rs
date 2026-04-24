@@ -17,10 +17,10 @@ use std::time::Duration;
 #[allow(unused_imports)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, PSID};
+use windows::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE};
 use windows::Win32::Security::{
     ACL, ACL_REVISION, AddAccessAllowedAce, EqualSid, GetLengthSid, GetTokenInformation,
-    InitializeAcl, InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, RevertToSelf,
+    InitializeAcl, InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, PSID, RevertToSelf,
     SECURITY_ATTRIBUTES, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
@@ -214,7 +214,7 @@ impl OwnedHandle {
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        if self.0.0 != 0 {
+        if !self.0.0.is_null() {
             // SAFETY: `self.0` was returned by a successful `Open*Token` call
             // and has not been closed yet.
             unsafe {
@@ -240,7 +240,7 @@ struct SecurityAttributesGuard {
 fn open_process_token() -> std::io::Result<OwnedHandle> {
     // SAFETY: `GetCurrentProcess` returns a pseudo-handle that does not need closing.
     let process = unsafe { GetCurrentProcess() };
-    let mut token = HANDLE(0);
+    let mut token = HANDLE(std::ptr::null_mut());
     // SAFETY: `process` is a valid pseudo-handle; `token` points to stack-local storage.
     unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) }
         .map_err(|e| std::io::Error::other(e.to_string()))?;
@@ -252,7 +252,7 @@ fn open_process_token() -> std::io::Result<OwnedHandle> {
 fn open_thread_impersonation_token() -> std::io::Result<OwnedHandle> {
     // SAFETY: `GetCurrentThread` returns a pseudo-handle that does not need closing.
     let thread = unsafe { GetCurrentThread() };
-    let mut token = HANDLE(0);
+    let mut token = HANDLE(std::ptr::null_mut());
     // SAFETY: `thread` is a valid pseudo-handle; `token` points to stack-local storage.
     // `OpenThreadToken` reads the impersonation token from the thread, which is the
     // client's token after `ImpersonateNamedPipeClient`.
@@ -307,7 +307,7 @@ fn get_user_sid(token: &OwnedHandle) -> std::io::Result<(Vec<u8>, PSID)> {
 /// remains the source of truth and this serves purely as a defence-in-depth check.
 fn client_sid_matches_current_user(pipe: &NamedPipeServer) -> bool {
     // SAFETY: `pipe.as_raw_handle()` returns the kernel handle for the pipe server.
-    if unsafe { ImpersonateNamedPipeClient(HANDLE(pipe.as_raw_handle() as isize)) }.is_err() {
+    if unsafe { ImpersonateNamedPipeClient(HANDLE(pipe.as_raw_handle())) }.is_err() {
         tracing::warn!("failed to impersonate named pipe client");
         return true;
     }
@@ -428,7 +428,7 @@ fn build_security_descriptor(
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     // SAFETY: `sd_ptr` has just been initialised; `acl.as_ptr()` is a valid ACL.
-    unsafe { SetSecurityDescriptorDacl(sd_ptr, true, Some(acl.as_ptr()), false) }
+    unsafe { SetSecurityDescriptorDacl(sd_ptr, true, Some(acl.as_ptr().cast_const()), false) }
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     Ok(sd_box)
@@ -447,7 +447,7 @@ fn create_user_only_security_attributes()
         nLength: u32::try_from(mem::size_of::<SECURITY_ATTRIBUTES>())
             .expect("SECURITY_ATTRIBUTES size must fit in u32"),
         lpSecurityDescriptor: sd_ptr.0,
-        bInheritHandle: windows::Win32::Foundation::BOOL(0),
+        bInheritHandle: windows::core::BOOL(0),
     };
 
     let guard = SecurityAttributesGuard {
@@ -715,7 +715,7 @@ mod tests {
         let (server, guard) = bind(&pipe).expect("bind test pipe");
 
         let raw_handle = server.as_raw_handle();
-        let handle = HANDLE(raw_handle as isize);
+        let handle = HANDLE(raw_handle);
 
         // Retrieve the DACL from the freshly-bound pipe and assert:
         //   - the DACL pointer is non-NULL (the pipe is not running with a NULL DACL),
@@ -734,6 +734,7 @@ mod tests {
                 Some(&raw mut sd_ptr),
             )
         }
+        .ok()
         .expect("GetSecurityInfo must succeed on a bound pipe");
         assert!(!dacl_ptr.is_null(), "bound pipe must carry a non-NULL DACL");
 
@@ -756,7 +757,7 @@ mod tests {
         // requires the caller to release it with `LocalFree`. `dacl_ptr` points
         // into the same allocation and must not be freed separately.
         unsafe {
-            let _ = LocalFree(windows::Win32::Foundation::HLOCAL(sd_ptr.0));
+            let _ = LocalFree(Some(windows::Win32::Foundation::HLOCAL(sd_ptr.0)));
         }
 
         drop(server);

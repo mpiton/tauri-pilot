@@ -37,7 +37,7 @@ enigo = { version = "0.6.1", optional = true }
 libc = "0.2.184"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.52", features = [
+windows = { version = "0.61", features = [
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Pipes",
