@@ -1,8 +1,18 @@
 use std::{
-    io::IsTerminal,
-    path::Path,
     path::PathBuf,
     sync::{Arc, OnceLock},
+};
+
+use super::args::{
+    insert_optional_string, insert_optional_usize, optional_bool, optional_i32, optional_ref,
+    optional_string, optional_u8, optional_u64, required_string, required_string_array,
+    required_u64,
+};
+use super::banner::print_startup_banner;
+use super::responses::{invalid_params, tool_error, tool_error_msg, tool_success};
+use super::schemas::{
+    any_prop, array_string_prop, bool_prop, enum_prop, integer_prop, object_schema, props,
+    string_prop,
 };
 
 use anyhow::Result;
@@ -41,33 +51,6 @@ pub(crate) async fn run_mcp_server(socket: Option<PathBuf>, window: Option<Strin
         .await
         .map_err(|e| anyhow::anyhow!("MCP server failed: {e}"))?;
     Ok(())
-}
-
-fn print_startup_banner(socket: Option<&Path>, window: Option<&str>) {
-    if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
-        eprintln!("{}", startup_banner(socket, window));
-    }
-}
-
-fn startup_banner(socket: Option<&Path>, window: Option<&str>) -> String {
-    let socket = socket.map_or_else(
-        || "auto-detect on first tool call".to_owned(),
-        |path| path.display().to_string(),
-    );
-    let window = window.unwrap_or("default app window");
-
-    format!(
-        r"
-tauri-pilot MCP server
-
-Status : listening on stdio
-Socket : {socket}
-Window : {window}
-
-stdout is reserved for MCP JSON-RPC.
-Configure your MCP client to launch this command instead of typing requests here.
-"
-    )
 }
 
 impl PilotMcpServer {
@@ -1037,142 +1020,6 @@ fn build_tools() -> Vec<Tool> {
         .collect()
 }
 
-fn tool_success(result: Value) -> CallToolResult {
-    let mut payload = Map::new();
-    payload.insert("result".to_owned(), result);
-    CallToolResult::structured(Value::Object(payload))
-}
-
-fn tool_error(err: impl std::fmt::Display) -> CallToolResult {
-    tool_error_msg(err.to_string())
-}
-
-fn tool_error_msg(message: impl Into<String>) -> CallToolResult {
-    CallToolResult::structured_error(json!({ "error": message.into() }))
-}
-
-fn invalid_params(message: impl Into<String>) -> McpError {
-    McpError::invalid_params(message.into(), None)
-}
-
-fn required_string(args: &JsonObject, name: &str) -> Result<String, McpError> {
-    args.get(name)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| invalid_params(format!("'{name}' is required and must be a string")))
-}
-
-fn optional_string(args: &JsonObject, name: &str) -> Result<Option<String>, McpError> {
-    match args.get(name) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) => Ok(Some(value.clone())),
-        _ => Err(invalid_params(format!("'{name}' must be a string"))),
-    }
-}
-
-fn required_u64(args: &JsonObject, name: &str) -> Result<u64, McpError> {
-    args.get(name)
-        .and_then(Value::as_u64)
-        .ok_or_else(|| invalid_params(format!("'{name}' is required and must be an integer")))
-}
-
-fn optional_u64(args: &JsonObject, name: &str) -> Result<Option<u64>, McpError> {
-    match args.get(name) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_u64()
-            .map(Some)
-            .ok_or_else(|| invalid_params(format!("'{name}' must be an integer"))),
-    }
-}
-
-fn optional_usize(args: &JsonObject, name: &str) -> Result<Option<usize>, McpError> {
-    optional_u64(args, name)?
-        .map(|value| {
-            usize::try_from(value)
-                .map_err(|_| invalid_params(format!("'{name}' is out of range for usize")))
-        })
-        .transpose()
-}
-
-fn optional_i32(args: &JsonObject, name: &str) -> Result<Option<i32>, McpError> {
-    match args.get(name) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => {
-            let parsed = value
-                .as_i64()
-                .ok_or_else(|| invalid_params(format!("'{name}' must be an integer")))?;
-            i32::try_from(parsed)
-                .map(Some)
-                .map_err(|_| invalid_params(format!("'{name}' is out of range for i32")))
-        }
-    }
-}
-
-fn optional_u8(args: &JsonObject, name: &str) -> Result<Option<u8>, McpError> {
-    match optional_u64(args, name)? {
-        Some(value) => u8::try_from(value)
-            .map(Some)
-            .map_err(|_| invalid_params(format!("'{name}' is out of range for u8"))),
-        None => Ok(None),
-    }
-}
-
-fn optional_bool(args: &JsonObject, name: &str) -> Result<Option<bool>, McpError> {
-    match args.get(name) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_bool()
-            .map(Some)
-            .ok_or_else(|| invalid_params(format!("'{name}' must be a boolean"))),
-    }
-}
-
-fn optional_ref(args: &JsonObject) -> Result<Option<String>, McpError> {
-    match optional_string(args, "ref")? {
-        Some(value) => Ok(Some(value.trim_start_matches('@').to_owned())),
-        None => Ok(None),
-    }
-}
-
-fn required_string_array(args: &JsonObject, name: &str) -> Result<Vec<String>, McpError> {
-    let values = args
-        .get(name)
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_params(format!("'{name}' is required and must be an array")))?;
-    values
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .map(ToOwned::to_owned)
-                .ok_or_else(|| invalid_params(format!("'{name}' must contain only strings")))
-        })
-        .collect()
-}
-
-fn insert_optional_string(
-    params: &mut Map<String, Value>,
-    args: &JsonObject,
-    name: &str,
-) -> Result<(), McpError> {
-    if let Some(value) = optional_string(args, name)? {
-        params.insert(name.to_owned(), json!(value));
-    }
-    Ok(())
-}
-
-fn insert_optional_usize(
-    params: &mut Map<String, Value>,
-    args: &JsonObject,
-    name: &str,
-) -> Result<(), McpError> {
-    if let Some(value) = optional_usize(args, name)? {
-        params.insert(name.to_owned(), json!(value));
-    }
-    Ok(())
-}
-
 fn empty_schema() -> Arc<JsonObject> {
     object_schema(Map::new(), &[])
 }
@@ -1511,59 +1358,16 @@ fn replay_schema() -> Arc<JsonObject> {
     )
 }
 
-fn object_schema(mut properties: Map<String, Value>, required: &[&str]) -> Arc<JsonObject> {
-    properties.insert(
-        "window".to_owned(),
-        string_prop("Optional Tauri window label overriding the MCP server default."),
-    );
-    let mut schema = Map::new();
-    schema.insert("type".to_owned(), json!("object"));
-    schema.insert("properties".to_owned(), Value::Object(properties));
-    if !required.is_empty() {
-        schema.insert("required".to_owned(), json!(required));
-    }
-    schema.insert("additionalProperties".to_owned(), json!(false));
-    Arc::new(schema)
-}
-
-fn props<const N: usize>(properties: [(&str, Value); N]) -> Map<String, Value> {
-    properties
-        .into_iter()
-        .map(|(name, schema)| (name.to_owned(), schema))
-        .collect()
-}
-
-fn string_prop(description: &str) -> Value {
-    json!({"type": "string", "description": description})
-}
-
-fn bool_prop(description: &str) -> Value {
-    json!({"type": "boolean", "description": description})
-}
-
-fn integer_prop(description: &str) -> Value {
-    json!({"type": "integer", "description": description})
-}
-
-fn array_string_prop(description: &str) -> Value {
-    json!({"type": "array", "items": {"type": "string"}, "description": description})
-}
-
-fn any_prop(description: &str) -> Value {
-    json!({"description": description})
-}
-
-fn enum_prop(description: &str, values: &[&str]) -> Value {
-    json!({"type": "string", "enum": values, "description": description})
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::banner::startup_banner;
     use super::*;
     #[cfg(unix)]
     use crate::protocol::{Request, Response};
     #[cfg(unix)]
     use serial_test::serial;
+    #[cfg(unix)]
+    use std::path::Path;
     #[cfg(unix)]
     use tokio::net::UnixListener;
     #[cfg(unix)]
