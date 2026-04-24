@@ -3,7 +3,11 @@
 //! Helper methods on the server (assert_*, call_*_tool, `target_call`, `window_arg`)
 //! live in `methods.rs` to keep this file under 150 lines.
 
-mod methods;
+mod asserts;
+mod calls;
+mod file_ops;
+#[cfg(test)]
+mod tests;
 
 use std::{
     path::PathBuf,

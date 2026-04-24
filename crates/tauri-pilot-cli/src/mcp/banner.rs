@@ -26,3 +26,19 @@ Configure your MCP client to launch this command instead of typing requests here
 "
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::startup_banner;
+
+    #[test]
+    fn startup_banner_explains_stdio_server() {
+        let banner = startup_banner(None, Some("main"));
+
+        assert!(banner.contains("tauri-pilot MCP server"));
+        assert!(banner.contains("listening on stdio"));
+        assert!(banner.contains("auto-detect on first tool call"));
+        assert!(banner.contains("main"));
+        assert!(banner.contains("stdout is reserved for MCP JSON-RPC"));
+    }
+}
