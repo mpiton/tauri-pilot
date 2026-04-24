@@ -11,12 +11,11 @@ use crate::{target_params, with_window};
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
 
-#[allow(clippy::module_name_repetitions, clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
-pub(crate) struct Scenario {
+pub(crate) struct Config {
     pub(crate) connect: Option<Connect>,
-    #[serde(default)]
-    pub(crate) scenario: ScenarioMeta,
+    #[serde(rename = "scenario", default)]
+    pub(crate) meta: Meta,
     #[serde(default)]
     pub(crate) step: Vec<Step>,
 }
@@ -27,16 +26,15 @@ pub(crate) struct Connect {
     pub(crate) timeout_ms: Option<u64>,
 }
 
-#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Deserialize)]
-pub(crate) struct ScenarioMeta {
+pub(crate) struct Meta {
     pub(crate) name: Option<String>,
     #[serde(default = "default_true")]
     pub(crate) fail_fast: bool,
     pub(crate) global_timeout_ms: Option<u64>,
 }
 
-impl Default for ScenarioMeta {
+impl Default for Meta {
     fn default() -> Self {
         Self {
             name: None,
@@ -50,7 +48,6 @@ fn default_true() -> bool {
     true
 }
 
-#[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
 pub(crate) struct Step {
     pub(crate) name: Option<String>,
@@ -67,7 +64,7 @@ pub(crate) struct Step {
     pub(crate) direction: Option<String>,
     pub(crate) amount: Option<i32>,
     #[serde(rename = "ref")]
-    pub(crate) step_ref: Option<String>,
+    pub(crate) reference: Option<String>,
     pub(crate) gone: Option<bool>,
     pub(crate) stable: Option<u64>,
     pub(crate) require_mutation: Option<bool>,
@@ -97,15 +94,14 @@ pub(crate) struct StepResult {
     pub(crate) outcome: StepOutcome,
 }
 
-#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
-pub(crate) struct ScenarioReport {
+pub(crate) struct Report {
     pub(crate) name: String,
     pub(crate) results: Vec<StepResult>,
     pub(crate) total_duration: Duration,
 }
 
-impl ScenarioReport {
+impl Report {
     #[must_use]
     pub(crate) fn passed(&self) -> usize {
         self.results
@@ -138,7 +134,7 @@ impl ScenarioReport {
 
 // ── Main runner ───────────────────────────────────────────────────────────────
 
-pub(crate) fn load_scenario(path: &Path) -> Result<Scenario> {
+pub(crate) fn load_scenario(path: &Path) -> Result<Config> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read scenario file: {}", path.display()))?;
     toml::from_str(&content)
@@ -147,11 +143,11 @@ pub(crate) fn load_scenario(path: &Path) -> Result<Scenario> {
 
 pub(crate) async fn run_scenario(
     client: &mut Client,
-    scenario: &Scenario,
+    scenario: &Config,
     window: Option<&str>,
     fail_fast_override: Option<bool>,
-) -> Result<ScenarioReport> {
-    let meta = &scenario.scenario;
+) -> Result<Report> {
+    let meta = &scenario.meta;
     let name = meta
         .name
         .clone()
@@ -201,7 +197,7 @@ pub(crate) async fn run_scenario(
         });
     }
 
-    Ok(ScenarioReport {
+    Ok(Report {
         name,
         results,
         total_duration: total_start.elapsed(),
@@ -277,7 +273,7 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
                         Some(json!({
                             "direction": direction,
                             "amount": step.amount,
-                            "ref": step.step_ref,
+                            "ref": step.reference,
                         })),
                         window,
                     ),
@@ -510,7 +506,7 @@ fn print_step_fail(idx: usize, total: usize, name: &str, msg: &str) {
     eprintln!("  [{step_num}/{total}] {name} {fail_label}\n    {fail_msg}");
 }
 
-pub(crate) fn print_report(report: &ScenarioReport) {
+pub(crate) fn print_report(report: &Report) {
     let passed = report.passed();
     let failed = report.failed();
     let skipped = report.skipped();
@@ -525,7 +521,7 @@ pub(crate) fn print_report(report: &ScenarioReport) {
 
 // ── JUnit XML output ──────────────────────────────────────────────────────────
 
-pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()> {
+pub(crate) fn write_junit_xml(report: &Report, path: &Path) -> Result<()> {
     use quick_xml::Writer;
     use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
@@ -615,8 +611,8 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn make_report(results: Vec<(&str, StepOutcome)>) -> ScenarioReport {
-        ScenarioReport {
+    fn make_report(results: Vec<(&str, StepOutcome)>) -> Report {
+        Report {
             name: "test-scenario".to_string(),
             results: results
                 .into_iter()
@@ -679,11 +675,11 @@ mod tests {
 action = "click"
 target = "#btn"
 "##;
-        let scenario: Scenario = toml::from_str(toml_str).expect("valid toml");
+        let scenario: Config = toml::from_str(toml_str).expect("valid toml");
         assert_eq!(scenario.step.len(), 1);
         assert_eq!(scenario.step[0].action, "click");
         assert_eq!(scenario.step[0].target.as_deref(), Some("#btn"));
-        assert!(scenario.scenario.fail_fast);
+        assert!(scenario.meta.fail_fast);
     }
 
     #[test]
@@ -710,10 +706,10 @@ action = "assert-text"
 target = "h1"
 expected = "Login"
 "#;
-        let scenario: Scenario = toml::from_str(toml_str).expect("valid toml");
-        assert_eq!(scenario.scenario.name.as_deref(), Some("login flow"));
-        assert!(!scenario.scenario.fail_fast);
-        assert_eq!(scenario.scenario.global_timeout_ms, Some(60000));
+        let scenario: Config = toml::from_str(toml_str).expect("valid toml");
+        assert_eq!(scenario.meta.name.as_deref(), Some("login flow"));
+        assert!(!scenario.meta.fail_fast);
+        assert_eq!(scenario.meta.global_timeout_ms, Some(60000));
         assert_eq!(scenario.step.len(), 2);
 
         let connect = scenario.connect.as_ref().expect("connect section");
@@ -733,8 +729,8 @@ expected = "Login"
 [[step]]
 action = "ping"
 "#;
-        let scenario: Scenario = toml::from_str(toml_str).expect("valid toml");
-        assert!(scenario.scenario.fail_fast);
+        let scenario: Config = toml::from_str(toml_str).expect("valid toml");
+        assert!(scenario.meta.fail_fast);
     }
 
     #[test]
@@ -753,7 +749,7 @@ action = "ping"
             selector: None,
             direction: None,
             amount: None,
-            step_ref: None,
+            reference: None,
             gone: None,
             stable: None,
             require_mutation: None,
@@ -778,7 +774,7 @@ action = "ping"
             selector: None,
             direction: None,
             amount: None,
-            step_ref: None,
+            reference: None,
             gone: None,
             stable: None,
             require_mutation: None,
