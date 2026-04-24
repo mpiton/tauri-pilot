@@ -4,20 +4,26 @@ use std::time::Duration;
 use anyhow::Result;
 
 /// Print a value as pretty JSON.
-pub(crate) fn format_json(value: &serde_json::Value) -> Result<()> {
+///
+/// # Errors
+///
+/// Returns an error if the value cannot be serialized to JSON (which in
+/// practice never occurs for `serde_json::Value`, but is required by the
+/// return type).
+pub fn format_json(value: &serde_json::Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
 
 /// Print an assertion failure message to stderr in red.
-pub(crate) fn format_assert_fail(message: &str) {
+pub fn format_assert_fail(message: &str) {
     use owo_colors::{OwoColorize, Stream::Stderr};
     let text = format!("FAIL: {}", strip_ansi(message));
     eprintln!("{}", text.if_supports_color(Stderr, |t| t.red()));
 }
 
 /// Print a value as compact text for human consumption.
-pub(crate) fn format_text(value: &serde_json::Value) {
+pub fn format_text(value: &serde_json::Value) {
     // {error: {message: "...", code: N}} → "✗ <message>"
     if let Some(err) = value.get("error") {
         let msg = err
@@ -56,7 +62,7 @@ pub(crate) fn format_text(value: &serde_json::Value) {
 }
 
 /// Format a snapshot result as an indented accessibility tree.
-pub(crate) fn format_snapshot(value: &serde_json::Value) {
+pub fn format_snapshot(value: &serde_json::Value) {
     let Some(elements) = value.get("elements").and_then(|e| e.as_array()) else {
         println!("(empty snapshot)");
         return;
@@ -117,7 +123,8 @@ fn format_timestamp(timestamp: u64) -> String {
 }
 
 /// Format console log entries for human-readable display.
-pub(crate) fn format_logs(value: &serde_json::Value) -> String {
+#[must_use]
+pub fn format_logs(value: &serde_json::Value) -> String {
     let mut output = String::new();
     let Some(entries) = value.as_array() else {
         return format!("{}\n", crate::style::error("Unexpected response format"));
@@ -165,7 +172,8 @@ pub(crate) fn format_logs(value: &serde_json::Value) -> String {
 }
 
 /// Format network request entries for human-readable display.
-pub(crate) fn format_network(value: &serde_json::Value) -> String {
+#[must_use]
+pub fn format_network(value: &serde_json::Value) -> String {
     let mut output = String::new();
     let Some(entries) = value.as_array() else {
         return format!("{}\n", crate::style::error("Unexpected response format"));
@@ -226,7 +234,7 @@ pub(crate) fn format_network(value: &serde_json::Value) -> String {
 }
 
 /// Format a single storage value (from `storage get`).
-pub(crate) fn format_storage_value(value: &serde_json::Value) {
+pub fn format_storage_value(value: &serde_json::Value) {
     let found = value
         .get("found")
         .and_then(serde_json::Value::as_bool)
@@ -245,7 +253,7 @@ pub(crate) fn format_storage_value(value: &serde_json::Value) {
 /// Format storage entries as key = value pairs.
 ///
 /// Expects `{entries: [{key, value}, ...], truncated: bool}` from `storageList`.
-pub(crate) fn format_storage(value: &serde_json::Value) {
+pub fn format_storage(value: &serde_json::Value) {
     let Some(entries) = value.get("entries").and_then(|e| e.as_array()) else {
         println!("{}", crate::style::dim("(empty storage)"));
         return;
@@ -342,7 +350,7 @@ fn format_form_field(field: &serde_json::Value) {
 /// Format form fields dumped from the page.
 ///
 /// Expects `{forms: [{id, name, action, method, fields: [{tag, type, name, value, checked}]}]}`
-pub(crate) fn format_forms(value: &serde_json::Value) {
+pub fn format_forms(value: &serde_json::Value) {
     let Some(forms) = value.get("forms").and_then(|f| f.as_array()) else {
         println!("{}", crate::style::dim("(no forms found)"));
         return;
@@ -394,7 +402,7 @@ pub(crate) fn format_forms(value: &serde_json::Value) {
 }
 
 /// Format watch result showing DOM mutations grouped by type.
-pub(crate) fn format_watch(value: &serde_json::Value) {
+pub fn format_watch(value: &serde_json::Value) {
     let added = value.get("added").and_then(|v| v.as_array());
     let removed = value.get("removed").and_then(|v| v.as_array());
     let modified = value.get("modified").and_then(|v| v.as_array());
@@ -503,7 +511,7 @@ fn format_mutation_entry(el: &serde_json::Value) -> String {
 }
 
 /// Format a diff result showing added, removed, and changed elements.
-pub(crate) fn format_diff(value: &serde_json::Value) {
+pub fn format_diff(value: &serde_json::Value) {
     let added = value.get("added").and_then(|v| v.as_array());
     let removed = value.get("removed").and_then(|v| v.as_array());
     let changed_entries = value.get("changed").and_then(|v| v.as_array());
@@ -635,7 +643,7 @@ fn format_diff_entry(
 /// Format the list of open windows.
 ///
 /// Expects `{"windows": [{"label": "main", "url": "http://...", "title": "My App"}]}`
-pub(crate) fn format_windows(value: &serde_json::Value) {
+pub fn format_windows(value: &serde_json::Value) {
     let Some(windows) = value.get("windows").and_then(|w| w.as_array()) else {
         println!("{}", crate::style::dim("No windows found"));
         return;
@@ -707,7 +715,8 @@ pub(crate) fn format_windows(value: &serde_json::Value) {
 /// - `{"status": "recording"}` → "✓ Recording started"
 /// - `{"status": "saved", "path": "...", "count": N}` → "✓ Recording saved — N actions → path"
 /// - `{"active": true/false, "count": N, "elapsed_ms": M}` → status line
-pub(crate) fn format_record(value: &serde_json::Value) -> String {
+#[must_use]
+pub fn format_record(value: &serde_json::Value) -> String {
     if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
         match status {
             "recording" => return crate::style::success("Recording started"),
@@ -756,7 +765,8 @@ pub(crate) fn format_record(value: &serde_json::Value) -> String {
 /// Format a single replay step.
 ///
 /// Returns a string like "[3/10] click @e3 → ok" with color based on result.
-pub(crate) fn format_replay_step(step: usize, total: usize, action: &str, result: &str) -> String {
+#[must_use]
+pub fn format_replay_step(step: usize, total: usize, action: &str, result: &str) -> String {
     let action_safe = strip_ansi(action);
     let result_display = if result == "ok" {
         crate::style::success(result)

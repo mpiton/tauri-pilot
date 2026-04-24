@@ -12,6 +12,10 @@ keywords = ["tauri", "cli", "testing", "automation", "accessibility"]
 categories = ["command-line-utilities", "development-tools::testing"]
 readme = "README.md"
 
+[lib]
+name = "tauri_pilot_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "tauri-pilot"
 path = "src/main.rs"

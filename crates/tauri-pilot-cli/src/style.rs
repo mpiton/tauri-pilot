@@ -2,7 +2,8 @@ use owo_colors::{OwoColorize, Stream::Stdout};
 use std::fmt::Display;
 
 /// Format a success message: "✓ {msg}" in green (if terminal supports color).
-pub(crate) fn success(msg: &str) -> String {
+#[must_use]
+pub fn success(msg: &str) -> String {
     format!(
         "{} {}",
         "✓".if_supports_color(Stdout, |t| t.green()),
@@ -11,7 +12,8 @@ pub(crate) fn success(msg: &str) -> String {
 }
 
 /// Format an error message: "✗ {msg}" in red.
-pub(crate) fn error(msg: &str) -> String {
+#[must_use]
+pub fn error(msg: &str) -> String {
     format!(
         "{} {}",
         "✗".if_supports_color(Stdout, |t| t.red()),
@@ -20,27 +22,32 @@ pub(crate) fn error(msg: &str) -> String {
 }
 
 /// Format info text in cyan.
-pub(crate) fn info(msg: impl Display) -> String {
+#[must_use]
+pub fn info(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.cyan()))
 }
 
 /// Format text as dimmed (secondary information).
-pub(crate) fn dim(msg: impl Display) -> String {
+#[must_use]
+pub fn dim(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.dimmed()))
 }
 
 /// Format text as bold.
-pub(crate) fn bold(msg: impl Display) -> String {
+#[must_use]
+pub fn bold(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.bold()))
 }
 
 /// Format a failure message in red (no icon, unlike `error`).
-pub(crate) fn failure(msg: impl Display) -> String {
+#[must_use]
+pub fn failure(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.red()))
 }
 
 /// Format a warning message in yellow.
-pub(crate) fn warn(msg: impl Display) -> String {
+#[must_use]
+pub fn warn(msg: impl Display) -> String {
     format!("{}", msg.if_supports_color(Stdout, |t| t.yellow()))
 }
 
