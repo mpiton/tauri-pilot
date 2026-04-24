@@ -51,7 +51,11 @@ where
         }
 
         if line.len() > MAX_LINE_LENGTH {
-            let response = Response::error(serde_json::Value::Null, -32700, "Request line exceeds maximum length");
+            let response = Response::error(
+                serde_json::Value::Null,
+                -32700,
+                "Request line exceeds maximum length",
+            );
             let mut resp_bytes = serde_json::to_vec(&response)?;
             resp_bytes.push(b'\n');
             writer.write_all(&resp_bytes).await?;

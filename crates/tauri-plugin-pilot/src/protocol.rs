@@ -103,7 +103,11 @@ mod tests {
 
     #[test]
     fn test_serialize_error_response() {
-        let resp = Response::error(serde_json::Value::Number(1.into()), -32601, "Method not found");
+        let resp = Response::error(
+            serde_json::Value::Number(1.into()),
+            -32601,
+            "Method not found",
+        );
         let s = serde_json::to_string(&resp).expect("serialize");
         assert!(s.contains(r#""error""#));
         assert!(!s.contains(r#""result""#));
