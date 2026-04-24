@@ -5,7 +5,7 @@ use crate::protocol::{Request, Response};
 use crate::recorder::Recorder;
 
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 /// A function that evaluates JS in the webview.
 /// The first argument is an optional window label (`None` means "use default window").
@@ -38,7 +38,14 @@ where
 
     loop {
         line.clear();
-        let n = reader.read_line(&mut line).await?;
+        // Bound the per-line read so a peer flooding bytes without a newline
+        // can't OOM us. `Take<R>` re-implements `AsyncBufRead`, so `read_line`
+        // still works through it; constructing a fresh `Take` per iteration
+        // resets the remaining-byte budget for each line.
+        let n = (&mut reader)
+            .take(MAX_LINE_LENGTH as u64 + 1)
+            .read_line(&mut line)
+            .await?;
         if n == 0 {
             break;
         }
