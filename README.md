@@ -42,7 +42,7 @@ There's no tool for AI agents to interact with Tauri app UIs. Playwright doesn't
 
 ## How it works
 
-```
+```text
 ┌──────────────┐   Unix Socket /     ┌─────────────────────────────┐
 │  tauri-pilot  │   Named Pipe (Win) │  tauri-plugin-pilot (Rust)  │
 │  (CLI)        │ ◄─────────────────► │  embedded in your app       │
