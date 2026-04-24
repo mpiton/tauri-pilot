@@ -2,6 +2,7 @@ pub mod diff;
 mod error;
 #[cfg(any(unix, windows))]
 pub(crate) mod eval;
+#[cfg(any(unix, windows))]
 mod handler;
 #[cfg(feature = "press")]
 pub(crate) mod key;

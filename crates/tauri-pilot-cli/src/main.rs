@@ -1230,9 +1230,12 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
         "drag" => {
             let src = resolve_export_target(entry.get("source"));
             let dst = resolve_export_target(entry.get("target"));
+            // Offsets may be stored as floats (browser getBoundingClientRect
+            // returns fractional pixels). The CLI --offset parser accepts
+            // f64 values, so pass them through without truncation.
             let offset = entry.get("offset").and_then(|o| {
-                let x = o.get("x").and_then(serde_json::Value::as_i64)?;
-                let y = o.get("y").and_then(serde_json::Value::as_i64)?;
+                let x = o.get("x").and_then(serde_json::Value::as_f64)?;
+                let y = o.get("y").and_then(serde_json::Value::as_f64)?;
                 Some(format!("{x},{y}"))
             });
             match (src, dst, offset) {

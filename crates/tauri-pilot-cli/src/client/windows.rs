@@ -6,18 +6,38 @@ use tokio::io::BufReader;
 use tokio::net::windows::named_pipe::ClientOptions;
 use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
+/// Maximum time spent retrying when all server pipe instances are busy.
+/// Matches typical Unix socket `connect()` latency under contention — longer
+/// and the CLI feels hung; shorter and transient bursts falsely fail.
+const CONNECT_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Delay between `ERROR_PIPE_BUSY` retries. Keeps CPU idle while the server
+/// accepts pending connections.
+const RETRY_INTERVAL: Duration = Duration::from_millis(20);
+
 /// Connect to a Named Pipe, retrying briefly on `ERROR_PIPE_BUSY`.
 ///
 /// Named Pipe `open()` is synchronous and fails immediately with
 /// `ERROR_PIPE_BUSY` when all server instances are in use. The caller expects
 /// an async contract, so we mirror the Unix socket behavior by yielding
-/// between retries.
+/// between retries, giving up after `CONNECT_DEADLINE` so a stuck server
+/// never hangs the CLI.
 pub async fn connect(path: &Path) -> Result<Client> {
+    let deadline = tokio::time::Instant::now() + CONNECT_DEADLINE;
     let client = loop {
         match ClientOptions::new().open(path) {
             Ok(c) => break c,
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY.0.cast_signed()) => {
-                tokio::time::sleep(Duration::from_millis(20)).await;
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(e).with_context(|| {
+                        format!(
+                            "Named pipe {} remained busy for {}s",
+                            path.display(),
+                            CONNECT_DEADLINE.as_secs()
+                        )
+                    });
+                }
+                tokio::time::sleep(RETRY_INTERVAL).await;
             }
             Err(e) => {
                 return Err(e).with_context(|| {
