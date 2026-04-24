@@ -121,12 +121,16 @@ tauri-pilot/
 ├── Cargo.toml                     # workspace
 ├── crates/
 │   ├── tauri-plugin-pilot/
+│   │   ├── build.rs               # Tauri plugin build hook (permissions)
 │   │   ├── src/
 │   │   │   ├── lib.rs             # Plugin init, js_init_script, setup
 │   │   │   ├── server.rs          # Unix socket server, accept loop
 │   │   │   ├── protocol.rs        # Request, Response, RpcError
 │   │   │   ├── handler.rs         # Dispatch method → handler
 │   │   │   ├── eval.rs            # EvalEngine (callback pattern)
+│   │   │   ├── diff.rs            # Snapshot diff (added/removed/changed)
+│   │   │   ├── key.rs             # press command key-combo parser
+│   │   │   ├── recorder.rs        # record/replay interaction capture
 │   │   │   └── error.rs           # thiserror types
 │   │   └── js/
 │   │       └── bridge.js          # JS bridge (included via include_str!)
@@ -137,5 +141,8 @@ tauri-pilot/
 │           ├── client.rs          # Unix socket client
 │           ├── protocol.rs        # Request, Response
 │           ├── output.rs          # Formatters text/JSON
+│           ├── style.rs           # owo-colors TTY-aware styling helpers
+│           ├── scenario.rs        # TOML scenario runner + JUnit XML output
+│           ├── mcp.rs             # Model Context Protocol stdio server
 │           └── error.rs           # anyhow wrappers
 ```

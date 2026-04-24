@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Windows support** — named pipe server and client for Windows, with security hardening (DACL, SID validation), registry-based instance discovery, and platform-specific tests ([#64])
+- **Batch scenario runner** — `tauri-pilot run <scenario.toml>` executes declarative TOML scenarios with 18 action types (click, fill, type, press, select, check, scroll, navigate, wait, watch, eval, screenshot, assert-text, assert-exists, assert-visible, assert-hidden, assert-value, assert-url). Supports `fail_fast` (default true), `--no-fail-fast` override, `--junit <file>` for JUnit XML output, and auto-captures failure screenshots to `./tauri-pilot-failures/`. Exit code 0 = all pass, 1 = any failure. Example: `docs/examples/login-flow.toml` ([#62])
+- `connect.timeout_ms` in TOML scenarios — wraps `Client::connect` in `tokio::time::timeout` ([#63])
+- `global_timeout_ms` in TOML scenarios — hard deadline around `run_scenario` ([#63])
+- Per-step `timeout_ms` applied to all non-`wait`/`watch` actions via `tokio::time::timeout` ([#63])
+- `<testsuites>` JUnit XML root now carries `tests`, `failures`, `errors`, `skipped`, `time` aggregate attributes for CI reporters (Jenkins, GitHub Actions, Allure) ([#63])
 
 ### Fixed
 
@@ -19,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tauri-plugin-pilot` server now caps per-line reads using `AsyncReadExt::take` before invoking `read_line`, so a peer flooding bytes without a newline can no longer OOM the host process — the existing `MAX_LINE_LENGTH` check was applied after the full line had already been buffered ([#64])
 - `tauri-pilot-cli` Unix client tests use a per-process, atomic-counter socket path instead of hard-coded `/tmp/tauri-pilot-test-*.sock` paths, so parallel `cargo test` runs no longer cross-wire through the same socket file ([#64])
 - `tauri-pilot-cli` Windows registry-resolution tests mock entries with `std::process::id()` instead of a fabricated dead PID, so the liveness filter added in the Windows support work doesn't skip them ([#64])
+- `assert-exists` now verifies the `visible` key is present in the RPC response to catch missing DOM elements ([#63])
 
 ### Changed
 
@@ -194,6 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#52]: https://github.com/mpiton/tauri-pilot/pull/52
 [#53]: https://github.com/mpiton/tauri-pilot/pull/53
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
+[#62]: https://github.com/mpiton/tauri-pilot/pull/62
+[#63]: https://github.com/mpiton/tauri-pilot/pull/63
 [Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mpiton/tauri-pilot/compare/v0.2.1...v0.3.0
