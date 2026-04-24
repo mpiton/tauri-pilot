@@ -48,7 +48,15 @@ fn test_format_record_with_active_recording_returns_non_empty() {
         "elapsed_ms": 2000_u64
     });
     let rendered = output::format_record(&payload);
-    assert!(!rendered.is_empty(), "expected non-empty record output");
+    assert!(
+        rendered.contains("5"),
+        "expected count '5' in rendered output, got: {rendered}"
+    );
+    assert!(
+        rendered.to_lowercase().contains("recording")
+            || rendered.to_lowercase().contains("record"),
+        "expected 'recording' marker in output, got: {rendered}"
+    );
 }
 
 #[test]
