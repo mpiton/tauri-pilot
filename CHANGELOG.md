@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `tauri-plugin-pilot` `init()` doc comment clarifies the no-op fallback now excludes Windows too and mentions the Named Pipe server path ([#64])
+- Bumped `windows` crate `0.52` → `0.61` on both `tauri-plugin-pilot` and `tauri-pilot-cli`, aligning with the version already pulled transitively by `tauri`/`tao`/`wry`/`webview2-com`/`enigo`. Deduplicates the Windows dependency graph (removes the parallel `windows-targets` tree shipped with 0.52) and picks up the `HANDLE(*mut c_void)` layout matching `std::os::windows::raw::HANDLE`. Mechanical breaking changes: `HANDLE(0)` → `HANDLE(std::ptr::null_mut())`, `HANDLE(raw as isize)` → `HANDLE(raw)`, `self.0.0 != 0` → `!self.0.0.is_null()`, `PSID` import relocated from `Win32::Foundation` to `Win32::Security`, `BOOL` now lives in `windows::core`, `SetSecurityDescriptorDacl` takes `Option<*const ACL>` (cast via `.cast_const()`), `GetSecurityInfo` returns `WIN32_ERROR` (use `.ok()`), `LocalFree` takes `Option<HLOCAL>` ([#68])
 - Bumped `indicatif` from `0.17` to `0.18` (brings the transitive `console` update to `0.16`; only `ProgressBar::new_spinner()` is used — API stable)
 - Bumped docs dependencies: `astro` `6.1.3` → `6.1.9`, `@astrojs/starlight` `0.38.2` → `0.38.4`, transitively `vite` `7.3.1` → `7.3.2`
 - Refreshed `Cargo.lock` patch-level updates: `libc` `0.2.184` → `0.2.186`, `clap` / `clap_derive` `4.6.0` → `4.6.1`, `assert_cmd` `2.2.0` → `2.2.1`
@@ -231,3 +232,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#17]: https://github.com/mpiton/tauri-pilot/pull/17
 [#31]: https://github.com/mpiton/tauri-pilot/issues/31
 [#64]: https://github.com/mpiton/tauri-pilot/pull/64
+[#68]: https://github.com/mpiton/tauri-pilot/issues/68
