@@ -49,12 +49,11 @@ fn test_format_record_with_active_recording_returns_non_empty() {
     });
     let rendered = output::format_record(&payload);
     assert!(
-        rendered.contains("5"),
+        rendered.contains('5'),
         "expected count '5' in rendered output, got: {rendered}"
     );
     assert!(
-        rendered.to_lowercase().contains("recording")
-            || rendered.to_lowercase().contains("record"),
+        rendered.to_lowercase().contains("recording") || rendered.to_lowercase().contains("record"),
         "expected 'recording' marker in output, got: {rendered}"
     );
 }
