@@ -69,11 +69,11 @@ fn snapshot_save_json_stdout_is_pure_parseable_json() {
         .expect("cargo_bin")
         .args([
             "--socket",
-            socket.to_str().unwrap(),
+            socket.to_str().expect("socket path is UTF-8"),
             "--json",
             "snapshot",
             "--save",
-            save_path.to_str().unwrap(),
+            save_path.to_str().expect("save path is UTF-8"),
         ])
         .output()
         .expect("run tauri-pilot");
@@ -98,7 +98,10 @@ fn snapshot_save_json_stdout_is_pure_parseable_json() {
         .get("path")
         .and_then(|v| v.as_str())
         .expect("JSON should expose saved file path");
-    assert_eq!(path_in_json, save_path.to_str().unwrap());
+    assert_eq!(
+        path_in_json,
+        save_path.to_str().expect("save path is UTF-8")
+    );
 
     let elements = parsed
         .get("elements")
@@ -110,4 +113,51 @@ fn snapshot_save_json_stdout_is_pure_parseable_json() {
     let written = std::fs::read_to_string(&save_path).expect("read written file");
     let parsed_file: serde_json::Value = serde_json::from_str(&written).expect("file is JSON");
     assert!(parsed_file.get("elements").is_some());
+    assert!(
+        parsed_file.get("path").is_none(),
+        "saved file must not contain the injected `path` key"
+    );
+}
+
+/// Regression guard for the second half of #80: any `tracing` log line emitted
+/// by the CLI must land on stderr, never stdout. Previously
+/// `tracing_subscriber::fmt()` defaulted to stdout in non-MCP mode, so a
+/// `RUST_LOG=info` user would see log noise spliced into the `--json` payload.
+#[test]
+fn snapshot_save_json_stdout_clean_with_rust_log_info() {
+    let socket = unique_socket_path("snap-rustlog");
+    let handle = spawn_mock_snapshot_server(&socket);
+
+    let tmpdir = tempfile::tempdir().expect("tempdir");
+    let save_path = tmpdir.path().join("snap.json");
+
+    let output = Command::cargo_bin("tauri-pilot")
+        .expect("cargo_bin")
+        .env("RUST_LOG", "info")
+        .args([
+            "--socket",
+            socket.to_str().expect("socket path is UTF-8"),
+            "--json",
+            "snapshot",
+            "--save",
+            save_path.to_str().expect("save path is UTF-8"),
+        ])
+        .output()
+        .expect("run tauri-pilot");
+
+    handle.join().expect("mock server join");
+    let _ = std::fs::remove_file(&socket);
+
+    assert!(
+        output.status.success(),
+        "binary exited with non-zero status: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
+    serde_json::from_str::<serde_json::Value>(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout polluted by tracing logs (issue #80): {e}\n--- stdout ---\n{stdout}\n--- end ---"
+        )
+    });
 }
