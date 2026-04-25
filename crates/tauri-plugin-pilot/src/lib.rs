@@ -270,10 +270,15 @@ mod tests {
             js.contains("target.scrollTo(window.scrollX, Math.max(0, max))"),
             "scroll bottom on window must preserve window.scrollX and clamp negative max"
         );
-        let collapsed: String = js.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            collapsed.contains("Math.max( docEl ? docEl.scrollHeight : 0, body ? body.scrollHeight : 0 )"),
-            "scroll bottom on window must use Math.max(documentElement, body) for quirks-mode safety"
+            js.contains("Math.max(")
+                && js.contains("docEl ? docEl.scrollHeight : 0")
+                && js.contains("body ? body.scrollHeight : 0"),
+            "scroll bottom on window must use Math.max(documentElement.scrollHeight, body.scrollHeight) for quirks-mode safety"
+        );
+        assert!(
+            js.contains("docEl ? docEl.clientHeight : window.innerHeight"),
+            "scroll bottom on window must subtract docEl.clientHeight (excludes horizontal scrollbar) instead of window.innerHeight"
         );
         assert!(
             js.contains("String(dir).slice(0, 64)"),

@@ -576,7 +576,8 @@
           docEl ? docEl.scrollHeight : 0,
           body ? body.scrollHeight : 0
         );
-        const max = fullHeight - window.innerHeight;
+        const viewportHeight = docEl ? docEl.clientHeight : window.innerHeight;
+        const max = fullHeight - viewportHeight;
         target.scrollTo(window.scrollX, Math.max(0, max));
       } else {
         target.scrollTop = Math.max(0, target.scrollHeight - target.clientHeight);
