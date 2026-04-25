@@ -249,4 +249,42 @@ mod tests {
             "mouseup must only dispatch when pointerdown was not canceled"
         );
     }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn bridge_scroll_handles_top_and_bottom_directions() {
+        let js = super::BRIDGE_JS;
+        assert!(
+            js.contains(r#"if (dir === "top")"#),
+            "scroll must handle direction \"top\""
+        );
+        assert!(
+            js.contains(r#"if (dir === "bottom")"#),
+            "scroll must handle direction \"bottom\""
+        );
+        assert!(
+            js.contains("target.scrollTo(window.scrollX, 0)"),
+            "scroll top on window must preserve window.scrollX and set Y=0"
+        );
+        assert!(
+            js.contains("target.scrollTo(window.scrollX, Math.max(0, max))"),
+            "scroll bottom on window must preserve window.scrollX and clamp negative max"
+        );
+        assert!(
+            js.contains("Math.max(\n          docEl ? docEl.scrollHeight : 0,\n          body ? body.scrollHeight : 0\n        )"),
+            "scroll bottom on window must use Math.max(documentElement, body) for quirks-mode safety"
+        );
+        assert!(
+            js.contains("target.scrollTop = 0"),
+            "scroll top on element must set scrollTop = 0"
+        );
+        assert!(
+            js.contains("target.scrollTop = Math.max(0, target.scrollHeight - target.clientHeight)"),
+            "scroll bottom on element must use scrollHeight - clientHeight (not raw scrollHeight)"
+        );
+        assert!(
+            js.contains("Unknown scroll direction:"),
+            "scroll must throw on unknown direction instead of silently no-op"
+        );
+    }
 }

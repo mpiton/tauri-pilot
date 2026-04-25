@@ -559,6 +559,33 @@
     const amount = (options && options.amount) || 300;
     const ref = options && options.ref;
     const target = ref ? requireEl(ref) : window;
+
+    if (dir === "top") {
+      if (target === window) {
+        target.scrollTo(window.scrollX, 0);
+      } else {
+        target.scrollTop = 0;
+      }
+      return { ok: true };
+    }
+    if (dir === "bottom") {
+      if (target === window) {
+        const docEl = document.documentElement;
+        const body = document.body;
+        const fullHeight = Math.max(
+          docEl ? docEl.scrollHeight : 0,
+          body ? body.scrollHeight : 0
+        );
+        const max = fullHeight - window.innerHeight;
+        target.scrollTo(window.scrollX, Math.max(0, max));
+      } else {
+        target.scrollTop = Math.max(0, target.scrollHeight - target.clientHeight);
+      }
+      return { ok: true };
+    }
+    if (dir !== "up" && dir !== "down" && dir !== "left" && dir !== "right") {
+      throw new Error("Unknown scroll direction: " + dir + " (expected up|down|left|right|top|bottom)");
+    }
     const dx = (dir === "left" ? -amount : dir === "right" ? amount : 0);
     const dy = (dir === "up" ? -amount : dir === "down" ? amount : 0);
     target.scrollBy(dx, dy);

@@ -459,8 +459,8 @@ tauri-pilot scroll <direction> [amount] [OPTIONS]
 
 | Argument | Description |
 |----------|-------------|
-| `<direction>` | `up`, `down`, `left`, or `right` |
-| `[amount]` | Scroll distance in pixels (default: 300) |
+| `<direction>` | `up`, `down`, `left`, `right`, `top`, or `bottom` |
+| `[amount]` | Scroll distance in pixels (ignored for `top`/`bottom`, default: 300) |
 
 **Options:**
 
@@ -468,11 +468,15 @@ tauri-pilot scroll <direction> [amount] [OPTIONS]
 |--------|-------------|
 | `--ref <ref>` | Element to scroll (defaults to the page) |
 
+`top` jumps to `scrollY = 0`; `bottom` jumps to the maximum scroll position (`scrollHeight - innerHeight` for the page, `scrollHeight - clientHeight` for an element). Unknown directions raise an error instead of silently no-op.
+
 **Example:**
 
 ```bash
 tauri-pilot scroll down 500
 tauri-pilot scroll up --ref @e4
+tauri-pilot scroll top
+tauri-pilot scroll bottom --ref @e4
 ```
 
 ---
