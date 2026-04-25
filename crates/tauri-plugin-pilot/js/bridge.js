@@ -747,9 +747,15 @@
 
   function waitFor(options) {
     var selector = options && options.selector;
-    var ref = options && options.target;
+    var ref = options && options.ref;
     var gone = (options && options.gone) || false;
     var timeout = (options && options.timeout) || 10000;
+
+    if (!selector && !ref) {
+      return Promise.reject(
+        new Error("waitFor requires 'selector' or 'ref' (use --selector for CSS, @id for snapshot ref)")
+      );
+    }
 
     return new Promise(function (res, rej) {
       function check() {

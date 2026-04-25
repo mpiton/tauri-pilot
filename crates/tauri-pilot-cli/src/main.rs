@@ -371,20 +371,8 @@ async fn run_command(
             gone,
             timeout,
         } => {
-            client
-                .call(
-                    "wait",
-                    with_window(
-                        Some(json!({
-                            "target": target,
-                            "selector": selector,
-                            "gone": gone,
-                            "timeout": timeout,
-                        })),
-                        window,
-                    ),
-                )
-                .await
+            let params = build_wait_params(target.as_deref(), selector.as_deref(), gone, timeout);
+            client.call("wait", with_window(Some(params), window)).await
         }
         Command::Watch {
             selector,
@@ -926,6 +914,37 @@ pub(crate) fn target_params(raw: &str) -> serde_json::Value {
         Target::Ref(r) => json!({"ref": r}),
         Target::Selector(s) => json!({"selector": s}),
         Target::Coords(x, y) => json!({"x": x, "y": y}),
+    }
+}
+
+/// Build params for the `wait` RPC call.
+///
+/// Routing precedence:
+/// - `--selector` flag wins over positional target.
+/// - Positional target is parsed via [`parse_target`] (`@x` ref, else selector).
+///   Coords are not meaningful for `wait`, so they pass through as a selector
+///   so the bridge surfaces a `SyntaxError` from `document.querySelector`
+///   instead of silently timing out.
+/// - With neither target nor selector, only `gone`/`timeout` are sent and the
+///   bridge `waitFor` rejects up-front (issue #74).
+pub(crate) fn build_wait_params(
+    target: Option<&str>,
+    selector: Option<&str>,
+    gone: bool,
+    timeout: u64,
+) -> serde_json::Value {
+    match (selector, target) {
+        (Some(s), _) => json!({ "selector": s, "gone": gone, "timeout": timeout }),
+        (None, Some(t)) => match parse_target(t) {
+            // `@` alone strips to an empty ref. Drop it so the bridge's
+            // `waitFor` rejects up-front instead of hanging on a
+            // `MutationObserver` until the timeout fires.
+            Target::Ref(r) if r.is_empty() => json!({ "gone": gone, "timeout": timeout }),
+            Target::Ref(r) => json!({ "ref": r, "gone": gone, "timeout": timeout }),
+            Target::Selector(s) => json!({ "selector": s, "gone": gone, "timeout": timeout }),
+            Target::Coords(..) => json!({ "selector": t, "gone": gone, "timeout": timeout }),
+        },
+        (None, None) => json!({ "gone": gone, "timeout": timeout }),
     }
 }
 
@@ -1739,5 +1758,81 @@ mod tests {
         let mut reader = std::io::Cursor::new(b"   \n  ");
         let err = read_script(&mut reader).expect_err("blank input rejected");
         assert!(err.to_string().contains("empty or blank"), "got: {err}");
+    }
+
+    // ─── build_wait_params (issue #74) ────────────────────────────────────────
+
+    #[test]
+    fn test_build_wait_params_positional_css_selector_routes_to_selector() {
+        let p = build_wait_params(Some("#trigger"), None, false, 1000);
+        assert_eq!(
+            p,
+            json!({"selector": "#trigger", "gone": false, "timeout": 1000})
+        );
+    }
+
+    #[test]
+    fn test_build_wait_params_positional_class_selector_routes_to_selector() {
+        let p = build_wait_params(Some(".btn-primary"), None, false, 5000);
+        assert_eq!(
+            p,
+            json!({"selector": ".btn-primary", "gone": false, "timeout": 5000})
+        );
+    }
+
+    #[test]
+    fn test_build_wait_params_positional_attr_selector_routes_to_selector() {
+        let p = build_wait_params(Some("[data-test=foo]"), None, false, 1000);
+        assert_eq!(
+            p,
+            json!({"selector": "[data-test=foo]", "gone": false, "timeout": 1000})
+        );
+    }
+
+    #[test]
+    fn test_build_wait_params_at_prefix_routes_to_ref() {
+        let p = build_wait_params(Some("@e1"), None, false, 1000);
+        assert_eq!(p, json!({"ref": "e1", "gone": false, "timeout": 1000}));
+    }
+
+    #[test]
+    fn test_build_wait_params_explicit_selector_flag_wins_over_positional() {
+        let p = build_wait_params(Some("@e1"), Some("#real"), false, 1000);
+        assert_eq!(
+            p,
+            json!({"selector": "#real", "gone": false, "timeout": 1000})
+        );
+    }
+
+    #[test]
+    fn test_build_wait_params_no_target_no_selector_yields_empty_payload() {
+        let p = build_wait_params(None, None, true, 2000);
+        assert_eq!(p, json!({"gone": true, "timeout": 2000}));
+    }
+
+    #[test]
+    fn test_build_wait_params_coords_fall_back_to_selector_for_syntax_error() {
+        // wait does not act on coordinates; pass through verbatim so
+        // `document.querySelector("100,200")` raises a `SyntaxError`
+        // instead of the bridge silently waiting on a `MutationObserver`.
+        let p = build_wait_params(Some("100,200"), None, false, 1000);
+        assert_eq!(
+            p,
+            json!({"selector": "100,200", "gone": false, "timeout": 1000})
+        );
+    }
+
+    #[test]
+    fn test_build_wait_params_propagates_gone_flag() {
+        let p = build_wait_params(Some("#x"), None, true, 500);
+        assert_eq!(p, json!({"selector": "#x", "gone": true, "timeout": 500}));
+    }
+
+    #[test]
+    fn test_build_wait_params_empty_ref_at_alone_drops_to_no_target() {
+        // `@` strips to an empty ref. We omit it so the bridge `waitFor`
+        // rejects immediately instead of hanging on `MutationObserver`.
+        let p = build_wait_params(Some("@"), None, false, 1000);
+        assert_eq!(p, json!({"gone": false, "timeout": 1000}));
     }
 }
