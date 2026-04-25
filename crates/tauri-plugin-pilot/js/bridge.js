@@ -774,18 +774,29 @@
     return expr();
   }
 
-  // Heuristic top-level `await` detector. Strips comments, single/double
-  // quoted strings, and regex literals so text like `"await"`, `/* await */`
-  // or `/await/` does not trigger a false positive, then masks property
-  // accesses (`obj.await`) so the bareword test does not fire on member
-  // expressions. Template literals are deliberately NOT stripped so a real
-  // `` `${await x}` `` is detected; the cost is that a template containing
-  // the literal text `` `await` `` is a false positive — this is harmless
-  // because the async-IIFE wrap still executes the script correctly, only
-  // the completion-value contract changes (the user must use an explicit
-  // `return` to surface a value, which is documented in cli.md). For scripts
-  // larger than 100 KB the strip pass is skipped to bound worst-case scan
-  // time; the raw `await` test is used instead.
+  // Heuristic top-level `await` detector. Strips comments and single/double
+  // quoted strings so text like `"await"` or `/* await */` does not trigger
+  // a false positive, then masks property accesses (`obj.await`) so the
+  // bareword test does not fire on member expressions.
+  //
+  // Two intentional choices, each documented because the alternative is
+  // worse:
+  //
+  //   * Template literals are NOT stripped. Stripping them with a single-pass
+  //     regex cannot balance nested `${...}` braces, and it also drops a real
+  //     `` `${await x}` ``. Leaving them in only causes false positives on a
+  //     literal like `` `await` ``, which is harmless: the script still runs
+  //     wrapped in an async IIFE, only the completion-value contract changes
+  //     (the user must use an explicit `return` to surface a value, which is
+  //     documented in cli.md).
+  //   * Regex literals (`/await/`) are NOT stripped either. A naive
+  //     `\/.../[flags]*` match also swallows division expressions like
+  //     `a / await foo / c`, which would silently hide a real top-level
+  //     `await` and break the auto-wrap fallback. False positives from a
+  //     literal `/await/` regex are again harmless wraps.
+  //
+  // For scripts larger than 100 KB the strip pass is skipped to bound
+  // worst-case scan time; the raw `await` test is used instead.
   // `await` inside a nested `async function` is also flagged, but wrapping
   // such scripts in an outer async IIFE is harmless: the inner `await` still
   // binds to the inner function.
@@ -796,7 +807,6 @@
       .replace(/\/\/[^\n]*/g, "")
       .replace(/'(?:[^'\\]|\\.)*'/g, "''")
       .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-      .replace(/\/(?:[^\/\\\n]|\\.)+\/[gimsuy]*/g, "//")
       .replace(/\.\s*await\b/g, ".__prop");
     return /\bawait\b/.test(stripped);
   }
