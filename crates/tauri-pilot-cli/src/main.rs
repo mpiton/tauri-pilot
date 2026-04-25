@@ -442,9 +442,7 @@ async fn run_snapshot_command(
         if let serde_json::Value::Object(ref mut obj) = result {
             obj.insert("path".into(), json!(path.display().to_string()));
         } else {
-            tracing::warn!(
-                "snapshot RPC returned a non-object result; skipping `path` injection"
-            );
+            tracing::warn!("snapshot RPC returned a non-object result; skipping `path` injection");
         }
         eprintln!("Snapshot saved to {}", path.display());
     }
