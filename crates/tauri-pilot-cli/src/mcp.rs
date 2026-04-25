@@ -1301,7 +1301,10 @@ fn scroll_schema() -> Arc<JsonObject> {
         props([
             (
                 "direction",
-                enum_prop("Direction to scroll.", &["up", "down", "left", "right"]),
+                enum_prop(
+                    "Direction to scroll.",
+                    &["up", "down", "left", "right", "top", "bottom"],
+                ),
             ),
             ("amount", integer_prop("Pixel amount to scroll.")),
             (
@@ -1635,6 +1638,35 @@ mod tests {
             .expect("schema has properties");
         assert!(properties.contains_key("target"));
         assert!(properties.contains_key("window"));
+    }
+
+    #[test]
+    fn scroll_schema_accepts_top_and_bottom_directions() {
+        let schema = scroll_schema();
+        let direction = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|p| p.get("direction"))
+            .and_then(Value::as_object)
+            .expect("scroll schema has direction property");
+        let values: Vec<&str> = direction
+            .get("enum")
+            .and_then(Value::as_array)
+            .expect("direction has enum")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            values.len(),
+            6,
+            "scroll direction enum must have exactly 6 string variants, got {values:?}"
+        );
+        for expected in ["up", "down", "left", "right", "top", "bottom"] {
+            assert!(
+                values.contains(&expected),
+                "scroll direction enum must include {expected}"
+            );
+        }
     }
 
     #[test]
