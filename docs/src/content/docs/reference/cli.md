@@ -381,7 +381,7 @@ tauri-pilot type @e2 " additional text"
 
 ### `press`
 
-Inject a keyboard event at the OS level via [`enigo`](https://crates.io/crates/enigo).
+Inject keyboard events at the OS level via [`enigo`](https://crates.io/crates/enigo).
 Events are `isTrusted=true` and reach DOM listeners and Tauri accelerators on
 all supported platforms.
 
@@ -390,9 +390,10 @@ On X11, synthetic key events from `enigo`'s `XTestFakeKeyEvent` backend
 frequently fail to trigger `tauri-plugin-global-shortcut` handlers. The
 upstream `global-hotkey` crate uses `XGrabKey` passive grabs on its Linux/X11
 backend; these match the X server's logical modifier state, and `enigo`'s
-separate fake-input calls for the modifier and the keycode can desynchronize
-that state, so the grab's exact-modifier-mask match may fail. DOM listeners
-and Tauri accelerators continue to receive `isTrusted=true` events.
+separate fake-input calls for each modifier and the main keycode can
+desynchronize that state, so the grab's exact-modifier-mask match may fail.
+DOM listeners and Tauri accelerators continue to receive `isTrusted=true`
+events.
 
 **Workaround**: factor the shortcut handler body into a `#[tauri::command]`
 and invoke it via `tauri-pilot ipc <command>`, or have the handler emit a
