@@ -246,8 +246,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#73]: https://github.com/mpiton/tauri-pilot/issues/73
 [#74]: https://github.com/mpiton/tauri-pilot/issues/74
 [#75]: https://github.com/mpiton/tauri-pilot/issues/75
-<<<<<<< HEAD
 [#79]: https://github.com/mpiton/tauri-pilot/issues/79
-=======
 [#80]: https://github.com/mpiton/tauri-pilot/issues/80
->>>>>>> 18c1831 (fix(cli): keep --json snapshot --save stdout pipe-safe (#80))

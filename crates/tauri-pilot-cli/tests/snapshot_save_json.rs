@@ -78,14 +78,18 @@ fn snapshot_save_json_stdout_is_pure_parseable_json() {
         .output()
         .expect("run tauri-pilot");
 
+    // Fail fast before join() so a binary that exits before connecting (e.g.
+    // arg-parse error) cannot leave the mock server blocked on accept() and
+    // hang the test indefinitely.
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&socket);
+        panic!(
+            "binary exited with non-zero status: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     handle.join().expect("mock server join");
     let _ = std::fs::remove_file(&socket);
-
-    assert!(
-        output.status.success(),
-        "binary exited with non-zero status: stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
@@ -145,14 +149,17 @@ fn snapshot_save_json_stdout_clean_with_rust_log_info() {
         .output()
         .expect("run tauri-pilot");
 
+    // Fail fast before join() so a binary that exits before connecting cannot
+    // leave the mock server blocked on accept() and hang the test.
+    if !output.status.success() {
+        let _ = std::fs::remove_file(&socket);
+        panic!(
+            "binary exited with non-zero status: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     handle.join().expect("mock server join");
     let _ = std::fs::remove_file(&socket);
-
-    assert!(
-        output.status.success(),
-        "binary exited with non-zero status: stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     serde_json::from_str::<serde_json::Value>(&stdout).unwrap_or_else(|e| {

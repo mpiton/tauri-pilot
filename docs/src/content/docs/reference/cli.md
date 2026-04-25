@@ -166,6 +166,8 @@ tauri-pilot snapshot [OPTIONS]
 | `-d`, `--depth <n>` | Maximum tree depth to traverse |
 | `--save <file>` | Save the snapshot to a JSON file for later comparison with `diff --ref` |
 
+**Note on `--save` with `--json`:** the saved file holds the unmodified RPC payload (`{"elements":[…]}`) so it can be fed straight back into `diff --ref`. The `--json` payload printed to stdout additionally embeds a `"path"` field (`{"elements":[…],"path":"<file>"}`) so callers piping into `jq` / `python -c 'json.load(sys.stdin)'` can recover the saved location without parsing stderr. The two shapes are intentionally different.
+
 **Example:**
 
 ```bash
