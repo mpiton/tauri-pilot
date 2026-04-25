@@ -289,7 +289,9 @@ mod tests {
             "scroll top on element must set scrollTop = 0"
         );
         assert!(
-            js.contains("target.scrollTop = Math.max(0, target.scrollHeight - target.clientHeight)"),
+            js.contains(
+                "target.scrollTop = Math.max(0, target.scrollHeight - target.clientHeight)"
+            ),
             "scroll bottom on element must use scrollHeight - clientHeight (not raw scrollHeight)"
         );
         assert!(
