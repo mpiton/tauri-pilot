@@ -233,7 +233,11 @@ window:
 
 ## Known limitations
 
-- **`press` and global shortcuts on X11** — synthetic key events from `press` (via `enigo`'s `XTestFakeKeyEvent` backend) frequently fail to trigger handlers registered with `tauri-plugin-global-shortcut`. The X11-only `global-hotkey` crate uses `XGrabKey` passive grabs that match the X server's logical modifier state, and `enigo`'s separate fake-input calls for the modifier and the keycode can desynchronize that state, so the grab's exact-modifier-mask match fails. DOM listeners and Tauri accelerators continue to receive `isTrusted=true` events. Workaround: factor the handler body into a `#[tauri::command]` and call it via `tauri-pilot ipc <command>`, or have the handler emit a Tauri event the test can re-emit — there is no way to invoke an arbitrary closure passed to `on_shortcut(...)` directly from outside the process. See [#75](https://github.com/mpiton/tauri-pilot/issues/75).
+- **`press` and global shortcuts on X11** — synthetic key events from `press` (via `enigo`'s `XTestFakeKeyEvent` backend) frequently fail to trigger handlers registered with `tauri-plugin-global-shortcut`.
+
+  The upstream `global-hotkey` crate uses `XGrabKey` passive grabs on its Linux/X11 backend, which match against the X server's logical modifier state. `enigo`'s separate fake-input calls for the modifier and the keycode can desynchronize that state, so the grab's exact-modifier-mask match fails. DOM listeners and Tauri accelerators continue to receive `isTrusted=true` events.
+
+  **Workaround**: factor the handler body into a `#[tauri::command]` and call it via `tauri-pilot ipc <command>`, or have the handler emit a Tauri event the test can re-emit — there is no way to invoke an arbitrary closure passed to `on_shortcut(...)` directly from outside the process. See [#75](https://github.com/mpiton/tauri-pilot/issues/75).
 
 ## Who uses this?
 
