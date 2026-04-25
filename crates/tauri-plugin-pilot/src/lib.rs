@@ -334,17 +334,20 @@ mod tests {
 
         // Stage ordering: expression compile must precede the async fallbacks,
         // and the async-expression stage must precede the indirect-eval path.
+        // Needles are formatting-stable substrings of the JS source, so a
+        // future `prettier`/`rustfmt` reflow of `bridge.js` does not silently
+        // break the ordering check.
         let evalscript_idx = js.find("function evalScript(").expect("evalScript missing");
+        // SAFETY: the needle is ASCII, so `find()` returns a UTF-8 char boundary.
         let body = &js[evalscript_idx..];
         let expr_idx = body
-            .find("new Function(\"return (\" + script + \")\")")
+            .find("\"return (\" + script + \")\"")
             .expect("stage 1 expression compile missing");
         let async_expr_idx = body
-            .find("new Function(\n          \"return (async () => (\" + script + \"))()\"\n        )")
-            .or_else(|| body.find("(async () => (\" + script + \"))()"))
+            .find("\"return (async () => (\" + script + \"))()\"")
             .expect("stage 2 async-expression compile missing");
         let async_stmt_idx = body
-            .find("(async () => { \" + script + \" })()")
+            .find("\"return (async () => { \" + script + \" })()\"")
             .expect("stage 3 async-statement IIFE missing");
         let indirect_idx = body
             .find("var indirectEval = eval;")

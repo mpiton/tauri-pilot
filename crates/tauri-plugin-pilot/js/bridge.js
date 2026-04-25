@@ -774,17 +774,30 @@
     return expr();
   }
 
-  // Heuristic top-level `await` detector. Strips strings and comments first to
-  // avoid false positives from text like `"await"` or `/* await */`. Nested
-  // `await` inside an inner `async function` is still flagged, but wrapping
-  // such scripts in an outer async IIFE is harmless.
+  // Heuristic top-level `await` detector. Strips comments, single/double
+  // quoted strings, and regex literals so text like `"await"`, `/* await */`
+  // or `/await/` does not trigger a false positive, then masks property
+  // accesses (`obj.await`) so the bareword test does not fire on member
+  // expressions. Template literals are deliberately NOT stripped so a real
+  // `` `${await x}` `` is detected; the cost is that a template containing
+  // the literal text `` `await` `` is a false positive — this is harmless
+  // because the async-IIFE wrap still executes the script correctly, only
+  // the completion-value contract changes (the user must use an explicit
+  // `return` to surface a value, which is documented in cli.md). For scripts
+  // larger than 100 KB the strip pass is skipped to bound worst-case scan
+  // time; the raw `await` test is used instead.
+  // `await` inside a nested `async function` is also flagged, but wrapping
+  // such scripts in an outer async IIFE is harmless: the inner `await` still
+  // binds to the inner function.
   function hasTopLevelAwait(src) {
+    if (src.length > 100000) return /\bawait\b/.test(src);
     var stripped = src
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/[^\n]*/g, "")
       .replace(/'(?:[^'\\]|\\.)*'/g, "''")
       .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-      .replace(/`(?:[^`\\$]|\\.|\$\{[^}]*\})*`/g, "``");
+      .replace(/\/(?:[^\/\\\n]|\\.)+\/[gimsuy]*/g, "//")
+      .replace(/\.\s*await\b/g, ".__prop");
     return /\bawait\b/.test(stripped);
   }
 
