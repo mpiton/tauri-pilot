@@ -31,14 +31,13 @@ async fn main() -> Result<()> {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
 
-    if is_mcp {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_writer(std::io::stderr)
-            .init();
-    } else {
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
-    }
+    // CLI tools must keep stdout reserved for data so callers can pipe into
+    // `jq`, `python -c 'json.load(...)'`, etc. without log noise corrupting the
+    // payload (see #80).
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .init();
 
     if is_mcp {
         return mcp::run_mcp_server(args.socket, args.window).await;
@@ -421,11 +420,17 @@ async fn run_snapshot_command(
         })),
         window,
     );
-    let result = client.call("snapshot", params).await?;
+    let mut result = client.call("snapshot", params).await?;
     if let Some(ref path) = save {
         let json = serde_json::to_string_pretty(&result)?;
         std::fs::write(path, &json)
             .with_context(|| format!("Failed to save snapshot to {}", path.display()))?;
+        // Embed the saved path in the JSON result so `--json` consumers can
+        // recover it without parsing stderr (matches `record stop --output`
+        // and `screenshot` conventions; see #80).
+        if let serde_json::Value::Object(ref mut obj) = result {
+            obj.insert("path".into(), json!(path.display().to_string()));
+        }
         eprintln!("Snapshot saved to {}", path.display());
     }
     Ok(result)

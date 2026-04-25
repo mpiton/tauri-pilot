@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The MCP `wait` tool now routes through the same `build_wait_params` helper so MCP clients get the auto-detection fix without their own code change ([#74])
 - Scoped the `press` + global-shortcut claim from PR #45 / `[0.4.0]`. On X11, `enigo`'s `XTestFakeKeyEvent` backend does not reliably satisfy the `XGrabKey` passive grabs used by `tauri-plugin-global-shortcut`'s Linux backend, so registered global shortcuts may not fire. DOM listeners and Tauri accelerators are unaffected. See [#75], the README's "Known limitations" section, and the `press` reference docs for the mechanism and the documented workaround.
 - `tauri-pilot eval` now auto-wraps top-level `await` in an async IIFE so the natural shape works (`await Promise.resolve("hi")`, `await fetch("/api").then(r => r.json())`). Previously the bridge fell through to indirect eval — a script context where top-level `await` is forbidden — and surfaced an opaque `Unexpected identifier 'Promise'` error instead of pointing at the real cause. The bridge now compiles in three stages (expression → async-expression → async-statement-IIFE-when-await-is-detected → indirect-eval) and emits a clear error pointing back at `docs/reference/cli.md` when none of them parse. Multi-statement scripts that want to surface a value still need an explicit `return`. ([#79])
+- `tauri-pilot --json snapshot --save <path>` now emits a self-describing JSON object on stdout: the saved file path is merged into the result as `"path"` (alongside `"elements"`), matching the `record stop --output` and `screenshot` conventions. Pipelines like `... | jq` or `... | python -c 'json.load(sys.stdin)'` are no longer at the mercy of stderr/stdout interleaving. Also routed `tracing` output to stderr in CLI mode so `RUST_LOG`-driven log lines can never corrupt a `--json` payload (it was already routed to stderr in `mcp` mode). The human-readable "Snapshot saved to <path>" line is still printed to stderr ([#80]).
 
 ### Changed
 
@@ -245,4 +246,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#73]: https://github.com/mpiton/tauri-pilot/issues/73
 [#74]: https://github.com/mpiton/tauri-pilot/issues/74
 [#75]: https://github.com/mpiton/tauri-pilot/issues/75
+<<<<<<< HEAD
 [#79]: https://github.com/mpiton/tauri-pilot/issues/79
+=======
+[#80]: https://github.com/mpiton/tauri-pilot/issues/80
+>>>>>>> 18c1831 (fix(cli): keep --json snapshot --save stdout pipe-safe (#80))
