@@ -822,15 +822,20 @@
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/[^\n]*/g, "")
       .replace(/\.\s*await\b/g, ".__prop");
-    // Peel innermost `function`/arrow bodies. Each iteration matches blocks
-    // with no nested braces, so doubly-nested functions take two passes.
-    // Cap the iteration count so a pathological input cannot loop forever.
+    // Peel innermost `function`/arrow bodies, both block-bodied
+    // (`() => { ... }`) and concise (`() => expr`). Each iteration matches
+    // bodies with no nested braces, so doubly-nested functions take two
+    // passes. Cap the iteration count so a pathological input cannot loop
+    // forever. Concise arrow bodies stop at any of `;,){}\n` to avoid
+    // chewing through the rest of the script.
     for (var k = 0; k < 6; k++) {
       var prev = stripped;
       stripped = stripped
         .replace(/\bfunction\s*\*?\s*[\w$]*\s*\([^()]*\)\s*\{[^{}]*\}/g, "fn()")
         .replace(/\([^()]*\)\s*=>\s*\{[^{}]*\}/g, "fn()")
-        .replace(/\b[\w$]+\s*=>\s*\{[^{}]*\}/g, "fn()");
+        .replace(/\b[\w$]+\s*=>\s*\{[^{}]*\}/g, "fn()")
+        .replace(/\([^()]*\)\s*=>\s*[^{};,)\n]+/g, "fn()")
+        .replace(/\b[\w$]+\s*=>\s*[^{};,)\n]+/g, "fn()");
       if (stripped === prev) break;
     }
     return /\bawait\b/.test(stripped);
