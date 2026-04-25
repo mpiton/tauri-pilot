@@ -780,12 +780,15 @@
   }
 
   // Heuristic top-level `await` detector. Strips comments and single/double
-  // quoted strings so text like `"await"` or `/* await */` does not trigger
-  // a false positive, then masks property accesses (`obj.await`) so the
-  // bareword test does not fire on member expressions.
+  // quoted strings, masks property accesses (`obj.await`), then peels
+  // nested `function`/arrow-with-block bodies so an `await` buried in a
+  // nested function does not trigger top-level detection — otherwise a
+  // statement script like `async function f(){ await 1; } f(); 1+1`
+  // would be mis-routed to the async-statement wrapper and lose its
+  // completion value.
   //
-  // Two intentional choices, each documented because the alternative is
-  // worse:
+  // Three deliberate non-strips, each documented because the alternative
+  // is worse:
   //
   //   * Template literals are NOT stripped. Stripping them with a single-pass
   //     regex cannot balance nested `${...}` braces, and it also drops a real
@@ -799,12 +802,13 @@
   //     `a / await foo / c`, which would silently hide a real top-level
   //     `await` and break the auto-wrap fallback. False positives from a
   //     literal `/await/` regex are again harmless wraps.
+  //   * Methods inside `class` bodies are NOT recognised — the function-body
+  //     strip only matches `function`/arrow blocks. A class with an `await`
+  //     inside an `async` method would be flagged. Niche enough that
+  //     dragging in keyword-aware parsing isn't worth it.
   //
   // For scripts larger than 100 KB the strip pass is skipped to bound
   // worst-case scan time; the raw `await` test is used instead.
-  // `await` inside a nested `async function` is also flagged, but wrapping
-  // such scripts in an outer async IIFE is harmless: the inner `await` still
-  // binds to the inner function.
   function hasTopLevelAwait(src) {
     if (src.length > 100000) return /\bawait\b/.test(src);
     // Strip quoted strings BEFORE comments, otherwise a URL like
@@ -818,6 +822,17 @@
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/\/\/[^\n]*/g, "")
       .replace(/\.\s*await\b/g, ".__prop");
+    // Peel innermost `function`/arrow bodies. Each iteration matches blocks
+    // with no nested braces, so doubly-nested functions take two passes.
+    // Cap the iteration count so a pathological input cannot loop forever.
+    for (var k = 0; k < 6; k++) {
+      var prev = stripped;
+      stripped = stripped
+        .replace(/\bfunction\s*\*?\s*[\w$]*\s*\([^()]*\)\s*\{[^{}]*\}/g, "fn()")
+        .replace(/\([^()]*\)\s*=>\s*\{[^{}]*\}/g, "fn()")
+        .replace(/\b[\w$]+\s*=>\s*\{[^{}]*\}/g, "fn()");
+      if (stripped === prev) break;
+    }
     return /\bawait\b/.test(stripped);
   }
 
