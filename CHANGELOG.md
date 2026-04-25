@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tauri-pilot wait` and the bridge `waitFor` now reject up-front when neither `selector` nor `ref` is provided (including the `@`-alone edge case where `parse_target` would otherwise produce an empty ref), instead of silently waiting on a `MutationObserver` until the timeout fires ([#74])
 - Bridge `waitFor` reads `options.ref` (was `options.target`) so its protocol matches `resolveTarget`, the field name used by every other element-targeting handler ([#74])
 - The MCP `wait` tool now routes through the same `build_wait_params` helper so MCP clients get the auto-detection fix without their own code change ([#74])
+- Scoped the `press` claim about global shortcuts. On X11, synthetic key events from `enigo`'s `XTestFakeKeyEvent` backend frequently fail to satisfy the `XGrabKey` passive grab used by `tauri-plugin-global-shortcut` (via the X11-only `global-hotkey` crate) — typically because the synthetic modifier press does not update the X server's logical modifier state in lockstep with the keycode press, so the grab's exact-modifier-mask match fails. Registered global shortcuts may not fire even when DOM listeners and Tauri accelerators receive the same combo with `isTrusted=true`. The `[0.4.0]` CHANGELOG and PR #45 description over-promised by listing global-shortcut handlers alongside DOM and accelerator delivery. Workaround: factor the shortcut handler body into a `#[tauri::command]` and call it via `tauri-pilot ipc <command>`, or have the handler emit a Tauri event the test can re-emit — there is no way to invoke an arbitrary closure registered via `on_shortcut(...)` directly from outside the process. ([#75])
 
 ### Changed
 
@@ -242,3 +243,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#68]: https://github.com/mpiton/tauri-pilot/issues/68
 [#73]: https://github.com/mpiton/tauri-pilot/issues/73
 [#74]: https://github.com/mpiton/tauri-pilot/issues/74
+[#75]: https://github.com/mpiton/tauri-pilot/issues/75

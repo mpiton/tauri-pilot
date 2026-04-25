@@ -381,9 +381,25 @@ tauri-pilot type @e2 " additional text"
 
 ### `press`
 
-Inject a keyboard event at the OS level. Events are `isTrusted=true`, so they
-reach DOM listeners, Tauri accelerators, and `tauri-plugin-global-shortcut`
-handlers — exactly like a physical key press.
+Inject a keyboard event at the OS level via [`enigo`](https://crates.io/crates/enigo).
+Events are `isTrusted=true` and reach DOM listeners and Tauri accelerators on
+all supported platforms.
+
+:::caution[X11 global shortcuts]
+On X11, synthetic key events from `enigo`'s `XTestFakeKeyEvent` backend
+frequently fail to trigger `tauri-plugin-global-shortcut` handlers. The
+X11-only `global-hotkey` crate uses `XGrabKey` passive grabs that match the X
+server's logical modifier state, and `enigo`'s separate fake-input calls for
+the modifier and the keycode can desynchronize that state, so the grab's
+exact-modifier-mask match may fail. DOM listeners and Tauri accelerators
+continue to receive `isTrusted=true` events.
+
+**Workaround**: factor the shortcut handler body into a `#[tauri::command]`
+and invoke it via `tauri-pilot ipc <command>`, or have the handler emit a
+Tauri event the test can re-emit. There is no way to invoke an arbitrary
+closure passed to `on_shortcut(...)` directly from outside the process. See
+[issue #75](https://github.com/mpiton/tauri-pilot/issues/75).
+:::
 
 ```bash
 tauri-pilot press <key>
