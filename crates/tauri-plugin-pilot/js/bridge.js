@@ -584,7 +584,8 @@
       return { ok: true };
     }
     if (dir !== "up" && dir !== "down" && dir !== "left" && dir !== "right") {
-      throw new Error("Unknown scroll direction: " + dir + " (expected up|down|left|right|top|bottom)");
+      const safeDir = String(dir).slice(0, 64);
+      throw new Error("Unknown scroll direction: " + safeDir + " (expected up|down|left|right|top|bottom)");
     }
     const dx = (dir === "left" ? -amount : dir === "right" ? amount : 0);
     const dy = (dir === "up" ? -amount : dir === "down" ? amount : 0);

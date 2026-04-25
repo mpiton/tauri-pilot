@@ -270,9 +270,14 @@ mod tests {
             js.contains("target.scrollTo(window.scrollX, Math.max(0, max))"),
             "scroll bottom on window must preserve window.scrollX and clamp negative max"
         );
+        let collapsed: String = js.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            js.contains("Math.max(\n          docEl ? docEl.scrollHeight : 0,\n          body ? body.scrollHeight : 0\n        )"),
+            collapsed.contains("Math.max( docEl ? docEl.scrollHeight : 0, body ? body.scrollHeight : 0 )"),
             "scroll bottom on window must use Math.max(documentElement, body) for quirks-mode safety"
+        );
+        assert!(
+            js.contains("String(dir).slice(0, 64)"),
+            "scroll error message must cap user-supplied direction length"
         );
         assert!(
             js.contains("target.scrollTop = 0"),
