@@ -770,8 +770,26 @@ $ tauri-pilot eval "document.querySelector('a')?.click()" && tauri-pilot state
 # click fires, then state prints — exit 0
 ```
 
-Top-level `await` is not supported; wrap async work in an IIFE:
-`(async () => await fetch('/api').then(r => r.json()))()`.
+Top-level `await` is auto-wrapped in an async IIFE, so the natural shape works:
+
+```bash
+$ tauri-pilot eval 'await Promise.resolve("hello")'
+hello
+
+$ tauri-pilot eval 'await fetch("/api/items").then(r => r.json())'
+[…]
+```
+
+For multi-statement scripts (e.g. `const` followed by a value to surface), use
+an explicit `return` since the wrapper has no completion-value semantics:
+
+```bash
+$ tauri-pilot eval 'const r = await fetch("/api"); return r.status'
+200
+```
+
+Without `return`, the result is `null`. If the auto-wrap can't compile the
+script (rare; usually a syntax error), the error message points back here.
 
 ---
 

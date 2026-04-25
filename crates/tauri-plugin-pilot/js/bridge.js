@@ -725,24 +725,120 @@
   function evalScript(options) {
     var script = options && options.script;
     if (!script) throw new Error("No script provided");
-    // Compile as an expression first so `{a:1}` keeps its object-literal
-    // semantics (not a labeled block) and `class C {}` evaluates to the
-    // constructor. Keep compilation separate from execution: a runtime
-    // SyntaxError from e.g. `JSON.parse('x')` must propagate, not trigger
-    // the statement fallback — otherwise the script would run twice.
+    // Stage 1 — expression compile.
+    // `{a:1}` keeps its object-literal semantics (not a labeled block) and
+    // `class C {}` evaluates to the constructor. Keep compilation separate
+    // from execution: a runtime SyntaxError from e.g. `JSON.parse('x')` must
+    // propagate, not trigger a fallback — otherwise the script would run twice.
     var expr;
     try {
-      expr = new Function("return (" + script + ")");
-    } catch (e) {
-      if (!(e instanceof SyntaxError)) throw e;
-      // Fallback for statements (`const x = 1; x`, function declarations,
-      // etc.) that the expression wrapper can't parse. Indirect eval runs
-      // in global scope and returns the completion value of the last
-      // expression (#46).
+      expr = new Function("return (\n" + script + "\n)");
+    } catch (e1) {
+      if (!(e1 instanceof SyntaxError)) throw e1;
+      // The newlines around `script` in every wrapper below isolate user
+      // tokens from generated closing punctuation. Without them, a trailing
+      // `// comment` on the last line of the user script swallows `))()` or
+      // `})()` and the wrapper fails to compile.
+      if (hasTopLevelAwait(script)) {
+        // Stage 2 — async-expression compile (#79).
+        // Handles top-level `await` in expression position, e.g.
+        // `await Promise.resolve("hi")` or `await fetch(...).then(r => r.json())`.
+        // Returns a Promise; the Rust wrapper already awaits it.
+        try {
+          var asyncExpr = new Function(
+            "return (async () => (\n" + script + "\n))()"
+          );
+          return asyncExpr();
+        } catch (e2) {
+          if (!(e2 instanceof SyntaxError)) throw e2;
+        }
+        // Stage 3 — async-statement IIFE (#79).
+        // Top-level `await` is not allowed in plain script context, so when
+        // the user script does not fit an expression but does contain
+        // `await`, we wrap it in an async statement IIFE. The user must use
+        // `return` to surface a value; otherwise the result is `null`.
+        try {
+          var asyncStmt = new Function(
+            "return (async () => {\n" + script + "\n})()"
+          );
+          return asyncStmt();
+        } catch (e3) {
+          if (!(e3 instanceof SyntaxError)) throw e3;
+          throw new SyntaxError(
+            "top-level await detected but the script could not be auto-wrapped. " +
+              "Wrap explicitly: (async () => { /* ...; */ return value; })() — " +
+              "see docs/reference/cli.md"
+          );
+        }
+      }
+      // Stage 4 — statement fallback. Indirect eval runs in global script
+      // context and returns the completion value of the last expression (#46).
       var indirectEval = eval;
       return indirectEval(script);
     }
     return expr();
+  }
+
+  // Heuristic top-level `await` detector. Strips comments and single/double
+  // quoted strings, masks property accesses (`obj.await`), then peels
+  // nested `function`/arrow-with-block bodies so an `await` buried in a
+  // nested function does not trigger top-level detection — otherwise a
+  // statement script like `async function f(){ await 1; } f(); 1+1`
+  // would be mis-routed to the async-statement wrapper and lose its
+  // completion value.
+  //
+  // Three deliberate non-strips, each documented because the alternative
+  // is worse:
+  //
+  //   * Template literals are NOT stripped. Stripping them with a single-pass
+  //     regex cannot balance nested `${...}` braces, and it also drops a real
+  //     `` `${await x}` ``. Leaving them in only causes false positives on a
+  //     literal like `` `await` ``, which is harmless: the script still runs
+  //     wrapped in an async IIFE, only the completion-value contract changes
+  //     (the user must use an explicit `return` to surface a value, which is
+  //     documented in cli.md).
+  //   * Regex literals (`/await/`) are NOT stripped either. A naive
+  //     `\/.../[flags]*` match also swallows division expressions like
+  //     `a / await foo / c`, which would silently hide a real top-level
+  //     `await` and break the auto-wrap fallback. False positives from a
+  //     literal `/await/` regex are again harmless wraps.
+  //   * Methods inside `class` bodies are NOT recognised — the function-body
+  //     strip only matches `function`/arrow blocks. A class with an `await`
+  //     inside an `async` method would be flagged. Niche enough that
+  //     dragging in keyword-aware parsing isn't worth it.
+  //
+  // For scripts larger than 100 KB the strip pass is skipped to bound
+  // worst-case scan time; the raw `await` test is used instead.
+  function hasTopLevelAwait(src) {
+    if (src.length > 100000) return /\bawait\b/.test(src);
+    // Strip quoted strings BEFORE comments, otherwise a URL like
+    // `"http://example.com"` looks like a `//` line comment and the rest
+    // of the line — including any real `await` — gets deleted, producing a
+    // false negative. Same for `"/* not a comment */"` block markers
+    // embedded in a string.
+    var stripped = src
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\.\s*await\b/g, ".__prop");
+    // Peel innermost `function`/arrow bodies, both block-bodied
+    // (`() => { ... }`) and concise (`() => expr`). Each iteration matches
+    // bodies with no nested braces, so doubly-nested functions take two
+    // passes. Cap the iteration count so a pathological input cannot loop
+    // forever. Concise arrow bodies stop at any of `;,){}\n` to avoid
+    // chewing through the rest of the script.
+    for (var k = 0; k < 6; k++) {
+      var prev = stripped;
+      stripped = stripped
+        .replace(/\bfunction\s*\*?\s*[\w$]*\s*\([^()]*\)\s*\{[^{}]*\}/g, "fn()")
+        .replace(/\([^()]*\)\s*=>\s*\{[^{}]*\}/g, "fn()")
+        .replace(/\b[\w$]+\s*=>\s*\{[^{}]*\}/g, "fn()")
+        .replace(/\([^()]*\)\s*=>\s*[^{};,)\n]+/g, "fn()")
+        .replace(/\b[\w$]+\s*=>\s*[^{};,)\n]+/g, "fn()");
+      if (stripped === prev) break;
+    }
+    return /\bawait\b/.test(stripped);
   }
 
   function waitFor(options) {
