@@ -299,4 +299,67 @@ mod tests {
             "scroll must throw on unknown direction instead of silently no-op"
         );
     }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn bridge_eval_auto_wraps_top_level_await() {
+        // #79: top-level `await` in user scripts must compile via the
+        // async-IIFE fallback stages instead of crashing with an opaque
+        // SyntaxError from indirect eval.
+        let js = super::BRIDGE_JS;
+        assert!(
+            js.contains("function evalScript("),
+            "BRIDGE_JS must define evalScript"
+        );
+        assert!(
+            js.contains("(async () => (\" + script + \"))()"),
+            "evalScript must include the async-expression compile stage (#79)"
+        );
+        assert!(
+            js.contains("hasTopLevelAwait(script)"),
+            "evalScript must guard the async-statement fallback with hasTopLevelAwait (#79)"
+        );
+        assert!(
+            js.contains("(async () => { \" + script + \" })()"),
+            "evalScript must include the async-statement IIFE fallback (#79)"
+        );
+        assert!(
+            js.contains("function hasTopLevelAwait("),
+            "BRIDGE_JS must define the hasTopLevelAwait helper (#79)"
+        );
+        assert!(
+            js.contains("top-level await detected but the script could not be auto-wrapped"),
+            "evalScript must surface a clear error when auto-wrap fails (#79)"
+        );
+
+        // Stage ordering: expression compile must precede the async fallbacks,
+        // and the async-expression stage must precede the indirect-eval path.
+        let evalscript_idx = js.find("function evalScript(").expect("evalScript missing");
+        let body = &js[evalscript_idx..];
+        let expr_idx = body
+            .find("new Function(\"return (\" + script + \")\")")
+            .expect("stage 1 expression compile missing");
+        let async_expr_idx = body
+            .find("new Function(\n          \"return (async () => (\" + script + \"))()\"\n        )")
+            .or_else(|| body.find("(async () => (\" + script + \"))()"))
+            .expect("stage 2 async-expression compile missing");
+        let async_stmt_idx = body
+            .find("(async () => { \" + script + \" })()")
+            .expect("stage 3 async-statement IIFE missing");
+        let indirect_idx = body
+            .find("var indirectEval = eval;")
+            .expect("indirect eval fallback missing");
+        assert!(
+            expr_idx < async_expr_idx,
+            "expression compile must precede async-expression fallback"
+        );
+        assert!(
+            async_expr_idx < async_stmt_idx,
+            "async-expression must precede async-statement fallback"
+        );
+        assert!(
+            async_stmt_idx < indirect_idx,
+            "async-statement IIFE must precede plain indirect eval (await guard runs first)"
+        );
+    }
 }
