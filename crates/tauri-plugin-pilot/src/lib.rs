@@ -312,15 +312,15 @@ mod tests {
             "BRIDGE_JS must define evalScript"
         );
         assert!(
-            js.contains("(async () => (\" + script + \"))()"),
+            js.contains("(async () => (\\n\" + script + \"\\n))()"),
             "evalScript must include the async-expression compile stage (#79)"
         );
         assert!(
             js.contains("hasTopLevelAwait(script)"),
-            "evalScript must guard the async-statement fallback with hasTopLevelAwait (#79)"
+            "evalScript must guard the async fallbacks with hasTopLevelAwait (#79)"
         );
         assert!(
-            js.contains("(async () => { \" + script + \" })()"),
+            js.contains("(async () => {\\n\" + script + \"\\n})()"),
             "evalScript must include the async-statement IIFE fallback (#79)"
         );
         assert!(
@@ -341,13 +341,13 @@ mod tests {
         // SAFETY: the needle is ASCII, so `find()` returns a UTF-8 char boundary.
         let body = &js[evalscript_idx..];
         let expr_idx = body
-            .find("\"return (\" + script + \")\"")
+            .find("\"return (\\n\" + script + \"\\n)\"")
             .expect("stage 1 expression compile missing");
         let async_expr_idx = body
-            .find("\"return (async () => (\" + script + \"))()\"")
+            .find("\"return (async () => (\\n\" + script + \"\\n))()\"")
             .expect("stage 2 async-expression compile missing");
         let async_stmt_idx = body
-            .find("\"return (async () => { \" + script + \" })()\"")
+            .find("\"return (async () => {\\n\" + script + \"\\n})()\"")
             .expect("stage 3 async-statement IIFE missing");
         let indirect_idx = body
             .find("var indirectEval = eval;")
