@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tauri-pilot wait` and the bridge `waitFor` now reject up-front when neither `selector` nor `ref` is provided (including the `@`-alone edge case where `parse_target` would otherwise produce an empty ref), instead of silently waiting on a `MutationObserver` until the timeout fires ([#74])
 - Bridge `waitFor` reads `options.ref` (was `options.target`) so its protocol matches `resolveTarget`, the field name used by every other element-targeting handler ([#74])
 - The MCP `wait` tool now routes through the same `build_wait_params` helper so MCP clients get the auto-detection fix without their own code change ([#74])
+- Scoped the `press` + global-shortcut claim from PR #45 / `[0.4.0]`. On X11, `enigo`'s `XTestFakeKeyEvent` backend does not reliably satisfy the `XGrabKey` passive grabs used by `tauri-plugin-global-shortcut`'s Linux backend, so registered global shortcuts may not fire. DOM listeners and Tauri accelerators are unaffected. See [#75], the README's "Known limitations" section, and the `press` reference docs for the mechanism and the documented workaround.
 
 ### Changed
 
@@ -242,3 +243,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#68]: https://github.com/mpiton/tauri-pilot/issues/68
 [#73]: https://github.com/mpiton/tauri-pilot/issues/73
 [#74]: https://github.com/mpiton/tauri-pilot/issues/74
+[#75]: https://github.com/mpiton/tauri-pilot/issues/75

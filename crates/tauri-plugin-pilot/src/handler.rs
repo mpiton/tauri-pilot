@@ -311,9 +311,12 @@ async fn handle_diff(
 /// Handle the "press" method by injecting an OS-level keyboard event.
 ///
 /// JS-dispatched `KeyboardEvent`s are flagged `isTrusted: false` and never
-/// reach Tauri accelerators or window-manager-level shortcut handlers (#45).
-/// Native injection via `enigo` produces real keyboard events that traverse
-/// the full pipeline.
+/// reach Tauri accelerators (#45). Native injection via `enigo` produces real
+/// keyboard events that DOM listeners and Tauri accelerators see as trusted.
+///
+/// Note: on X11, `enigo`'s `XTestFakeKeyEvent` backend does not reliably
+/// drive `XGrabKey`-based passive grabs, so `tauri-plugin-global-shortcut`
+/// handlers may not fire (#75). See the `key` module-level docs for details.
 #[cfg(feature = "press")]
 async fn handle_press(
     params: Option<&serde_json::Value>,

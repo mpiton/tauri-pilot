@@ -1,17 +1,30 @@
 //! Native OS-level keyboard event injection.
 //!
 //! Synthetic `KeyboardEvent`s dispatched from JS are flagged `isTrusted: false`
-//! and never reach the OS / window-manager layer where Tauri global shortcuts
-//! and accelerators are registered. Injecting at the OS layer (via [`enigo`])
-//! produces "real" key events that traverse the full pipeline:
+//! and never reach the OS / window-manager layer where Tauri accelerators are
+//! registered. Injecting at the OS layer (via [`enigo`]) produces "real" key
+//! events that traverse the full pipeline:
 //!
 //! ```text
 //! enigo → OS input subsystem → window manager → toolkit (GTK/AppKit/Win32)
 //!       → webview → DOM listeners
-//!       → Tauri accelerator/global-shortcut handlers
+//!       → Tauri accelerator handlers
 //! ```
 //!
-//! See issue #45.
+//! # Platform caveats
+//!
+//! On X11, [`simulate_press`] cannot reliably drive
+//! `tauri-plugin-global-shortcut` handlers. The upstream `global-hotkey` crate
+//! uses `XGrabKey` passive grabs on its Linux/X11 backend (Wayland is
+//! unsupported on Linux), and those grabs match against the X server's logical
+//! modifier state. `enigo`'s `XTestFakeKeyEvent` backend injects each modifier
+//! and keycode as a separate fake-input call, and the modifier state observed
+//! at the moment the main keycode is processed does not always match the
+//! grab's exact-modifier-mask, so the grab may not activate. DOM listeners
+//! and Tauri accelerators are unaffected and continue to receive
+//! `isTrusted=true` events.
+//!
+//! See issues #45 and #75.
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::sync::Mutex;
 use thiserror::Error;
