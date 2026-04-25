@@ -890,19 +890,27 @@ Wait for an element to appear (or disappear) in the DOM.
 tauri-pilot wait [target] [OPTIONS]
 ```
 
+**Positional `[target]`** is parsed the same way as for `click`, `text`, `value`, etc., except that `wait` only accepts a snapshot ref or a CSS selector — coordinate targets (`x,y`) are not supported here, since waiting for a position has no meaning:
+
+- `@e3` — snapshot ref (resolved via `idMap`)
+- anything else — CSS selector (e.g. `#loading-spinner`, `.toast-success`, `[data-test=foo]`)
+
+`--selector` takes precedence when both are provided.
+
 **Options:**
 
 | Option | Description |
 |--------|-------------|
-| `--selector <sel>` | CSS selector to wait for (alternative to positional `[target]`) |
+| `--selector <sel>` | CSS selector to wait for (overrides positional `[target]`) |
 | `--gone` | Wait for the element to disappear instead of appear |
 | `--timeout <ms>` | Maximum wait time in milliseconds (default: 10000) |
 
 **Example:**
 
 ```bash
-tauri-pilot wait "@e3"
-tauri-pilot wait --selector "#loading-spinner" --gone
+tauri-pilot wait "#trigger-deferred"          # CSS selector via positional
+tauri-pilot wait "@e3"                        # snapshot ref
+tauri-pilot wait --selector "#spinner" --gone
 tauri-pilot wait --selector ".toast-success" --timeout 5000
 ```
 

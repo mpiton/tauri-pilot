@@ -19,8 +19,8 @@ use rmcp::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    client::Client, export_replay_file, resolve_socket, run_drop_command, run_replay_command,
-    target_params, with_window,
+    build_wait_params, client::Client, export_replay_file, resolve_socket, run_drop_command,
+    run_replay_command, target_params, with_window,
 };
 
 #[derive(Debug, Clone)]
@@ -258,17 +258,13 @@ impl PilotMcpServer {
             "url" => self.call_app_tool("url", None, window).await,
             "title" => self.call_app_tool("title", None, window).await,
             "wait" => {
-                self.call_app_tool(
-                    "wait",
-                    Some(json!({
-                        "target": optional_string(&args, "target")?,
-                        "selector": optional_string(&args, "selector")?,
-                        "gone": optional_bool(&args, "gone")?.unwrap_or(false),
-                        "timeout": optional_u64(&args, "timeout")?.unwrap_or(10_000),
-                    })),
-                    window,
-                )
-                .await
+                let target = optional_string(&args, "target")?;
+                let selector = optional_string(&args, "selector")?;
+                let gone = optional_bool(&args, "gone")?.unwrap_or(false);
+                let timeout = optional_u64(&args, "timeout")?.unwrap_or(10_000);
+                let params =
+                    build_wait_params(target.as_deref(), selector.as_deref(), gone, timeout);
+                self.call_app_tool("wait", Some(params), window).await
             }
             "watch" => {
                 let mut watch_params = json!({

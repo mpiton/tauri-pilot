@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client::Client;
-use crate::{target_params, with_window};
+use crate::{build_wait_params, target_params, with_window};
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
 
@@ -295,20 +295,25 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
         }
         "wait" => {
             let timeout = timeout_ms.unwrap_or(10_000);
-            client
-                .call(
-                    "wait",
-                    with_window(
-                        Some(json!({
-                            "target": step.target,
-                            "selector": step.selector,
-                            "gone": step.gone.unwrap_or(false),
-                            "timeout": timeout,
-                        })),
-                        window,
-                    ),
-                )
-                .await
+            // TOML allows `ref = "e1"` on any element-targeting step. For
+            // `wait` we render it as the same `@e1` syntax `parse_target`
+            // accepts, so the helper stays single-input. Reject ambiguous
+            // steps that set both `target` and `ref` instead of silently
+            // dropping one.
+            if step.target.is_some() && step.step_ref.is_some() {
+                anyhow::bail!(
+                    "wait step sets both `target` and `ref`; pick one (use `ref = \"e1\"` for snapshot refs, `target = \"#sel\"` for CSS selectors)"
+                );
+            }
+            let target_from_ref = step.step_ref.as_deref().map(|r| format!("@{r}"));
+            let target = step.target.as_deref().or(target_from_ref.as_deref());
+            let params = build_wait_params(
+                target,
+                step.selector.as_deref(),
+                step.gone.unwrap_or(false),
+                timeout,
+            );
+            client.call("wait", with_window(Some(params), window)).await
         }
         "watch" => {
             let timeout = timeout_ms.unwrap_or(10_000);
