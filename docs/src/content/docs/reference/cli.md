@@ -890,7 +890,7 @@ Wait for an element to appear (or disappear) in the DOM.
 tauri-pilot wait [target] [OPTIONS]
 ```
 
-**Positional `[target]`** is parsed the same way as for `click`, `text`, `value`, etc.:
+**Positional `[target]`** is parsed the same way as for `click`, `text`, `value`, etc., except that `wait` only accepts a snapshot ref or a CSS selector — coordinate targets (`x,y`) are not supported here, since waiting for a position has no meaning:
 
 - `@e3` — snapshot ref (resolved via `idMap`)
 - anything else — CSS selector (e.g. `#loading-spinner`, `.toast-success`, `[data-test=foo]`)
