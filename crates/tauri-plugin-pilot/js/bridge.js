@@ -500,14 +500,23 @@
     return { ok: true };
   }
 
+  // Resolve the native `value` setter for the element's actual prototype.
+  // Frameworks (React, Preact-signals, Vue) sometimes install an instance-level
+  // setter that swallows programmatic writes; preferring the prototype setter
+  // bypasses that override and keeps WebIDL [LegacyUnforgeable] brand checks
+  // happy on <input>, <textarea>, and <select> alike (#85).
+  function nativeValueSetter(el) {
+    const proto = Object.getPrototypeOf(el);
+    const desc = proto && Object.getOwnPropertyDescriptor(proto, "value");
+    return desc && typeof desc.set === "function" ? desc.set : null;
+  }
+
   function fill(params) {
     const el = resolveTarget(params);
     el.focus();
-    const setter =
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
-    if (setter && setter.set) {
-      setter.set.call(el, params.value);
+    const setter = nativeValueSetter(el);
+    if (setter) {
+      setter.call(el, params.value);
     } else {
       el.value = params.value;
     }
@@ -519,13 +528,11 @@
   function typeText(params) {
     const el = resolveTarget(params);
     el.focus();
-    const setter =
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") ||
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+    const setter = nativeValueSetter(el);
     for (const ch of params.text) {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
-      if (setter && setter.set) {
-        setter.set.call(el, el.value + ch);
+      if (setter) {
+        setter.call(el, el.value + ch);
       } else {
         el.value += ch;
       }
@@ -537,9 +544,9 @@
 
   function select(params) {
     const el = resolveTarget(params);
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
-    if (setter && setter.set) {
-      setter.set.call(el, params.value);
+    const setter = nativeValueSetter(el);
+    if (setter) {
+      setter.call(el, params.value);
     } else {
       el.value = params.value;
     }

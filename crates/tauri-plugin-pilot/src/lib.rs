@@ -365,4 +365,82 @@ mod tests {
             "async-statement IIFE must precede plain indirect eval (await guard runs first)"
         );
     }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn bridge_native_value_setter_picks_prototype_per_element() {
+        // #85: `fill` and `type` on a <textarea> threw
+        // "The HTMLInputElement.value setter can only be used on instances of HTMLInputElement"
+        // because the old code used
+        //   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
+        //   || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+        // The first descriptor is always truthy, so the textarea branch was unreachable
+        // and the input setter was applied to a textarea, violating the WebIDL brand check.
+        let js = super::BRIDGE_JS;
+
+        assert!(
+            js.contains("function nativeValueSetter("),
+            "BRIDGE_JS must define a nativeValueSetter helper that picks the prototype based on the element (#85)"
+        );
+
+        // The helper must use the element's actual prototype to support input,
+        // textarea, and select uniformly without violating the brand check.
+        assert!(
+            js.contains("Object.getPrototypeOf(el)"),
+            "nativeValueSetter must derive the prototype from the element instance (#85)"
+        );
+
+        // Buggy short-circuit must be gone from fill/typeText.
+        let buggy_pattern =
+            "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, \"value\") ||";
+        assert!(
+            !js.contains(buggy_pattern),
+            "fill/typeText must not use the `HTMLInputElement.prototype || HTMLTextAreaElement.prototype` short-circuit (#85)"
+        );
+
+        // Bound each function body by the start of the next `function ` declaration
+        // (or end-of-string), so the slice is immune to brace indentation changes
+        // and to nested blocks closing with the same brace pattern.
+        // ASCII needles → `find()` returns offsets that are valid UTF-8 char boundaries.
+        let body_of = |fn_decl: &str| -> &str {
+            let start = js
+                .find(fn_decl)
+                .unwrap_or_else(|| panic!("{fn_decl} missing"));
+            let after = start + fn_decl.len();
+            let end = js[after..]
+                .find("\n  function ")
+                .map_or(js.len(), |off| after + off);
+            &js[start..end]
+        };
+
+        let fill_body = body_of("function fill(params)");
+        let type_body = body_of("function typeText(params)");
+        let select_body = body_of("function select(params)");
+
+        assert!(
+            fill_body.contains("nativeValueSetter("),
+            "fill must call nativeValueSetter (#85)"
+        );
+        assert!(
+            type_body.contains("nativeValueSetter("),
+            "typeText must call nativeValueSetter (#85)"
+        );
+        assert!(
+            select_body.contains("nativeValueSetter("),
+            "select must call nativeValueSetter (#85) so a future textarea-style brand-check bug cannot reappear in any setter handler"
+        );
+
+        // Helper must be defined before its callers (hoisting works for `function`
+        // declarations, but ordering keeps the source readable for reviewers).
+        let fill_idx = js
+            .find("function fill(params)")
+            .expect("fill function missing");
+        let helper_idx = js
+            .find("function nativeValueSetter(")
+            .expect("nativeValueSetter helper missing");
+        assert!(
+            helper_idx < fill_idx,
+            "nativeValueSetter must be declared before fill (#85)"
+        );
+    }
 }
