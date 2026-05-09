@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-09
+
 ### Fixed
 
-- `fill` and `type` actions now work on `<textarea>`. The bridge previously grabbed the `value` setter via `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")` — but the first descriptor is always truthy, so the textarea fallback was unreachable and the input setter was applied to a textarea, throwing `The HTMLInputElement.value setter can only be used on instances of HTMLInputElement` (WebIDL `[LegacyUnforgeable]` brand check). The bridge now resolves the setter via `Object.getPrototypeOf(el)`, which works uniformly across `<input>`, `<textarea>`, and `<select>` (and also fixes a latent variant of the same bug for inputs sourced from another realm/iframe). The React controlled-input bypass that already existed for plain `<input>` is preserved unchanged. `select` was refactored to share the same helper for consistency, with no behavior change ([#85]).
+- `fill` and `type` actions now work on `<textarea>`. The bridge previously grabbed the `value` setter via `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")` — but the first descriptor is always truthy, so the textarea fallback was unreachable and the input setter was applied to a textarea, throwing `The HTMLInputElement.value setter can only be used on instances of HTMLInputElement` (WebIDL `[LegacyUnforgeable]` brand check). The bridge now resolves the setter via `Object.getPrototypeOf(el)`, which works uniformly across `<input>`, `<textarea>`, and `<select>` (and also fixes a latent variant of the same bug for inputs sourced from another realm/iframe). The React controlled-input bypass that already existed for plain `<input>` is preserved unchanged ([#85]).
+
+### Changed
+
+- `select` action now validates the target tag explicitly: misrouted selectors that resolve to an `<input>`, `<textarea>`, or any non-`<select>` element fail fast with `select requires a <select> element, got: <tag>` instead of silently writing to the wrong element. The pre-refactor implicit type guard came from the `HTMLSelectElement.prototype.value` brand check; the new `nativeValueSetter` helper picks the setter from the element's own prototype, so the guard was made explicit. The check is tag-based (`el.tagName.toLowerCase() === "select"`) rather than `instanceof`, so `<select>` elements coming from another window/iframe realm continue to work ([#85]).
 
 ## [0.5.0] - 2026-04-25
 
@@ -231,7 +237,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
 [#62]: https://github.com/mpiton/tauri-pilot/pull/62
 [#63]: https://github.com/mpiton/tauri-pilot/pull/63
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/mpiton/tauri-pilot/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/mpiton/tauri-pilot/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mpiton/tauri-pilot/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mpiton/tauri-pilot/compare/v0.2.1...v0.3.0
