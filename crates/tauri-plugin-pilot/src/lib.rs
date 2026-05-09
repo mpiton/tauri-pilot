@@ -432,12 +432,18 @@ mod tests {
 
         // The pre-refactor `select` relied on the WebIDL brand check to reject
         // non-<select> targets implicitly. The helper drops that guarantee, so
-        // `select` must keep an explicit `instanceof HTMLSelectElement` guard
-        // to fail fast on misrouted selectors instead of silently writing
-        // `value` on an unrelated element.
+        // `select` must keep an explicit guard to fail fast on misrouted
+        // selectors instead of silently writing `value` on an unrelated
+        // element. The guard must be realm-safe (tag-based, not `instanceof`),
+        // because `nativeValueSetter` was added specifically to support
+        // elements coming from another window/iframe realm.
         assert!(
-            select_body.contains("instanceof HTMLSelectElement"),
+            select_body.contains("select requires a <select> element"),
             "select must explicitly reject non-<select> targets after the nativeValueSetter refactor (#85)"
+        );
+        assert!(
+            !select_body.contains("instanceof HTMLSelectElement"),
+            "select guard must be realm-safe — `instanceof HTMLSelectElement` rejects valid <select> elements from another realm, which contradicts the cross-realm support that motivated nativeValueSetter (#85)"
         );
 
         // Helper must be defined before its callers (hoisting works for `function`

@@ -550,10 +550,15 @@
     // <input>/<textarea> threw). The new helper picks the setter from the
     // element's own prototype, so a misrouted selector would now silently
     // succeed against a non-<select> and report ok while no option was
-    // actually selected. Re-introduce the type guard explicitly.
-    if (!(el instanceof HTMLSelectElement)) {
-      const tag = (el && el.tagName ? String(el.tagName) : String(el)).slice(0, 64);
-      throw new Error("select requires a <select> element, got: " + tag);
+    // actually selected. Re-introduce the type guard with a tag-based check
+    // (realm-safe): an `instanceof` constructor check would be tied to the
+    // host realm and would reject valid <select> elements coming from another
+    // window/iframe realm, which is exactly the case nativeValueSetter was
+    // built to support.
+    const tag = el && el.tagName ? String(el.tagName).toLowerCase() : "";
+    if (tag !== "select") {
+      const reported = (tag || String(el)).slice(0, 64);
+      throw new Error("select requires a <select> element, got: " + reported);
     }
     const setter = nativeValueSetter(el);
     if (setter) {
