@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `fill` and `type` actions now work on `<textarea>`. The bridge previously grabbed the `value` setter via `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value") || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")` — but the first descriptor is always truthy, so the textarea fallback was unreachable and the input setter was applied to a textarea, throwing `The HTMLInputElement.value setter can only be used on instances of HTMLInputElement` (WebIDL `[LegacyUnforgeable]` brand check). The bridge now resolves the setter via `Object.getPrototypeOf(el)`, which works uniformly across `<input>`, `<textarea>`, and `<select>` (and also fixes a latent variant of the same bug for inputs sourced from another realm/iframe). The React controlled-input bypass that already existed for plain `<input>` is preserved unchanged. `select` was refactored to share the same helper for consistency, with no behavior change ([#85]).
+
 ## [0.5.0] - 2026-04-25
 
 ### Added
@@ -251,3 +255,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#75]: https://github.com/mpiton/tauri-pilot/issues/75
 [#79]: https://github.com/mpiton/tauri-pilot/issues/79
 [#80]: https://github.com/mpiton/tauri-pilot/issues/80
+[#85]: https://github.com/mpiton/tauri-pilot/issues/85
