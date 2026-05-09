@@ -430,6 +430,16 @@ mod tests {
             "select must call nativeValueSetter (#85) so a future textarea-style brand-check bug cannot reappear in any setter handler"
         );
 
+        // The pre-refactor `select` relied on the WebIDL brand check to reject
+        // non-<select> targets implicitly. The helper drops that guarantee, so
+        // `select` must keep an explicit `instanceof HTMLSelectElement` guard
+        // to fail fast on misrouted selectors instead of silently writing
+        // `value` on an unrelated element.
+        assert!(
+            select_body.contains("instanceof HTMLSelectElement"),
+            "select must explicitly reject non-<select> targets after the nativeValueSetter refactor (#85)"
+        );
+
         // Helper must be defined before its callers (hoisting works for `function`
         // declarations, but ordering keeps the source readable for reviewers).
         let fill_idx = js

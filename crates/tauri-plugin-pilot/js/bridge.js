@@ -544,6 +544,17 @@
 
   function select(params) {
     const el = resolveTarget(params);
+    // The CLI/tool contract is "select acts on <select>". Before the
+    // nativeValueSetter refactor, this guarantee fell out of the WebIDL brand
+    // check on `HTMLSelectElement.prototype.value` (calling that setter on an
+    // <input>/<textarea> threw). The new helper picks the setter from the
+    // element's own prototype, so a misrouted selector would now silently
+    // succeed against a non-<select> and report ok while no option was
+    // actually selected. Re-introduce the type guard explicitly.
+    if (!(el instanceof HTMLSelectElement)) {
+      const tag = (el && el.tagName ? String(el.tagName) : String(el)).slice(0, 64);
+      throw new Error("select requires a <select> element, got: " + tag);
+    }
     const setter = nativeValueSetter(el);
     if (setter) {
       setter.call(el, params.value);
