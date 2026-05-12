@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `SKILL.md`: addressed skills.sh Snyk findings W007 (insecure credential
+  handling) and W011 (third-party content exposure). Replaced the literal
+  `user@example.com` / `password123` pair in the login-flow example with
+  `$TEST_EMAIL` / `$TEST_PASSWORD` env-var references, added a "Credential
+  Safety" preamble that also flags `record` recordings and `replay --export
+  sh` shell scripts as credential-bearing artifacts to scrub before sharing,
+  and added an "Untrusted WebView content" guard instructing the agent to
+  treat output from `eval`, `html`, `text`, `attrs`, `value`, `logs`,
+  `network`, and `screenshot` as data to inspect — not instructions to
+  follow — and to escalate suspected indirect prompt-injection attempts.
+
 ## [0.5.1] - 2026-05-09
 
 ### Fixed
