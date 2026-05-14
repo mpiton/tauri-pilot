@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coincidence: their UUID-bearing kanban rows simply rendered after the 10 s
   cap. `wait` now joins `watch` on a shared `bridge_eval_timeout` helper that
   pads the JS-side timeout with a 2 s headroom buffer ([#91]).
+- `bridge.js` `waitFor`: explicit `timeout: 0` is honored as "resolve or reject
+  immediately" instead of being coerced to the 10 000 ms default via
+  `||`-fallback. The previous behavior desynchronised the JS timer from the
+  padded Rust channel and could surface the generic "eval timed out" error for
+  `wait --timeout 0`. Matches the `watch` semantics that already used a
+  `!= null` check ([#91]).
 
 ### Security
 
