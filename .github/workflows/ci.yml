@@ -46,12 +46,19 @@ jobs:
       - name: Cache cargo
         uses: actions/cache@v4
         with:
+          # Intentionally exclude `~/.cargo/bin/`: the toolchain action above
+          # provisions cargo/rustc/clippy/rustfmt, and caching the bin dir
+          # restores stale `rustup-init`-targeted symlinks that break
+          # `cargo clippy` on subsequent runs (see #94).
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          # `Cargo.lock` is gitignored, so we key on the workspace `Cargo.toml`
+          # files. Bumped `v2` to invalidate the poisoned cache.
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-v2-
 
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
