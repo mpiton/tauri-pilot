@@ -868,7 +868,12 @@
     var selector = options && options.selector;
     var ref = options && options.ref;
     var gone = (options && options.gone) || false;
-    var timeout = (options && options.timeout) || 10000;
+    // Use a `!= null` check (matching `watch` below) rather than `|| 10000` so
+    // an explicit `timeout: 0` resolves immediately instead of silently
+    // expanding to 10 s — the latter desynchronised the Rust channel padded
+    // via `BRIDGE_TIMEOUT_BUFFER_MS` and surfaced the generic "eval timed out"
+    // instead of the bridge's own rejection.
+    var timeout = (options && options.timeout != null) ? options.timeout : 10000;
 
     if (!selector && !ref) {
       return Promise.reject(

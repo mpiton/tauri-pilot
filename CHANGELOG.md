@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `wait` no longer caps user-supplied `--timeout` at the internal Rust default
+  (10 s). The handler dispatched `wait` through the generic `handle_eval_method`
+  with `DEFAULT_TIMEOUT`, so any `--timeout` above 10 000 ms produced a cryptic
+  `Eval error: eval timed out after 10s` instead of the bridge's well-formed
+  `Timeout waiting for <selector>` rejection. The reporter on issue #91 surfaced
+  this as "`wait --selector` silently fails for UUID values" — the UUID was a
+  coincidence: their UUID-bearing kanban rows simply rendered after the 10 s
+  cap. `wait` now joins `watch` on a shared `bridge_eval_timeout` helper that
+  pads the JS-side timeout with a 2 s headroom buffer ([#91]).
+- `bridge.js` `waitFor`: explicit `timeout: 0` is honored as "resolve or reject
+  immediately" instead of being coerced to the 10 000 ms default via
+  `||`-fallback. The previous behavior desynchronised the JS timer from the
+  padded Rust channel and could surface the generic "eval timed out" error for
+  `wait --timeout 0`. Matches the `watch` semantics that already used a
+  `!= null` check ([#91]).
+
 ### Security
 
 - `SKILL.md`: addressed skills.sh Snyk findings W007 (insecure credential
@@ -276,3 +294,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#79]: https://github.com/mpiton/tauri-pilot/issues/79
 [#80]: https://github.com/mpiton/tauri-pilot/issues/80
 [#85]: https://github.com/mpiton/tauri-pilot/issues/85
+[#91]: https://github.com/mpiton/tauri-pilot/issues/91
