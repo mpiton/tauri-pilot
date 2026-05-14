@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-pilot"
-version = "0.5.1"
+version = "0.5.2"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
