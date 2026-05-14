@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh transitive and minor-bump dependency versions via `cargo update`
+  within existing semver carets. No public API or CLI behavior changes. Notable
+  resolved versions: `tauri` 2.10.3 → 2.11.1, `tauri-plugin` 2.5.4 → 2.6.1,
+  `tauri-build` 2.5.6 → 2.6.1, `tokio` 1.50.0 → 1.52.3, `wry` 0.54.4 → 0.55.1,
+  `rmcp` 1.5.0 → 1.7.0, `thiserror` 2.0.x → 2.0.18, `tower-http` 0.6.8 →
+  0.6.10, `tray-icon` 0.21.3 → 0.23.1, `wasm-bindgen` 0.2.117 → 0.2.121.
+  Breaking-only upgrades (`quick-xml` 0.36 → 0.40, `toml` 0.8 → 1.x, `windows`
+  0.61 → 0.62) intentionally deferred to dedicated PRs.
+- Refresh `docs/` npm dependencies via `npm update --save`. Bumps `astro`
+  6.1.9 → 6.3.2 (closes `npm audit` advisory GHSA-xr5h-phrj-8vxv on server
+  islands, plus patch fixes for HMR `HTMLElement` errors and double-encoded
+  URL handling), `@astrojs/starlight` 0.38.4 → 0.38.5, `sharp` 0.34.2 →
+  0.34.5. Astro 6.4 and Starlight 0.39 deferred (both involve breaking
+  changes). Supersedes #90.
+
 ### Fixed
 
 - `wait` no longer caps user-supplied `--timeout` at the internal Rust default
