@@ -27,9 +27,34 @@ static PRESS_ORDER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(30);
-/// Extra headroom added to the JS-side watch timeout so the Rust oneshot channel
-/// doesn't expire before the JS `MutationObserver` can resolve/reject.
-const WATCH_BUFFER_MS: u64 = 2_000;
+/// Default JS-side timeout when params omit it. Mirrors the bridge default
+/// (`waitFor`/`watch` both fall back to `10_000` ms in `bridge.js`).
+const DEFAULT_BRIDGE_TIMEOUT_MS: u64 = 10_000;
+/// Extra headroom added to the JS-side timeout so the Rust oneshot channel
+/// doesn't expire before the JS callback can resolve/reject. Without this,
+/// a user-supplied `wait`/`watch` timeout above `DEFAULT_TIMEOUT` would be
+/// silently capped by the Rust channel (fixes #91 — the cryptic
+/// "eval timed out after 10s" that hid the bridge-side selector error).
+///
+/// This is a *ceiling*, not a per-call cost: when the bridge resolves or
+/// rejects normally, the channel returns within milliseconds and the buffer
+/// is never consumed. The buffer only kicks in when JS is stuck (frozen
+/// webview, blocked main thread). Matches the prior `WATCH_BUFFER_MS` value;
+/// covers the `__TAURI_INTERNALS__.invoke('plugin:pilot|__callback', …)`
+/// roundtrip plus a GC pause without slowing fast-path failures.
+const BRIDGE_TIMEOUT_BUFFER_MS: u64 = 2_000;
+
+/// Compute the Rust-side eval timeout for a method whose JS implementation
+/// honors `options.timeout` (currently `wait` and `watch`). Pads the user
+/// value with [`BRIDGE_TIMEOUT_BUFFER_MS`] so the bridge always gets to surface
+/// its own well-formed rejection before the channel goes silent.
+fn bridge_eval_timeout(params: Option<&serde_json::Value>) -> Duration {
+    let timeout_ms = params
+        .and_then(|p| p.get("timeout"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(DEFAULT_BRIDGE_TIMEOUT_MS);
+    Duration::from_millis(timeout_ms.saturating_add(BRIDGE_TIMEOUT_BUFFER_MS))
+}
 
 /// Extract and remove the optional `"window"` key from params.
 ///
@@ -110,16 +135,22 @@ pub(crate) async fn dispatch(
         }),
         "click" | "fill" | "type" | "select" | "check" | "scroll" | "drag" | "drop" | "text"
         | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state"
-        | "wait" | "visible" | "count" | "checked" => {
+        | "visible" | "count" | "checked" => {
             handle_eval_method(method, params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
-        "watch" => {
-            let timeout_ms = params
-                .and_then(|p| p.get("timeout"))
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(10_000);
-            let timeout = Duration::from_millis(timeout_ms.saturating_add(WATCH_BUFFER_MS));
-            handle_eval_method(method, params, engine, eval_fn, win, timeout).await
+        // `wait` and `watch` both honor a JS-side `options.timeout`; the Rust
+        // channel timeout must outlive that so the bridge can surface its own
+        // rejection (issue #91).
+        "wait" | "watch" => {
+            handle_eval_method(
+                method,
+                params,
+                engine,
+                eval_fn,
+                win,
+                bridge_eval_timeout(params),
+            )
+            .await
         }
         "screenshot" => {
             handle_eval_method(method, params, engine, eval_fn, win, SCREENSHOT_TIMEOUT).await
@@ -1161,5 +1192,199 @@ mod tests {
         let entries = recorder.stop();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].action, "navigate");
+    }
+
+    // ─── bridge_eval_timeout (issue #91) ─────────────────────────────────────
+
+    #[test]
+    fn test_bridge_eval_timeout_uses_param_plus_buffer() {
+        // The Rust channel must outlive the JS timer so the bridge gets to
+        // surface its own well-formed rejection (e.g.
+        // `Timeout waiting for [data-testid="..."]`) instead of the channel
+        // tripping first with the cryptic "eval timed out after 10s".
+        let params = json!({"selector": "#root", "timeout": 60_000_u64});
+        let got = bridge_eval_timeout(Some(&params));
+        assert_eq!(
+            got,
+            Duration::from_millis(60_000 + BRIDGE_TIMEOUT_BUFFER_MS)
+        );
+    }
+
+    #[test]
+    fn test_bridge_eval_timeout_defaults_when_missing() {
+        // Mirror the bridge's own fallback: 10_000 ms + buffer.
+        let got = bridge_eval_timeout(None);
+        assert_eq!(
+            got,
+            Duration::from_millis(DEFAULT_BRIDGE_TIMEOUT_MS + BRIDGE_TIMEOUT_BUFFER_MS)
+        );
+    }
+
+    #[test]
+    fn test_bridge_eval_timeout_defaults_when_param_not_u64() {
+        // A non-integer "timeout" (string, negative, float) must not panic and
+        // must fall back to the bridge default rather than silently coercing.
+        let params = json!({"timeout": "soon"});
+        let got = bridge_eval_timeout(Some(&params));
+        assert_eq!(
+            got,
+            Duration::from_millis(DEFAULT_BRIDGE_TIMEOUT_MS + BRIDGE_TIMEOUT_BUFFER_MS)
+        );
+    }
+
+    #[test]
+    fn test_bridge_eval_timeout_saturates_on_overflow() {
+        // u64::MAX + buffer must saturate, not wrap to a tiny value.
+        let params = json!({"timeout": u64::MAX});
+        let got = bridge_eval_timeout(Some(&params));
+        assert_eq!(got, Duration::from_millis(u64::MAX));
+    }
+
+    #[test]
+    fn test_bridge_eval_timeout_zero_still_padded() {
+        // A user-supplied 0 ms timeout still gets the buffer — the buffer is a
+        // *ceiling* for stuck JS, not a per-call cost. JS receives `timeout: 0`
+        // and rejects on the next microtask; the buffer never elapses on the
+        // happy path.
+        let got = bridge_eval_timeout(Some(&json!({"timeout": 0_u64})));
+        assert_eq!(got, Duration::from_millis(BRIDGE_TIMEOUT_BUFFER_MS));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_wait_honors_user_timeout_above_default() {
+        // Issue #91: with the previous wiring, `wait --timeout 30000` was
+        // capped at `DEFAULT_TIMEOUT` (10 s) by the Rust channel and surfaced
+        // as "Eval error: eval timed out after 10s" — masking the real bridge
+        // outcome. After the fix, the Rust side must wait
+        // `30_000 + BRIDGE_TIMEOUT_BUFFER_MS` ms before giving up.
+        //
+        // Runs under `start_paused = true`, so virtual time auto-advances to
+        // whatever timer the dispatch is parked on. The elapsed value reflects
+        // the *effective* Rust-side cap.
+        let engine = EvalEngine::new();
+        // eval_fn that accepts the script but never resolves the callback —
+        // the timeout decides who wins.
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(()));
+
+        let params = json!({
+            "selector": "[data-testid=\"never-exists\"]",
+            "timeout": 30_000_u64,
+        });
+
+        let start = tokio::time::Instant::now();
+        let err = dispatch(
+            "wait",
+            Some(&params),
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("dispatch must time out");
+        let elapsed = start.elapsed();
+
+        // The behavioral invariant being defended: the Rust channel must
+        // outlive the user's JS-side timeout. Pre-fix it expired at
+        // `DEFAULT_TIMEOUT` (10 s), well before the 30 s user_timeout.
+        let user_timeout = Duration::from_secs(30);
+        assert!(
+            elapsed > user_timeout,
+            "elapsed {elapsed:?} should outlive user timeout {user_timeout:?}"
+        );
+        assert_eq!(err.code, -32603);
+        assert!(
+            err.message.contains("timed out"),
+            "unexpected error message: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_wait_default_timeout_outlives_bridge_default() {
+        // Without `timeout` in params the helper falls back to the bridge
+        // default. The Rust channel must still outlive that default so the
+        // bridge gets to surface its own `Timeout waiting for …` rejection.
+        let engine = EvalEngine::new();
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(()));
+
+        let start = tokio::time::Instant::now();
+        let _err = dispatch(
+            "wait",
+            Some(&json!({"selector": "#root"})),
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("dispatch must time out");
+        let elapsed = start.elapsed();
+        let bridge_default = Duration::from_millis(DEFAULT_BRIDGE_TIMEOUT_MS);
+        assert!(
+            elapsed > bridge_default,
+            "elapsed {elapsed:?} should outlive bridge default {bridge_default:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_watch_still_outlives_user_timeout() {
+        // Regression guard: `wait` and `watch` share the helper, so the
+        // existing `watch` behavior must remain intact.
+        let engine = EvalEngine::new();
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(()));
+
+        let start = tokio::time::Instant::now();
+        let _err = dispatch(
+            "watch",
+            Some(&json!({"timeout": 25_000_u64})),
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("dispatch must time out");
+        let elapsed = start.elapsed();
+        let user_timeout = Duration::from_secs(25);
+        assert!(
+            elapsed > user_timeout,
+            "elapsed {elapsed:?} should outlive user timeout {user_timeout:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_wait_returns_callback_value_before_timeout() {
+        // Happy path: the bridge resolves the callback well before the padded
+        // timeout. The dispatch must return that value rather than the
+        // channel error — the buffer is a ceiling, not a per-call cost.
+        let engine = EvalEngine::new();
+        let engine_clone = engine.clone();
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
+                // The first registered callback on a fresh engine has id == 1
+                // (see EvalEngine::register / next_id init in eval.rs).
+                engine_clone.resolve(1, Ok(json!({"found": true})));
+                Ok(())
+            });
+
+        let result = dispatch(
+            "wait",
+            Some(&json!({"selector": "#root", "timeout": 60_000_u64})),
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect("dispatch should resolve via callback, not time out");
+        assert_eq!(result, json!({"found": true}));
     }
 }
