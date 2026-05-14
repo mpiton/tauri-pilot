@@ -54,4 +54,4 @@ serial_test = "3"
 tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [build-dependencies]
-tauri-plugin = { version = "2.5.4", features = ["build"] }
+tauri-plugin = { version = "2.6.1", features = ["build"] }
