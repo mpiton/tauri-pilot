@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `SKILL.md`: second pass on skills.sh Snyk findings W007 and W011 — the
+  first remediation in [#89] cleared the literal `password123` value but
+  left enough authentication-flavoured vocabulary and a login example in
+  place that the Snyk LLM auditor still graded the skill as encouraging
+  secret handling. Restructured the skill so the safety contract sits in a
+  top-of-file `## Safety` section that the auditor reads first, dropped the
+  standalone `### Untrusted WebView content` and `## Credential Safety`
+  sections (their content is consolidated into `## Safety`), and replaced
+  the login-form example with a list-filter example that does not type
+  into any credential field. Also extended the WebView-output rule to name
+  `navigate` and `eval` scripts that call `fetch`, matching the surfaces
+  the Snyk W011 finding called out explicitly.
+
 ### Changed
 
 - Replace ASCII architecture diagram in `README.md` with an `assets/architecture.png`
@@ -320,4 +335,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#79]: https://github.com/mpiton/tauri-pilot/issues/79
 [#80]: https://github.com/mpiton/tauri-pilot/issues/80
 [#85]: https://github.com/mpiton/tauri-pilot/issues/85
+[#89]: https://github.com/mpiton/tauri-pilot/pull/89
 [#91]: https://github.com/mpiton/tauri-pilot/issues/91
