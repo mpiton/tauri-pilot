@@ -162,10 +162,12 @@ MCP server:
 }
 ```
 
-The MCP server exposes the same app-facing commands as structured tools:
-`snapshot`, `click`, `fill`, `logs`, `network`, `eval`, `ipc`, `assert_*`, and
-more. Tool calls return structured JSON content, so agents do not need to parse
-terminal output.
+The MCP server exposes the same app-facing commands as structured tools,
+namespaced under `pilot.*`: `pilot.snapshot`, `pilot.click`, `pilot.fill`,
+`pilot.logs`, `pilot.network`, `pilot.eval`, `pilot.ipc`, `pilot.assert_*`, and
+more. `tools/list` advertises the prefixed names; bare names (e.g. `snapshot`)
+still resolve via `tools/call` for backwards compatibility. Tool calls return
+structured JSON content, so agents do not need to parse terminal output.
 
 Use global flags before `mcp` when an agent should target a specific app socket or
 window:
