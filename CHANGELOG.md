@@ -24,17 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** MCP tool names are now namespaced under `pilot.*` — every tool
-  exposed by `tauri-pilot mcp` is registered (and accepted in `tools/call`) as
-  `pilot.<name>` instead of the bare `<name>`. This covers all currently exposed
-  tools (e.g. `pilot.ping`, `pilot.click`, `pilot.fill`, `pilot.attrs`,
-  `pilot.snapshot`, `pilot.eval`, `pilot.assert_text`, etc.). Motivation: when
-  this CLI is registered in an MCP client alongside other MCP servers, generic
-  bare names like `attrs` or `ping` collide with — and shadow — tools from those
-  other servers, forcing the client owner to disambiguate by hand. Clients that
-  referred to bare names in their server registrations or inline prompts must
-  update to the prefixed form (`attrs` → `pilot.attrs`, `ping` → `pilot.ping`,
-  and so on). No tool semantics, schemas, or MCP protocol versions change.
+- **Breaking (advertised surface):** MCP tool names are now namespaced under
+  `pilot.*` in the published tool list — every tool exposed by `tauri-pilot
+  mcp` is advertised as `pilot.<name>` (e.g. `pilot.ping`, `pilot.click`,
+  `pilot.fill`, `pilot.attrs`, `pilot.snapshot`, `pilot.eval`,
+  `pilot.assert_text`, etc.). Bare names continue to resolve through
+  `tools/call` for backwards compatibility, but the advertised surface that
+  MCP clients discover and register against is the prefixed form. Motivation:
+  when this CLI is registered alongside other MCP servers, generic bare names
+  like `attrs` or `ping` collide with — and shadow — tools from those servers,
+  forcing the client owner to disambiguate by hand. Clients that referred to
+  bare names in their server registrations or inline prompts should update to
+  the prefixed form (`attrs` → `pilot.attrs`, `ping` → `pilot.ping`, and so
+  on). No tool semantics, schemas, or MCP protocol versions change.
 - Pin the `rmcp` manifest floor at `1.7.0` (was `^1.4.0`). The lockfile already
   resolved to `1.7.0` via the earlier caret bump in `[0.5.2]`, so this only
   aligns the declared dependency with the version actually being tested and
