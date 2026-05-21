@@ -1653,6 +1653,26 @@ mod tests {
     }
 
     #[test]
+    fn tool_name_helpers_are_round_trip_symmetric() {
+        assert_eq!(normalize_tool_name("click"), "click");
+        assert_eq!(normalize_tool_name("pilot.click"), "click");
+        assert_eq!(namespaced_tool_name("click"), "pilot.click");
+        assert_eq!(namespaced_tool_name("pilot.click"), "pilot.click");
+    }
+
+    #[test]
+    fn get_tool_resolves_bare_and_prefixed_names_to_same_tool() {
+        let pilot = PilotMcpServer::new(None, None);
+        let bare = pilot.get_tool("click").expect("bare name resolves");
+        let prefixed = pilot
+            .get_tool("pilot.click")
+            .expect("prefixed name resolves");
+        assert_eq!(bare.name, prefixed.name);
+        assert_eq!(bare.description, prefixed.description);
+        assert_eq!(bare.name.as_ref(), "pilot.click");
+    }
+
+    #[test]
     fn schemas_include_window_override() {
         let schema = target_schema();
         let properties = schema
