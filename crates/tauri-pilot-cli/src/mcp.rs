@@ -634,15 +634,17 @@ impl ServerHandler for PilotMcpServer {
     }
 }
 
+const PILOT_PREFIX: &str = "pilot.";
+
 fn normalize_tool_name(name: &str) -> &str {
-    name.strip_prefix("pilot.").unwrap_or(name)
+    name.strip_prefix(PILOT_PREFIX).unwrap_or(name)
 }
 
 fn namespaced_tool_name(name: &str) -> String {
-    if name.starts_with("pilot.") {
+    if name.starts_with(PILOT_PREFIX) {
         name.to_owned()
     } else {
-        format!("pilot.{name}")
+        format!("{PILOT_PREFIX}{name}")
     }
 }
 
@@ -1037,7 +1039,7 @@ fn build_tools() -> Vec<Tool> {
         .into_iter()
         .map(|spec| {
             Tool::new(
-                format!("pilot.{}", spec.name),
+                namespaced_tool_name(spec.name),
                 spec.description,
                 (spec.schema)(),
             )
@@ -1596,7 +1598,7 @@ mod tests {
         assert!(
             tools
                 .iter()
-                .all(|tool| tool.name.as_ref().starts_with("pilot."))
+                .all(|tool| tool.name.as_ref().starts_with(PILOT_PREFIX))
         );
         let names: Vec<&str> = tools
             .iter()
@@ -1657,6 +1659,20 @@ mod tests {
         assert_eq!(normalize_tool_name("click"), "click");
         assert_eq!(normalize_tool_name("pilot.click"), "click");
         assert_eq!(namespaced_tool_name("click"), "pilot.click");
+        assert_eq!(namespaced_tool_name("pilot.click"), "pilot.click");
+    }
+
+    #[test]
+    fn tool_name_helpers_handle_corner_cases() {
+        // normalize_tool_name: empty, bare prefix, double prefix
+        assert_eq!(normalize_tool_name(""), "");
+        assert_eq!(normalize_tool_name(PILOT_PREFIX), "");
+        // Single-strip is intentional: a double prefix loses only the outer one.
+        assert_eq!(normalize_tool_name("pilot.pilot.click"), "pilot.click");
+
+        // namespaced_tool_name: empty, bare prefix, already-namespaced
+        assert_eq!(namespaced_tool_name(""), PILOT_PREFIX);
+        assert_eq!(namespaced_tool_name(PILOT_PREFIX), PILOT_PREFIX);
         assert_eq!(namespaced_tool_name("pilot.click"), "pilot.click");
     }
 
