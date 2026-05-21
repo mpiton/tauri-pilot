@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- macOS native screenshot backend (`screencapture` shell-out plus
+  `CGWindowListCreateImage` fallback) behind the existing `screenshot`
+  module surface; WKWebView path scaffolded for follow-up.
+
 ### Security
 
 - `SKILL.md`: second pass on skills.sh Snyk findings W007 and W011 — the

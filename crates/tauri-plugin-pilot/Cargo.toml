@@ -49,6 +49,11 @@ windows = { version = "0.61", features = [
 [target.'cfg(target_os="linux")'.dependencies]
 enigo = { version = "0.6.1", features = ["wayland"], optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.24"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [dev-dependencies]
 serial_test = "3"
 tokio = { workspace = true, features = ["test-util", "macros"] }
