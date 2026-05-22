@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Add top-level `permissions: contents: read` to CI and Release workflows
+  to satisfy the CodeQL `actions/missing-workflow-permissions` rule (least
+  privilege for `GITHUB_TOKEN`). The Release job keeps its scoped
+  `contents: write` override needed to publish GitHub Releases.
+- Force `devalue` to `^5.8.1` via `docs/package.json` `overrides` to clear
+  the GHSA DoS advisory (sparse-array deserialization) flagged on the
+  vulnerable `>=5.6.3, <=5.8.0` range pulled transitively through
+  `astro`/`@astrojs/starlight`.
 - `SKILL.md`: second pass on skills.sh Snyk findings W007 and W011 — the
   first remediation in [#89] cleared the literal `password123` value but
   left enough authentication-flavoured vocabulary and a login example in
@@ -63,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replace ASCII architecture diagram in `README.md` with an `assets/architecture.png`
   illustration (with descriptive `alt` text) for better rendering on crates.io,
   GitHub, and assistive technologies.
+- Bump Rust dependencies: `tauri` `2.11.1` → `2.11.2`, `tauri-plugin`
+  (build) `2.6.1` → `2.6.2` (patch), `quick-xml` `0.36` → `0.40` (used only
+  by scenario serialization tests), `toml` `0.8` → `1` (used by scenario
+  loader — `from_str` API unchanged for our usage). Workspace-wide
+  `cargo update` also refreshed transitive crates. `windows` (`0.61`) and
+  `core-graphics` (`0.24`) intentionally kept pinned until their next
+  minor bumps can be validated on actual Windows / macOS runners.
 
 ## [0.5.2] - 2026-05-14
 

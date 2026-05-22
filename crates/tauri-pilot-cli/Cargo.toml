@@ -31,8 +31,8 @@ base64 = "0.22.1"
 owo-colors = { version = "4.3.0", features = ["supports-colors"] }
 indicatif = "0.18"
 rmcp = { version = "1.7.0", default-features = false, features = ["server", "transport-io"] }
-toml = "0.8"
-quick-xml = "0.36"
+quick-xml = "0.40"
+toml = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.184"

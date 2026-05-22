@@ -13,5 +13,8 @@
     "@astrojs/starlight": "^0.38.5",
     "astro": "^6.3.2",
     "sharp": "^0.34.5"
+  },
+  "overrides": {
+    "devalue": "^5.8.1"
   }
 }
