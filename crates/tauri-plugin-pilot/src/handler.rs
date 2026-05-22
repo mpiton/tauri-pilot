@@ -153,21 +153,15 @@ pub(crate) async fn dispatch(
             )
             .await
         }
-        // The bare `screenshot` JSON-RPC method has been the bridge-side
-        // html-to-image path since v0.1 (returns a base64 PNG data URL). The
-        // new native contract ships under `pilot.screenshot` to avoid breaking
-        // those callers. As a convenience, a `screenshot` request that carries
-        // the native-shape `output_path` param is dispatched to the native
-        // handler too — old callers (no `output_path`) keep getting the
-        // bridge result.
+        // The bare `screenshot` JSON-RPC method is the bridge-side
+        // html-to-image path (returns a base64 PNG data URL); native window
+        // capture ships under the distinct `screenshot_native` method so the
+        // two surfaces can't be confused by callers or accidentally folded
+        // together by a future refactor.
         "screenshot" => {
-            if params.and_then(|p| p.get("output_path")).is_some() {
-                screenshot::handle_screenshot(params).await
-            } else {
-                handle_eval_method(method, params, engine, eval_fn, win, SCREENSHOT_TIMEOUT).await
-            }
+            handle_eval_method(method, params, engine, eval_fn, win, SCREENSHOT_TIMEOUT).await
         }
-        "pilot.screenshot" => screenshot::handle_screenshot(params).await,
+        "screenshot_native" => screenshot::handle_screenshot(params).await,
         "console.getLogs" => {
             handle_eval_method("consoleLogs", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
         }
@@ -1148,13 +1142,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_pilot_screenshot_rejects_missing_window_id() {
-        // The bare native method must validate `window_id` before any platform
+    async fn test_dispatch_screenshot_native_rejects_missing_window_id() {
+        // The native method must validate `window_id` before any platform
         // path is touched, so this works the same on every host.
         let engine = EvalEngine::new();
         let params = json!({"output_path": "/tmp/x.png"});
         let err = dispatch(
-            "pilot.screenshot",
+            "screenshot_native",
             Some(&params),
             &engine,
             None,
@@ -1172,15 +1166,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_screenshot_with_output_path_uses_native_handler() {
-        // Backwards-compat sanity: a `screenshot` call that carries the
-        // native-shape `output_path` is dispatched to the native handler so
-        // callers that adopt the new contract under the bare name do not fall
-        // back to the bridge by accident.
+    async fn test_dispatch_screenshot_native_rejects_relative_output_path() {
+        // The native method must reject a non-absolute `output_path` before
+        // any platform capture work — this works the same on every host.
         let engine = EvalEngine::new();
         let params = json!({"window_id": 1_u32, "output_path": "relative/path.png"});
         let err = dispatch(
-            "screenshot",
+            "screenshot_native",
             Some(&params),
             &engine,
             None,
@@ -1199,24 +1191,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_screenshot_without_output_path_routes_to_bridge() {
-        // The legacy bridge call path (no `output_path`) must keep its old
-        // "No webview available for eval" error when no eval_fn is wired —
-        // that proves it did not get diverted into the native handler.
+    async fn test_dispatch_screenshot_routes_to_bridge_regardless_of_params() {
+        // The bare `screenshot` JSON-RPC method always goes to the bridge
+        // (html-to-image, base64) — even if a caller mistakenly includes an
+        // `output_path` field, that is no longer a signal to dispatch to the
+        // native handler. The two surfaces are wholly separate methods.
         let engine = EvalEngine::new();
-        let result = dispatch(
-            "screenshot",
-            Some(&json!({})),
-            &engine,
-            None,
-            None,
-            None,
-            &Recorder::new(),
-        )
-        .await;
-        let err = result.expect_err("dispatch returns Err");
-        assert_eq!(err.code, -32603);
-        assert!(err.message.contains("No webview"));
+        for params in [json!({}), json!({"output_path": "/tmp/x.png"})] {
+            let result = dispatch(
+                "screenshot",
+                Some(&params),
+                &engine,
+                None,
+                None,
+                None,
+                &Recorder::new(),
+            )
+            .await;
+            let err = result.expect_err("dispatch returns Err");
+            assert_eq!(err.code, -32603);
+            assert!(err.message.contains("No webview"));
+        }
     }
 
     #[tokio::test]

@@ -23,5 +23,5 @@ pub(crate) use probe::{ScreenshotBackend, selected_backend};
 pub(crate) use screencapture::capture_screencapture;
 #[cfg(target_os = "macos")]
 pub(crate) use window_id::{
-    DiscoveredWindow, WindowBounds, get_window_bounds, list_layer_zero_windows,
+    DiscoveredWindow, EnumeratedLayerZeroWindows, WindowBounds, enumerate_layer_zero_windows,
 };

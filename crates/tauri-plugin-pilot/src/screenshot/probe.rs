@@ -36,9 +36,13 @@ fn probe_backend() -> ScreenshotBackend {
     }
 }
 
+/// Ask CoreGraphics whether the current process has screen-recording
+/// permission via the documented `CGPreflightScreenCaptureAccess` entry point.
+///
+/// Replaces the previous `screencapture -l 0 /dev/null` probe — that shell-out
+/// returned different exit codes across macOS releases and required forking a
+/// child process every cold boot, while this call is in-process and is the
+/// API Apple's own screen-recording prompt sits on top of.
 fn screencapture_probe_allows_window_capture() -> bool {
-    std::process::Command::new("screencapture")
-        .args(["-l", "0", "/dev/null"])
-        .status()
-        .is_ok_and(|status| status.success())
+    core_graphics::access::ScreenCaptureAccess.preflight()
 }

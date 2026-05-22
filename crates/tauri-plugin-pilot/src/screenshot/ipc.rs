@@ -1,4 +1,4 @@
-//! JSON-RPC handler for `pilot.screenshot`.
+//! JSON-RPC handler for `screenshot_native`.
 //!
 //! The contract (path-only, `window_id`-targeted, atomic write, TCC-fallback
 //! surfaced as metadata) is implemented in [`handle_screenshot`]. The handler
@@ -8,22 +8,20 @@
 
 #[cfg(target_os = "macos")]
 use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 #[cfg(target_os = "macos")]
 use serde_json::json;
 
-use crate::protocol::RpcError;
-
-/// Numeric JSON-RPC error code for invalid params per the JSON-RPC 2.0 spec.
-const RPC_INVALID_PARAMS: i32 = -32602;
-/// Numeric JSON-RPC error code for internal errors per the JSON-RPC 2.0 spec.
-const RPC_INTERNAL_ERROR: i32 = -32603;
+use crate::protocol::{RPC_INTERNAL_ERROR, RPC_INVALID_PARAMS, RpcError};
 
 /// Domain error codes carried in the JSON-RPC `error.data.error` field.
 ///
 /// Kept centralized so tests, the implementation, and the docs cannot drift.
 pub(crate) mod codes {
+    pub(crate) const INVALID_PARAMS: &str = "INVALID_PARAMS";
     pub(crate) const INVALID_OUTPUT_PATH: &str = "INVALID_OUTPUT_PATH";
     pub(crate) const UNSUPPORTED_FORMAT: &str = "UNSUPPORTED_FORMAT";
     #[cfg_attr(
@@ -59,7 +57,7 @@ fn rpc_error(rpc_code: i32, domain: &str, message: impl Into<String>, extras: Va
     }
 }
 
-/// Parsed view of the `pilot.screenshot` request params with all field-level
+/// Parsed view of the `screenshot_native` request params with all field-level
 /// validation already enforced by the validators below.
 #[cfg_attr(
     not(target_os = "macos"),
@@ -82,7 +80,7 @@ fn parse_request(params: Option<&Value>) -> Result<ScreenshotRequest, RpcError> 
     let obj = params.and_then(Value::as_object).ok_or_else(|| {
         rpc_error(
             RPC_INVALID_PARAMS,
-            "INVALID_PARAMS",
+            codes::INVALID_PARAMS,
             "screenshot requires an object params payload",
             Value::Null,
         )
@@ -104,7 +102,7 @@ fn parse_request(params: Option<&Value>) -> Result<ScreenshotRequest, RpcError> 
     let window_id_value = obj.get("window_id").ok_or_else(|| {
         rpc_error(
             RPC_INVALID_PARAMS,
-            "INVALID_PARAMS",
+            codes::INVALID_PARAMS,
             "screenshot requires a numeric \"window_id\"",
             Value::Null,
         )
@@ -112,7 +110,7 @@ fn parse_request(params: Option<&Value>) -> Result<ScreenshotRequest, RpcError> 
     let window_id_u64 = window_id_value.as_u64().ok_or_else(|| {
         rpc_error(
             RPC_INVALID_PARAMS,
-            "INVALID_PARAMS",
+            codes::INVALID_PARAMS,
             "\"window_id\" must be a non-negative integer",
             Value::Null,
         )
@@ -120,12 +118,24 @@ fn parse_request(params: Option<&Value>) -> Result<ScreenshotRequest, RpcError> 
     let window_id = u32::try_from(window_id_u64).map_err(|_| {
         rpc_error(
             RPC_INVALID_PARAMS,
-            "INVALID_PARAMS",
+            codes::INVALID_PARAMS,
             "\"window_id\" overflows u32",
             Value::Null,
         )
     })?;
 
+    let output_path = parse_output_path(obj)?;
+
+    Ok(ScreenshotRequest {
+        window_id,
+        output_path,
+    })
+}
+
+/// Pull `output_path` out of the request payload and apply the security
+/// contract: must be a string, absolute, not a symlink, and live under an
+/// existing parent directory.
+fn parse_output_path(obj: &serde_json::Map<String, Value>) -> Result<std::path::PathBuf, RpcError> {
     let output_path_str = obj
         .get("output_path")
         .and_then(Value::as_str)
@@ -144,6 +154,22 @@ fn parse_request(params: Option<&Value>) -> Result<ScreenshotRequest, RpcError> 
             codes::INVALID_OUTPUT_PATH,
             format!(
                 "output_path must be absolute, got \"{}\"",
+                output_path.display()
+            ),
+            Value::Null,
+        ));
+    }
+    // A pre-existing symlink at `output_path` is a footgun: the atomic rename
+    // would replace the symlink itself (so the link's target is unchanged), but
+    // a future read-back through the same path follows the link to wherever the
+    // attacker last pointed it. Refusing symlinks here makes the contract
+    // ("output_path is the file on disk") hold for the caller.
+    if output_path.is_symlink() {
+        return Err(rpc_error(
+            RPC_INVALID_PARAMS,
+            codes::INVALID_OUTPUT_PATH,
+            format!(
+                "output_path must not be a symlink: {}",
                 output_path.display()
             ),
             Value::Null,
@@ -174,11 +200,7 @@ fn parse_request(params: Option<&Value>) -> Result<ScreenshotRequest, RpcError> 
             Value::Null,
         ));
     }
-
-    Ok(ScreenshotRequest {
-        window_id,
-        output_path,
-    })
+    Ok(output_path)
 }
 
 /// Top-level entry point used by the JSON-RPC dispatcher.
@@ -221,8 +243,8 @@ pub(crate) async fn handle_screenshot(params: Option<&Value>) -> Result<Value, R
 #[cfg(target_os = "macos")]
 fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
     use super::{
-        ScreenshotBackend, ScreenshotError, WindowBounds, get_window_bounds,
-        list_layer_zero_windows, selected_backend,
+        EnumeratedLayerZeroWindows, ScreenshotBackend, ScreenshotError, WindowBounds,
+        enumerate_layer_zero_windows, selected_backend,
     };
 
     let ScreenshotRequest {
@@ -230,7 +252,14 @@ fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
         output_path,
     } = req;
 
-    let discovered = list_layer_zero_windows().map_err(|err| match err {
+    // Single pass over the on-screen window list collects both the
+    // `available_windows` payload for WINDOW_NOT_FOUND and the target's
+    // bounds — one CGWindowListCopyWindowInfo snapshot instead of two,
+    // which also closes the TOCTOU between the two former calls.
+    let EnumeratedLayerZeroWindows {
+        available: discovered,
+        target_bounds,
+    } = enumerate_layer_zero_windows(window_id).map_err(|err| match err {
         ScreenshotError::PlatformUnsupported => rpc_error(
             RPC_INTERNAL_ERROR,
             codes::PERMISSION_DENIED,
@@ -269,7 +298,7 @@ fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
         }
     };
 
-    let logical_bounds = get_window_bounds(window_id).unwrap_or(WindowBounds {
+    let logical_bounds = target_bounds.unwrap_or(WindowBounds {
         width: 0.0,
         height: 0.0,
     });
@@ -291,11 +320,14 @@ fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
 
     // The other `ScreenshotBackend` variants never reach this point because
     // the dispatcher in `capture_with_fallback` already maps them to error
-    // responses, so we only need to encode the two backends that produce a
-    // success result.
+    // responses. The match is exhaustive so a future backend variant forces
+    // an explicit decision here instead of silently flowing into a fallback.
     let backend_label = match backend {
         ScreenshotBackend::ScreencaptureProbe => "screencapture",
-        _ => "cgwindow",
+        ScreenshotBackend::CgWindowList => "cgwindow",
+        ScreenshotBackend::WkWebViewSnapshot | ScreenshotBackend::PlatformUnsupported => {
+            unreachable!("capture_with_fallback returns Err for these variants")
+        }
     };
     Ok(json!({
         "output_path": output_path.display().to_string(),
@@ -331,25 +363,40 @@ struct PngMetadata {
     byte_size: u64,
 }
 
-/// Compute the temp-write target alongside the final output path. Embedding
-/// the pid avoids two concurrent captures racing on the same final path from
-/// stomping each other's tmp file before the rename.
+/// Monotonic counter appended to the tmp filename so two concurrent captures
+/// from the same process targeting the same final path never collide on disk.
+#[cfg(target_os = "macos")]
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Compute the temp-write target alongside the final output path. Combining
+/// the pid (cross-process disambiguator) with a process-local atomic counter
+/// (intra-process disambiguator) guarantees a fresh tmp filename even when
+/// multiple captures race on the same final path.
 #[cfg(target_os = "macos")]
 fn tmp_path_for(final_path: &Path) -> std::path::PathBuf {
     let mut name = final_path
         .file_name()
         .map(std::ffi::OsString::from)
         .unwrap_or_default();
-    name.push(format!(".tmp.{}", std::process::id()));
+    let counter = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    name.push(format!(".tmp.{}.{}", std::process::id(), counter));
     final_path.with_file_name(name)
 }
 
-/// Remove the tmp file if it exists. Errors during cleanup are intentionally
-/// swallowed because the caller is already returning an error and we do not
-/// want to mask the original cause.
+/// Remove the tmp file if it exists. Errors during cleanup do not propagate —
+/// the caller is already returning the original capture failure — but they are
+/// logged so a lingering tmp file does not vanish silently from operator view.
 #[cfg(target_os = "macos")]
 fn cleanup_tmp(path: &Path) {
-    let _ = std::fs::remove_file(path);
+    if let Err(err) = std::fs::remove_file(path)
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            tmp_path = %path.display(),
+            error = %err,
+            "failed to remove tauri-pilot screenshot tmp file",
+        );
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -421,17 +468,32 @@ fn read_png_metadata(path: &Path) -> Result<PngMetadata, RpcError> {
     })?;
     let byte_size = metadata.len();
 
-    let img = image::open(path).map_err(|err| {
+    // `ImageReader::into_dimensions` parses the PNG header (IHDR chunk) only —
+    // a few hundred bytes — instead of decoding the entire raster. For a 4K
+    // Retina capture this avoids ~33 MiB of pointless RGBA allocation just to
+    // read width/height for the response payload.
+    let reader = image::ImageReader::open(path).map_err(|err| {
         rpc_error(
             RPC_INTERNAL_ERROR,
             codes::CAPTURE_FAILED,
-            format!("failed to decode captured PNG {}: {err}", path.display()),
+            format!("failed to open captured PNG {}: {err}", path.display()),
+            Value::Null,
+        )
+    })?;
+    let (width, height) = reader.into_dimensions().map_err(|err| {
+        rpc_error(
+            RPC_INTERNAL_ERROR,
+            codes::CAPTURE_FAILED,
+            format!(
+                "failed to read PNG dimensions from {}: {err}",
+                path.display()
+            ),
             Value::Null,
         )
     })?;
     Ok(PngMetadata {
-        width: img.width(),
-        height: img.height(),
+        width,
+        height,
         byte_size,
     })
 }
