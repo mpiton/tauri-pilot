@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Block `javascript:` URLs in the `pilot.navigate` MCP tool. Because
+  `navigate` is not gated behind the dangerous-tools opt-in, an untrusted MCP
+  client could previously pass a `javascript:` URL that the bridge assigns to
+  `window.location.href`, executing arbitrary JavaScript and bypassing the
+  `pilot.eval` gate added in [#104]. The URL is now normalized the way a
+  browser's URL parser would — stripping ASCII tab/newline/carriage-return
+  anywhere in the string and leading C0 controls/spaces — before any
+  `javascript:` scheme is rejected with `INVALID_PARAMS`, so smuggling
+  variants such as `java\tscript:` or `\0javascript:` are blocked too. [#107]
 - Shell-escape element `ref` values when exporting recordings to shell
   scripts via `replay --export sh`. Refs were previously emitted unquoted
   (e.g. `tauri-pilot click @e1`) while selectors and values were already
