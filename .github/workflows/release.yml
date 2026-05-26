@@ -77,12 +77,15 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Package verify tauri-plugin-pilot (no token)
+        run: cargo package -p tauri-plugin-pilot
+
       - name: Publish tauri-plugin-pilot
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set +e
-          OUTPUT=$(cargo publish -p tauri-plugin-pilot 2>&1)
+          OUTPUT=$(cargo publish -p tauri-plugin-pilot --no-verify 2>&1)
           STATUS=$?
           set -e
           if [ $STATUS -eq 0 ]; then
@@ -111,12 +114,15 @@ jobs:
             sleep 10
           done
 
+      - name: Package verify tauri-pilot-cli (no token)
+        run: cargo package -p tauri-pilot-cli
+
       - name: Publish tauri-pilot-cli
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           set +e
-          OUTPUT=$(cargo publish -p tauri-pilot-cli 2>&1)
+          OUTPUT=$(cargo publish -p tauri-pilot-cli --no-verify 2>&1)
           STATUS=$?
           set -e
           if [ $STATUS -eq 0 ]; then
