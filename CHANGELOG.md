@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Gate the dangerous MCP tools `pilot.drop`, `pilot.eval`, and `pilot.ipc`
+  behind the `TAURI_PILOT_MCP_ENABLE_DANGEROUS_TOOLS` opt-in environment
+  variable. By default these tools are now hidden from `list_tools` and
+  rejected at call time, so an untrusted MCP client can no longer execute
+  arbitrary JavaScript (`eval`), invoke arbitrary Tauri commands (`ipc`), or
+  feed arbitrary local file paths into the app (`drop`). Set the variable to
+  `1`, `true`, `yes`, or `on` to restore the previous behaviour. [#104]
+
 ## [0.6.0] - 2026-05-22
 
 ### Added
@@ -391,3 +401,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#85]: https://github.com/mpiton/tauri-pilot/issues/85
 [#89]: https://github.com/mpiton/tauri-pilot/pull/89
 [#91]: https://github.com/mpiton/tauri-pilot/issues/91
+[#104]: https://github.com/mpiton/tauri-pilot/pull/104
