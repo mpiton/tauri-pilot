@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Harden the release workflow against `CARGO_REGISTRY_TOKEN` exfiltration.
+  `cargo publish` ran a verification build with the registry token present in
+  the environment, so a compromised dependency build script or proc-macro
+  could read and leak the token during that build. Each crate is now verified
+  with a secret-free `cargo package` step (no token in scope), and the
+  token-bearing `cargo publish` step runs with `--no-verify` so it only uploads
+  the already-verified package. [#106]
 - Shell-escape element `ref` values when exporting recordings to shell
   scripts via `replay --export sh`. Refs were previously emitted unquoted
   (e.g. `tauri-pilot click @e1`) while selectors and values were already
@@ -411,3 +418,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#91]: https://github.com/mpiton/tauri-pilot/issues/91
 [#104]: https://github.com/mpiton/tauri-pilot/pull/104
 [#105]: https://github.com/mpiton/tauri-pilot/pull/105
+[#106]: https://github.com/mpiton/tauri-pilot/pull/106
