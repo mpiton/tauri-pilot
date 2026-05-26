@@ -265,9 +265,11 @@ impl PilotMcpServer {
                     .await
             }
             "navigate" => {
+                let url = required_string(&args, "url")?;
+                validate_navigate_url(&url)?;
                 self.call_app_tool(
                     "navigate",
-                    Some(json!({"url": required_string(&args, "url")?})),
+                    Some(json!({ "url": url })),
                     window,
                 )
                 .await
@@ -675,6 +677,19 @@ fn dangerous_mcp_tools_enabled() -> bool {
                 "1" | "true" | "yes" | "on"
             )
         })
+}
+
+fn validate_navigate_url(url: &str) -> Result<(), McpError> {
+    if url
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("javascript:")
+    {
+        return Err(invalid_params(
+            "navigate does not allow javascript: URLs for security reasons",
+        ));
+    }
+    Ok(())
 }
 
 struct ToolSpec {
@@ -1967,6 +1982,24 @@ mod tests {
                 "dangerous tool '{dangerous}' should be listed when explicitly enabled"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn navigate_rejects_javascript_urls() {
+        let pilot = PilotMcpServer::new(None, None);
+        let mut args = Map::new();
+        args.insert("url".to_owned(), json!(" javascript:alert(1)"));
+
+        let err = pilot
+            .call_tool_by_name("navigate", args)
+            .await
+            .expect_err("javascript URL should be rejected");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("does not allow javascript: URLs"),
+            "unexpected error message: {}",
+            err.message
+        );
     }
 
     #[tokio::test]
