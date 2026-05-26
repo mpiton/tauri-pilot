@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Shell-escape element `ref` values when exporting recordings to shell
+  scripts via `replay --export sh`. Refs were previously emitted unquoted
+  (e.g. `tauri-pilot click @e1`) while selectors and values were already
+  escaped, so a recording carrying a crafted `ref` (injectable through the
+  `record.add` IPC method or a hand-edited recording file) could inject
+  arbitrary shell commands into the generated script. All `@ref` tokens —
+  top-level targets, nested `source`/`target` refs, and `scroll --ref`
+  arguments — are now single-quoted. [#105]
 - Gate the dangerous MCP tools `pilot.drop`, `pilot.eval`, and `pilot.ipc`
   behind the `TAURI_PILOT_MCP_ENABLE_DANGEROUS_TOOLS` opt-in environment
   variable. By default these tools are now hidden from `list_tools` and
@@ -402,3 +410,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#89]: https://github.com/mpiton/tauri-pilot/pull/89
 [#91]: https://github.com/mpiton/tauri-pilot/issues/91
 [#104]: https://github.com/mpiton/tauri-pilot/pull/104
+[#105]: https://github.com/mpiton/tauri-pilot/pull/105
