@@ -1181,8 +1181,6 @@ fn shell_escape(s: &str) -> String {
     escaped
 }
 
-
-
 /// Build a shell-safe CLI target for element refs (e.g. `@e1`).
 fn shell_escape_ref_target(ref_id: &str) -> String {
     shell_escape(&format!("@{ref_id}"))
