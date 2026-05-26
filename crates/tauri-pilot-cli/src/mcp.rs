@@ -1671,7 +1671,9 @@ mod tests {
 
     #[test]
     fn tool_list_matches_cli_command_surface() {
-        let tools = tools();
+        // Validate the complete tool surface; runtime gating of dangerous tools
+        // is covered by `dangerous_tools_hidden_by_default` / `dangerous_tools_can_be_enabled`.
+        let tools = build_tools_with_flag(true);
         assert!(
             tools
                 .iter()
