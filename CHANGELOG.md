@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Block `javascript:` URLs in the `pilot.navigate` MCP tool. Because
+  `navigate` is not gated behind the dangerous-tools opt-in, an untrusted MCP
+  client could previously pass a `javascript:` URL that the bridge assigns to
+  `window.location.href`, executing arbitrary JavaScript and bypassing the
+  `pilot.eval` gate added in [#104]. The URL is now normalized the way a
+  browser's URL parser would — stripping ASCII tab/newline/carriage-return
+  anywhere in the string and leading C0 controls/spaces — before any
+  `javascript:` scheme is rejected with `INVALID_PARAMS`, so smuggling
+  variants such as `java\tscript:` or `\0javascript:` are blocked too. [#107]
 - Harden the release workflow against `CARGO_REGISTRY_TOKEN` exfiltration.
   `cargo publish` ran a verification build with the registry token present in
   the environment, so a compromised dependency build script or proc-macro
@@ -419,3 +428,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#104]: https://github.com/mpiton/tauri-pilot/pull/104
 [#105]: https://github.com/mpiton/tauri-pilot/pull/105
 [#106]: https://github.com/mpiton/tauri-pilot/pull/106
+[#107]: https://github.com/mpiton/tauri-pilot/pull/107

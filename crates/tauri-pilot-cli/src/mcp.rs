@@ -265,9 +265,11 @@ impl PilotMcpServer {
                     .await
             }
             "navigate" => {
+                let url = required_string(&args, "url")?;
+                validate_navigate_url(&url)?;
                 self.call_app_tool(
                     "navigate",
-                    Some(json!({"url": required_string(&args, "url")?})),
+                    Some(json!({ "url": url })),
                     window,
                 )
                 .await
@@ -675,6 +677,30 @@ fn dangerous_mcp_tools_enabled() -> bool {
                 "1" | "true" | "yes" | "on"
             )
         })
+}
+
+fn validate_navigate_url(url: &str) -> Result<(), McpError> {
+    // Mirror the normalization a browser's URL parser applies before it
+    // resolves the scheme, so a crafted string can't smuggle a `javascript:`
+    // URL past this filter and reach `window.location.href` in the bridge:
+    //   * ASCII tab/LF/CR are stripped from anywhere in the input, so
+    //     `java\tscript:` and `java\nscript:` collapse to `javascript:`.
+    //   * Leading C0 controls and spaces (scalar value <= U+0020) are removed,
+    //     so `\u{0}javascript:` collapses to `javascript:`.
+    let stripped: String = url
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    if stripped
+        .trim_start_matches(|c| c <= '\u{20}')
+        .to_ascii_lowercase()
+        .starts_with("javascript:")
+    {
+        return Err(invalid_params(
+            "navigate does not allow javascript: URLs for security reasons",
+        ));
+    }
+    Ok(())
 }
 
 struct ToolSpec {
@@ -1966,6 +1992,57 @@ mod tests {
                 tools.iter().any(|tool| tool.name == namespaced),
                 "dangerous tool '{dangerous}' should be listed when explicitly enabled"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn navigate_rejects_javascript_urls() {
+        // Each payload normalizes to `javascript:` once a browser's URL parser
+        // strips tab/LF/CR and leading C0 controls/spaces, so the MCP filter
+        // must reject them before they reach `window.location.href`.
+        let payloads = [
+            " javascript:alert(1)",          // leading space
+            "JaVaScRiPt:alert(1)",           // mixed case
+            "java\tscript:alert(1)",         // embedded tab
+            "java\nscript:alert(1)",         // embedded newline
+            "java\rscript:alert(1)",         // embedded carriage return
+            "\u{0}javascript:alert(1)",      // leading NUL (C0 control)
+            "\u{1}\u{2}javascript:alert(1)", // leading C0 controls
+        ];
+
+        for payload in payloads {
+            let pilot = PilotMcpServer::new(None, None);
+            let mut args = Map::new();
+            args.insert("url".to_owned(), json!(payload));
+
+            // Validation rejects before any socket call, so this surfaces an
+            // `Err(McpError)` rather than reaching the app tool.
+            let err = pilot
+                .call_tool_by_name("navigate", args)
+                .await
+                .expect_err(&format!("javascript URL should be rejected: {payload:?}"));
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "payload: {payload:?}");
+            assert!(
+                err.message.contains("does not allow javascript: URLs"),
+                "unexpected error message for {payload:?}: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn validate_navigate_url_allows_safe_urls() {
+        // Legitimate schemes and paths that merely contain the substring must
+        // not be over-blocked by the prefix check.
+        for url in [
+            "https://example.com/app",
+            "/relative/path",
+            "https://example.com/javascript:not-a-scheme",
+            "about:blank",
+        ] {
+            validate_navigate_url(url).unwrap_or_else(|err| {
+                panic!("safe url wrongly rejected: {url:?} ({})", err.message)
+            });
         }
     }
 
