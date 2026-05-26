@@ -2003,7 +2003,7 @@ mod tests {
             .and_then(Value::as_str)
             .expect("script result");
         assert!(script.starts_with("#!/bin/bash"));
-        assert!(script.contains("tauri-pilot click @e1"));
+        assert!(script.contains("tauri-pilot click '@e1'"));
 
         let _ = std::fs::remove_file(&recording);
     }

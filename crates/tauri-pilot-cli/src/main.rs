@@ -1181,6 +1181,13 @@ fn shell_escape(s: &str) -> String {
     escaped
 }
 
+
+
+/// Build a shell-safe CLI target for element refs (e.g. `@e1`).
+fn shell_escape_ref_target(ref_id: &str) -> String {
+    shell_escape(&format!("@{ref_id}"))
+}
+
 /// Returns `true` for actions that are safe to replay.
 fn is_replayable(action: &str) -> bool {
     matches!(
@@ -1206,7 +1213,7 @@ fn is_replayable(action: &str) -> bool {
 fn resolve_export_target(val: Option<&Value>) -> Option<String> {
     let obj = val?;
     if let Some(r) = obj.get("ref").and_then(|r| r.as_str()) {
-        return Some(format!("@{r}"));
+        return Some(shell_escape_ref_target(r));
     }
     if let Some(s) = obj.get("selector").and_then(|s| s.as_str()) {
         return Some(shell_escape(s));
@@ -1224,7 +1231,7 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
     let ref_id = entry.get("ref").and_then(|r| r.as_str());
     let selector = entry.get("selector").and_then(|s| s.as_str());
     let target = if let Some(r) = ref_id {
-        format!("@{r}")
+        shell_escape_ref_target(r)
     } else if let Some(s) = selector {
         shell_escape(s)
     } else {
@@ -1260,7 +1267,7 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 let _ = write!(cmd, " {amt}");
             }
             if let Some(r) = entry.get("ref").and_then(|r| r.as_str()) {
-                let _ = write!(cmd, " --ref @{r}");
+                let _ = write!(cmd, " --ref {}", shell_escape_ref_target(r));
             }
             cmd
         }
