@@ -125,6 +125,11 @@ impl PilotMcpServer {
         args: JsonObject,
     ) -> Result<CallToolResult, McpError> {
         let name = normalize_tool_name(name);
+        if DANGEROUS_MCP_TOOLS.contains(&name) && !dangerous_mcp_tools_enabled() {
+            return Err(invalid_params(format!(
+                "tool '{name}' is disabled by default. Set {ENABLE_DANGEROUS_MCP_TOOLS_ENV}=1 to enable dangerous MCP tools."
+            )));
+        }
         let window = self.window_arg(&args)?;
         match name {
             "ping" => self.call_app_tool("ping", None, window).await,
@@ -646,6 +651,8 @@ impl ServerHandler for PilotMcpServer {
 }
 
 const PILOT_PREFIX: &str = "pilot.";
+const ENABLE_DANGEROUS_MCP_TOOLS_ENV: &str = "TAURI_PILOT_MCP_ENABLE_DANGEROUS_TOOLS";
+const DANGEROUS_MCP_TOOLS: &[&str] = &["drop", "eval", "ipc"];
 
 fn normalize_tool_name(name: &str) -> &str {
     name.strip_prefix(PILOT_PREFIX).unwrap_or(name)
@@ -657,6 +664,18 @@ fn namespaced_tool_name(name: &str) -> String {
     } else {
         format!("{PILOT_PREFIX}{name}")
     }
+}
+
+fn dangerous_mcp_tools_enabled() -> bool {
+    std::env::var(ENABLE_DANGEROUS_MCP_TOOLS_ENV)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 struct ToolSpec {
@@ -1052,7 +1071,14 @@ fn cached_tools() -> &'static Vec<Tool> {
 }
 
 fn build_tools() -> Vec<Tool> {
+    build_tools_with_flag(dangerous_mcp_tools_enabled())
+}
+
+fn build_tools_with_flag(enable_dangerous_tools: bool) -> Vec<Tool> {
     let mut specs = tool_specs();
+    if !enable_dangerous_tools {
+        specs.retain(|spec| !DANGEROUS_MCP_TOOLS.contains(&spec.name));
+    }
     specs.sort_by_key(|spec| spec.name);
     specs
         .into_iter()
@@ -1916,6 +1942,30 @@ mod tests {
         assert!(banner.contains("auto-detect on first tool call"));
         assert!(banner.contains("main"));
         assert!(banner.contains("stdout is reserved for MCP JSON-RPC"));
+    }
+
+    #[test]
+    fn dangerous_tools_hidden_by_default() {
+        let tools = build_tools_with_flag(false);
+        for dangerous in DANGEROUS_MCP_TOOLS {
+            let namespaced = namespaced_tool_name(dangerous);
+            assert!(
+                !tools.iter().any(|tool| tool.name == namespaced),
+                "dangerous tool '{dangerous}' must not be listed unless explicitly enabled"
+            );
+        }
+    }
+
+    #[test]
+    fn dangerous_tools_can_be_enabled() {
+        let tools = build_tools_with_flag(true);
+        for dangerous in DANGEROUS_MCP_TOOLS {
+            let namespaced = namespaced_tool_name(dangerous);
+            assert!(
+                tools.iter().any(|tool| tool.name == namespaced),
+                "dangerous tool '{dangerous}' should be listed when explicitly enabled"
+            );
+        }
     }
 
     #[tokio::test]
