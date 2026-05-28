@@ -138,17 +138,19 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>, engine: EvalEngine
                 .cloned()
                 .ok_or_else(|| "No webview available".to_owned())?
         };
-        let engine = engine.clone();
         #[cfg(target_os = "macos")]
         {
-            eval_with_webkit_callback(&target, script, engine)
+            eval_with_webkit_callback(&target, script, engine.clone())
         }
         #[cfg(not(target_os = "macos"))]
-        target
-            .eval_with_callback(&script, move |payload| {
-                handle_eval_callback_payload(&engine, &payload);
-            })
-            .map_err(|e| e.to_string())
+        {
+            // Linux (WebKitGTK) and Windows (WebView2) do not resolve a Promise
+            // returned from eval, so results come back via the `__callback` IPC
+            // command (see EvalEngine::wrap_script). This eval is fire-and-forget;
+            // the IPC handler resolves the pending request, not this closure.
+            let _ = &engine;
+            target.eval(&script).map_err(|e| e.to_string())
+        }
     })
 }
 
@@ -244,7 +246,7 @@ fn resolve_native_eval_error(engine: &EvalEngine, id: Option<u64>, message: &str
     }
 }
 
-#[cfg(all(any(unix, windows), debug_assertions))]
+#[cfg(all(target_os = "macos", debug_assertions))]
 fn handle_eval_callback_payload(engine: &EvalEngine, payload: &str) {
     let parsed = serde_json::from_str::<serde_json::Value>(payload)
         .ok()
