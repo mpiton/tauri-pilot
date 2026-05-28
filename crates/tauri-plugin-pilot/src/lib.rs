@@ -606,4 +606,32 @@ mod tests {
             "nativeValueSetter must be declared before fill (#85)"
         );
     }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn bridge_role_map_maps_paragraph_and_keeps_it_noninteractive() {
+        // #109: <p> text (e.g. the default Tauri template greeting rendered in
+        // a <p>) was dropped from snapshots because ROLE_MAP had no P entry, so
+        // getRole returned null and walk() never emitted the node.
+        let js = super::BRIDGE_JS;
+
+        assert!(
+            js.contains("P: \"paragraph\""),
+            "ROLE_MAP must map P to \"paragraph\" so snapshot includes <p> text (#109)"
+        );
+
+        // The paragraph role must stay non-interactive so `snapshot --interactive`
+        // still excludes <p>. Verify INTERACTIVE_ROLES does not list it.
+        let set_start = js
+            .find("INTERACTIVE_ROLES = new Set([")
+            .expect("INTERACTIVE_ROLES set missing");
+        let set_body = &js[set_start..];
+        let set_end = set_body
+            .find("]);")
+            .expect("INTERACTIVE_ROLES set unterminated");
+        assert!(
+            !set_body[..set_end].contains("\"paragraph\""),
+            "paragraph must stay out of INTERACTIVE_ROLES so interactive snapshots still exclude <p> (#109)"
+        );
+    }
 }
