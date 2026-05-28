@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default Tauri template greeting rendered in a `<p>`), so callers could not
   verify text that appeared after an interaction. The role is non-interactive,
   so `snapshot --interactive` still omits paragraphs. [#109]
+- Restore eval on Linux (`WebKitGTK`) and Windows (`WebView2`). [#108] switched
+  eval delivery to reading the script's return value, which only works on macOS
+  where `WKWebView` resolves a returned Promise; `WebKitGTK` and `WebView2`
+  deliver the unresolved Promise instead, so every eval-based command
+  (`snapshot`, `state`, `click`, …) timed out after 10s. These platforms now
+  deliver eval results through the `__callback` IPC command again, while macOS
+  keeps the native callback path from [#108]. [#110]
 
 ### Security
 
@@ -450,3 +457,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#106]: https://github.com/mpiton/tauri-pilot/pull/106
 [#107]: https://github.com/mpiton/tauri-pilot/pull/107
 [#109]: https://github.com/mpiton/tauri-pilot/issues/109
+[#110]: https://github.com/mpiton/tauri-pilot/issues/110
