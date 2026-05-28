@@ -307,16 +307,28 @@
           "markdownDescription": "Denies the __callback command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for tauri-plugin-pilot (allows eval callback)\n#### This default permission set includes:\n\n- `allow-callback`",
-          "type": "string",
-          "const": "default",
-          "markdownDescription": "Default permissions for tauri-plugin-pilot (allows eval callback)\n#### This default permission set includes:\n\n- `allow-callback`"
-        },
-        {
-          "description": "Allow the internal __callback IPC command used by the eval engine",
+          "description": "Enables the callback command without any pre-configured scope.",
           "type": "string",
           "const": "allow-callback",
-          "markdownDescription": "Allow the internal __callback IPC command used by the eval engine"
+          "markdownDescription": "Enables the callback command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the callback command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-callback",
+          "markdownDescription": "Denies the callback command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for tauri-plugin-pilot (allows eval callback)\n#### This default permission set includes:\n\n- `allow-eval-callbacks`",
+          "type": "string",
+          "const": "default",
+          "markdownDescription": "Default permissions for tauri-plugin-pilot (allows eval callback)\n#### This default permission set includes:\n\n- `allow-eval-callbacks`"
+        },
+        {
+          "description": "Allow the internal callback IPC commands used by the eval engine",
+          "type": "string",
+          "const": "allow-eval-callbacks",
+          "markdownDescription": "Allow the internal callback IPC commands used by the eval engine"
         }
       ]
     }

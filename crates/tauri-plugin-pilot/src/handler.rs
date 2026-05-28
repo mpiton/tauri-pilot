@@ -538,7 +538,22 @@ pub(crate) fn handle_callback(
     }
 }
 
-/// Tauri IPC command for the `__callback` handler.
+/// Tauri IPC command for the eval callback handler.
+#[tauri::command]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "tauri::command contract — macro wrapper is the real consumer"
+)]
+pub(crate) fn callback(
+    eval_engine: tauri::State<'_, EvalEngine>,
+    id: u64,
+    result: Option<String>,
+    error: Option<String>,
+) {
+    handle_callback(&eval_engine, id, result, error);
+}
+
+/// Legacy Tauri IPC command for the `__callback` handler.
 ///
 /// `#[tauri::command]` binds `State<'_, T>` by value — the generated wrapper
 /// is the true consumer, so clippy's view of the body is incomplete. Cannot

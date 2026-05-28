@@ -28,7 +28,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 #[cfg(all(any(unix, windows), debug_assertions))]
-const BRIDGE_JS: &str = concat!(
+pub(crate) const BRIDGE_JS: &str = concat!(
     include_str!("../js/vendor/html-to-image.iife.js"),
     "\n",
     include_str!("../js/bridge.js"),
@@ -52,6 +52,11 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     {
         tauri::plugin::Builder::new("pilot")
             .js_init_script(BRIDGE_JS.to_owned())
+            .on_webview_ready(|webview| {
+                if let Err(err) = webview.eval(BRIDGE_JS) {
+                    tracing::warn!(error = %err, "failed to inject tauri-pilot bridge on webview ready");
+                }
+            })
             .setup(|app, _api| {
                 let engine = EvalEngine::new();
                 app.manage(engine.clone());
@@ -59,7 +64,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let identifier = sanitize_identifier(&app.config().identifier);
                 let socket_path = server::socket_path(&identifier);
 
-                let eval_fn = make_eval_fn(app);
+                let eval_fn = make_eval_fn(app, engine.clone());
                 let list_fn = make_list_fn(app);
                 let focus_fn = make_focus_fn(app);
 
@@ -82,7 +87,10 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
                 Ok(())
             })
-            .invoke_handler(tauri::generate_handler![handler::__callback])
+            .invoke_handler(tauri::generate_handler![
+                handler::callback,
+                handler::__callback
+            ])
             .build()
     }
 }
@@ -113,25 +121,157 @@ fn sanitize_identifier(raw: &str) -> String {
 /// If `window` is `Some(label)`, targets that specific window (error if not found).
 /// If `window` is `None`, tries "main" first then falls back to the first available window.
 #[cfg(all(any(unix, windows), debug_assertions))]
-fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
+fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>, engine: EvalEngine) -> EvalFn {
     let handle = app.clone();
     Arc::new(move |window: Option<&str>, script: String| {
-        if let Some(label) = window {
-            return handle
+        let target = if let Some(label) = window {
+            handle
                 .get_webview_window(label)
-                .ok_or_else(|| format!("Window '{label}' not found"))
-                .and_then(|w| w.eval(&script).map_err(|e| e.to_string()));
+                .ok_or_else(|| format!("Window '{label}' not found"))?
+        } else if let Some(w) = handle.get_webview_window("main") {
+            w
+        } else {
+            handle
+                .webview_windows()
+                .values()
+                .next()
+                .cloned()
+                .ok_or_else(|| "No webview available".to_owned())?
+        };
+        let engine = engine.clone();
+        #[cfg(target_os = "macos")]
+        {
+            eval_with_webkit_callback(&target, script, engine)
         }
-        if let Some(w) = handle.get_webview_window("main") {
-            return w.eval(&script).map_err(|e| e.to_string());
-        }
-        let windows = handle.webview_windows();
-        windows
-            .values()
-            .next()
-            .ok_or_else(|| "No webview available".to_owned())
-            .and_then(|w| w.eval(&script).map_err(|e| e.to_string()))
+        #[cfg(not(target_os = "macos"))]
+        target
+            .eval_with_callback(&script, move |payload| {
+                handle_eval_callback_payload(&engine, &payload);
+            })
+            .map_err(|e| e.to_string())
     })
+}
+
+#[cfg(all(target_os = "macos", debug_assertions))]
+fn eval_with_webkit_callback<R: tauri::Runtime>(
+    target: &tauri::WebviewWindow<R>,
+    script: String,
+    engine: EvalEngine,
+) -> Result<(), String> {
+    let eval_id = extract_eval_callback_id(&script);
+    target
+        // SAFETY: `platform.inner()` returns the WKWebView pointer owned by wry
+        // and valid for this `with_webview` closure. `RcBlock` allocates the
+        // completion block on the heap, and WebKit copies it so the callback
+        // stays alive after this scope returns.
+        .with_webview(move |platform| unsafe {
+            use objc2::{AnyThread, runtime::AnyObject};
+            use objc2_foundation::{
+                NSError, NSJSONSerialization, NSJSONWritingOptions, NSString, NSUTF8StringEncoding,
+            };
+            use objc2_web_kit::WKWebView;
+
+            let webview: &WKWebView = &*platform.inner().cast();
+            let handler =
+                block2::RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
+                    if !error.is_null() {
+                        resolve_native_eval_error(
+                            &engine,
+                            eval_id,
+                            "native WebKit eval callback returned an error",
+                        );
+                        return;
+                    }
+
+                    if value.is_null() {
+                        resolve_native_eval_error(
+                            &engine,
+                            eval_id,
+                            "native WebKit eval callback returned no value",
+                        );
+                        return;
+                    }
+
+                    let Some(json) = NSJSONSerialization::dataWithJSONObject_options_error(
+                        &*value,
+                        NSJSONWritingOptions::FragmentsAllowed,
+                    )
+                    .ok()
+                    .and_then(|data| {
+                        NSString::initWithData_encoding(
+                            NSString::alloc(),
+                            &data,
+                            NSUTF8StringEncoding,
+                        )
+                    }) else {
+                        resolve_native_eval_error(
+                            &engine,
+                            eval_id,
+                            "native WebKit eval callback result was not JSON serializable",
+                        );
+                        return;
+                    };
+                    let payload = json.to_string();
+                    handle_eval_callback_payload(&engine, &payload);
+                });
+
+            webview
+                .evaluateJavaScript_completionHandler(&NSString::from_str(&script), Some(&handler));
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(all(target_os = "macos", debug_assertions))]
+fn extract_eval_callback_id(script: &str) -> Option<u64> {
+    script
+        .split("return {id:")
+        .nth(1)?
+        .split_once(',')?
+        .0
+        .parse()
+        .ok()
+}
+
+#[cfg(all(target_os = "macos", debug_assertions))]
+fn resolve_native_eval_error(engine: &EvalEngine, id: Option<u64>, message: &str) {
+    if let Some(id) = id {
+        handler::handle_callback(engine, id, None, Some(message.to_owned()));
+    } else {
+        tracing::warn!(
+            message,
+            "native WebKit eval callback failed before resolving an id"
+        );
+    }
+}
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+fn handle_eval_callback_payload(engine: &EvalEngine, payload: &str) {
+    let parsed = serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|value| {
+            if let Some(inner) = value.as_str() {
+                serde_json::from_str::<serde_json::Value>(inner).ok()
+            } else {
+                Some(value)
+            }
+        });
+    let Some(value) = parsed else {
+        tracing::warn!(payload, "eval callback returned non-json payload");
+        return;
+    };
+    let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) else {
+        tracing::warn!(payload = %value, "eval callback payload missing id");
+        return;
+    };
+    let result = value
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    let error = value
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    handler::handle_callback(engine, id, result, error);
 }
 
 /// Create a focus function that requests OS focus for a webview window.
@@ -174,7 +314,11 @@ fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
             .map(|(label, wv)| {
                 serde_json::json!({
                     "label": label,
-                    "url": wv.url().map(|u| u.to_string()).unwrap_or_default(),
+                    "url": std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wv.url()))
+                        .ok()
+                        .and_then(Result::ok)
+                        .map(|url| url.to_string())
+                        .unwrap_or_default(),
                     "title": wv.title().unwrap_or_default(),
                 })
             })

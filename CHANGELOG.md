@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add a `screenshot_native` CLI subcommand to capture a native window PNG by
+  window id. [#108]
+- Make bridge bootstrap idempotent so repeated injection attempts are no-ops.
+  [#108]
+
+### Fixed
+
+- Restore eval result delivery on Tauri 2.11 / wry 0.55 by using native
+  WebView eval callbacks instead of JS-to-Tauri `__callback` IPC for eval
+  results. [#108]
+- Preserve `windows.list` output without panicking when wry 0.55 cannot report
+  a webview URL. [#108]
+
 ### Security
 
 - Block `javascript:` URLs in the `pilot.navigate` MCP tool. Because

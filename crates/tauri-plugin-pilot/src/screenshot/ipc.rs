@@ -390,7 +390,7 @@ fn tmp_path_for(final_path: &Path) -> std::path::PathBuf {
         .map(std::ffi::OsString::from)
         .unwrap_or_default();
     let counter = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    name.push(format!(".tmp.{}.{}", std::process::id(), counter));
+    name.push(format!(".tmp.{}.{counter}.png", std::process::id()));
     final_path.with_file_name(name)
 }
 
@@ -624,6 +624,19 @@ mod tests {
         assert_eq!(
             err_data(&err).get("error").and_then(Value::as_str),
             Some(codes::UNSUPPORTED_FORMAT)
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn tmp_path_keeps_png_extension_for_image_reader() {
+        let path = Path::new("/tmp/tauri-pilot-shot.png");
+        let tmp = tmp_path_for(path);
+        assert_eq!(tmp.extension().and_then(|ext| ext.to_str()), Some("png"));
+        assert!(
+            tmp.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(".tmp."))
         );
     }
 

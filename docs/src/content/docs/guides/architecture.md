@@ -90,9 +90,9 @@ The `windows.list` method enumerates all open windows (label, URL, title), sorte
 
 `webview.eval()` in Tauri v2 is **fire-and-forget** — it dispatches JS into the WebView but provides no return value. All methods that read from the page require a response, so a callback pattern is used:
 
-1. The plugin wraps the target JS in a `try/catch` block
-2. On completion, the JS invokes `window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback', {id, result})`
-3. The plugin's IPC handler for `__callback` looks up the matching `oneshot::Sender` and resolves it
+1. The plugin wraps the target JS in a `try/catch` block that returns `{id, result}` or `{id, error}`
+2. The WebView eval completion callback receives that payload
+3. The callback handler looks up the matching `oneshot::Sender` and resolves it
 4. Rust awaits the oneshot channel with a 10-second timeout
 
 The `EvalEngine` maintains:

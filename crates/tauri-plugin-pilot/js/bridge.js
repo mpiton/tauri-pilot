@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  if (window.__PILOT__) return;
+
   const idMap = new Map();
   let refCounter = 0;
 

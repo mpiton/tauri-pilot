@@ -18,9 +18,9 @@ pub(crate) enum EvalError {
 
 type PendingMap = HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>;
 
-/// Engine for executing JS in a `WebView` and getting results via callback.
+/// Engine for executing JS in a `WebView` and resolving native eval callback results.
 ///
-/// The core ADR-001 pattern: wrap script in try/catch + invoke callback,
+/// The core ADR-001 pattern: wrap script in try/catch + return a callback payload,
 /// await the result on a oneshot channel with timeout.
 #[derive(Clone)]
 pub(crate) struct EvalEngine {
@@ -69,7 +69,7 @@ impl EvalEngine {
         (id, rx)
     }
 
-    /// Resolve a pending eval by ID. Called from the IPC __callback handler.
+    /// Resolve a pending eval by ID from a `WebView` eval callback payload.
     pub fn resolve(&self, id: u64, result: Result<serde_json::Value, String>) {
         let sender = self
             .pending
@@ -87,10 +87,11 @@ impl EvalEngine {
         }
     }
 
-    /// Wrap a user script in the ADR-001 callback pattern.
-    /// Uses `__TAURI_INTERNALS__.invoke` which is always available (even without
-    /// `withGlobalTauri`). The expression is `await`-ed so async results resolve
-    /// before serialization.
+    /// Wrap a user script so `WebView` eval callbacks receive a tagged payload.
+    /// Returns a small callback payload object for `WebviewWindow::eval_with_callback`.
+    /// This avoids routing eval results through JS-to-Tauri IPC, which can fail
+    /// to dispatch from scripts injected with `webview.eval` on newer
+    /// Tauri/wry/WebKit combinations.
     ///
     /// Normalizes `undefined` results to `null` (string `"null"`) so Tauri does
     /// not drop the `result` field — otherwise a void expression (e.g.,
@@ -100,10 +101,8 @@ impl EvalEngine {
     pub fn wrap_script(id: u64, script: &str) -> String {
         format!(
             "(async()=>{{try{{let __r=await({script});\
-             await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
-             {{id:{id},result:__r===undefined?'null':JSON.stringify(__r)}});\
-             }}catch(__e){{await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
-             {{id:{id},error:(__e&&__e.message)||String(__e)}});}}}})();"
+             return {{id:{id},result:__r===undefined?'null':JSON.stringify(__r)}};\
+             }}catch(__e){{return {{id:{id},error:(__e&&__e.message)||String(__e)}};}}}})();"
         )
     }
 
@@ -217,9 +216,18 @@ mod tests {
         let script = EvalEngine::wrap_script(42, "document.title");
         assert!(script.contains("42"));
         assert!(script.contains("document.title"));
-        assert!(script.contains("__callback"));
+        assert!(script.contains("await("));
+        assert!(script.contains("return {id:42,result:"));
         assert!(script.contains("try"));
         assert!(script.contains("catch"));
+    }
+
+    #[test]
+    fn test_wrap_script_does_not_depend_on_ipc_callback_bridge() {
+        let script = EvalEngine::wrap_script(1, "document.title");
+        assert!(!script.contains("plugin:pilot|callback"));
+        assert!(!script.contains("plugin:pilot|__callback"));
+        assert!(!script.contains("__TAURI_INTERNALS__"));
     }
 
     #[test]

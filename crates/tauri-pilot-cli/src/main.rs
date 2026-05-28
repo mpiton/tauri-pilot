@@ -357,6 +357,25 @@ async fn run_command(
                 )
                 .await
         }
+        Command::ScreenshotNative {
+            window_id,
+            output,
+            format,
+        } => {
+            client
+                .call(
+                    "screenshot_native",
+                    with_window(
+                        Some(json!({
+                            "window_id": window_id,
+                            "output_path": output.display().to_string(),
+                            "format": format,
+                        })),
+                        window,
+                    ),
+                )
+                .await
+        }
         Command::Navigate { url } => {
             client
                 .call("navigate", with_window(Some(json!({"url": url})), window))

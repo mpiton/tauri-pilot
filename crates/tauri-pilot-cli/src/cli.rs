@@ -117,6 +117,16 @@ pub(crate) enum Command {
         #[arg(long)]
         selector: Option<String>,
     },
+    /// Capture a native window screenshot (PNG) by platform window id.
+    #[command(name = "screenshot_native", visible_alias = "screenshot-native")]
+    ScreenshotNative {
+        #[arg(long)]
+        window_id: u32,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value = "png")]
+        format: String,
+    },
     /// Navigate to a URL.
     Navigate { url: String },
     /// Get current URL.
@@ -811,6 +821,32 @@ mod tests {
     fn test_windows_command() {
         let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/test.sock", "windows"]);
         assert!(matches!(cli.command, Command::Windows));
+    }
+
+    #[test]
+    fn test_parse_screenshot_native_command() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "screenshot_native",
+            "--window-id",
+            "42",
+            "--output",
+            "/tmp/out.png",
+        ]);
+        if let Command::ScreenshotNative {
+            window_id,
+            output,
+            format,
+        } = cli.command
+        {
+            assert_eq!(window_id, 42);
+            assert_eq!(output, std::path::PathBuf::from("/tmp/out.png"));
+            assert_eq!(format, "png");
+        } else {
+            panic!("Expected ScreenshotNative command");
+        }
     }
 
     #[test]
