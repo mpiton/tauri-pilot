@@ -26,6 +26,7 @@
     H4: "heading",
     H5: "heading",
     H6: "heading",
+    P: "paragraph",
     UL: "list",
     OL: "list",
     LI: "listitem",

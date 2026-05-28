@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results. [#108]
 - Preserve `windows.list` output without panicking when wry 0.55 cannot report
   a webview URL. [#108]
+- Include `<p>` paragraph text in accessibility snapshots by mapping `<p>` to
+  the `paragraph` role. Snapshots previously dropped paragraph content (e.g. the
+  default Tauri template greeting rendered in a `<p>`), so callers could not
+  verify text that appeared after an interaction. The role is non-interactive,
+  so `snapshot --interactive` still omits paragraphs. [#109]
 
 ### Security
 
@@ -444,3 +449,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#105]: https://github.com/mpiton/tauri-pilot/pull/105
 [#106]: https://github.com/mpiton/tauri-pilot/pull/106
 [#107]: https://github.com/mpiton/tauri-pilot/pull/107
+[#109]: https://github.com/mpiton/tauri-pilot/issues/109
