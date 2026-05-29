@@ -123,5 +123,7 @@ pub mod windows;
 
 #[cfg(unix)]
 pub use unix::{bind, run, socket_path};
+// Windows binds inside `run` (#115), so `bind` is internal to the windows module
+// and is not re-exported — only `run` and `socket_path` are used by plugin setup.
 #[cfg(windows)]
-pub use windows::{bind, run, socket_path};
+pub use windows::{run, socket_path};

@@ -68,16 +68,37 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let list_fn = make_list_fn(app);
                 let focus_fn = make_focus_fn(app);
 
-                let (listener, guard) = server::bind(&socket_path).map_err(|e| {
-                    tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
-                    e
-                })?;
-
                 let recorder = Recorder::new();
 
+                // Unix binds with the std (sync) `UnixListener`, which needs no
+                // tokio runtime, so binding stays here in `setup` where a failure
+                // surfaces as a hard plugin error. `run` only upgrades the
+                // listener to tokio once it is already on the runtime.
+                #[cfg(unix)]
+                {
+                    let (listener, guard) = server::bind(&socket_path).map_err(|e| {
+                        tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
+                        e
+                    })?;
+                    tauri::async_runtime::spawn(server::run(
+                        listener,
+                        guard,
+                        engine,
+                        Some(eval_fn),
+                        Some(list_fn),
+                        Some(focus_fn),
+                        recorder,
+                    ));
+                }
+
+                // Windows' tokio `NamedPipeServer` registers with the reactor the
+                // instant it is created, so the bind must run inside the spawned
+                // task (which lives on the tokio runtime). Binding here in `setup`
+                // panics with "there is no reactor running, must be called from
+                // the context of a Tokio 1.x runtime" (#115).
+                #[cfg(windows)]
                 tauri::async_runtime::spawn(server::run(
-                    listener,
-                    guard,
+                    socket_path,
                     engine,
                     Some(eval_fn),
                     Some(list_fn),
