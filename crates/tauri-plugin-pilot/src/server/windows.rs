@@ -421,15 +421,29 @@ pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error>
     Ok((server, guard))
 }
 
+/// Bind the named pipe, then run the accept loop.
+///
+/// Unlike the Unix server, the bind happens here — inside the spawned task —
+/// rather than in the plugin `setup`. tokio's `NamedPipeServer` registers with
+/// the reactor the moment it is created, so creating it outside a running tokio
+/// runtime panics with "there is no reactor running, must be called from the
+/// context of a Tokio 1.x runtime" (#115). A bind failure is logged and ends the
+/// task instead of taking down the host app.
 pub async fn run(
-    first_server: NamedPipeServer,
-    guard: RegistryGuard,
+    pipe_path: PathBuf,
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
     list_fn: Option<ListWindowsFn>,
     focus_fn: Option<FocusFn>,
     recorder: Recorder,
 ) {
+    let (first_server, guard) = match bind(&pipe_path) {
+        Ok(bound) => bound,
+        Err(e) => {
+            tracing::error!(path = %pipe_path.display(), "failed to bind named pipe: {e}");
+            return;
+        }
+    };
     let identifier = guard.identifier.clone();
     if let Err(e) = accept_loop(
         first_server,
@@ -544,10 +558,10 @@ mod tests {
     }
 
     async fn start_test_server(path: &Path) -> tokio::task::JoinHandle<()> {
-        let (listener, guard) = bind(path).expect("bind test pipe");
         let engine = EvalEngine::new();
+        let path = path.to_path_buf();
         let handle = tokio::spawn(async move {
-            run(listener, guard, engine, None, None, None, Recorder::new()).await;
+            run(path, engine, None, None, None, Recorder::new()).await;
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
@@ -635,6 +649,43 @@ mod tests {
 
         handle.abort();
         let _ = handle.await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[cfg(windows)]
+    async fn test_run_returns_when_bind_fails_instead_of_panicking() {
+        // #115: the named pipe is now bound inside `run` (on the tokio runtime),
+        // not in the plugin `setup`. A bind failure must end the task gracefully
+        // — never panic or hang. Hold the first pipe instance, then race a second
+        // `run` on the same path: `first_pipe_instance(true)` rejects the
+        // duplicate, so the second task must log the error and return on its own.
+        let pipe = unique_pipe_path();
+        let holder = start_test_server(&pipe).await; // owns the first instance
+
+        let dup_path = pipe.clone();
+        let dup = tokio::spawn(async move {
+            run(
+                dup_path,
+                EvalEngine::new(),
+                None,
+                None,
+                None,
+                Recorder::new(),
+            )
+            .await;
+        });
+
+        let joined = tokio::time::timeout(Duration::from_secs(5), dup)
+            .await
+            .expect("run must return after a failed bind (#115), not hang");
+        assert!(
+            joined.is_ok(),
+            "run must not panic when binding fails (#115)"
+        );
+
+        holder.abort();
+        let _ = holder.await;
     }
 
     #[tokio::test]

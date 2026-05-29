@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is now injected as its raw physical keycode, matching the keycode
   `global-hotkey` grabs. A bare `press "1"` keeps the layout-aware path, so it
   still types the layout's digit rather than the unshifted physical key. [#114]
+- Fix a startup panic on Windows ("there is no reactor running, must be called
+  from the context of a Tokio 1.x runtime") that aborted the host app before its
+  window opened. tokio's `NamedPipeServer` registers with the reactor the moment
+  it is created, but the plugin bound the pipe in its synchronous `setup` hook —
+  outside any tokio runtime. The Windows pipe is now bound inside the spawned
+  server task, which runs on the runtime. The Unix socket path is unchanged: it
+  binds with the std `UnixListener`, which needs no runtime. [#115]
 
 ### Security
 
@@ -477,3 +484,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#110]: https://github.com/mpiton/tauri-pilot/issues/110
 [#113]: https://github.com/mpiton/tauri-pilot/issues/113
 [#114]: https://github.com/mpiton/tauri-pilot/issues/114
+[#115]: https://github.com/mpiton/tauri-pilot/issues/115
