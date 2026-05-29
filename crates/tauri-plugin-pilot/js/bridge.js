@@ -563,11 +563,25 @@
       const reported = (tag || String(el)).slice(0, 64);
       throw new Error("select requires a <select> element, got: " + reported);
     }
+    // Resolve the target option before mutating anything. Setting
+    // `HTMLSelectElement.value` to a string that matches no option `value`
+    // silently yields `value=""` / `selectedIndex=-1` per the DOM spec, so
+    // "set then trust" reports success on a no-op (#113). Match the option
+    // first — by `value`, then by visible label — and error if none matches so
+    // a reported `ok` always means an option was actually selected.
+    const wanted = String(params.value);
+    const options = Array.from(el.options || []);
+    const matched =
+      options.find((o) => o.value === wanted) ||
+      options.find((o) => (o.text || "").trim() === wanted.trim());
+    if (!matched) {
+      throw new Error("select: no option matches " + JSON.stringify(params.value));
+    }
     const setter = nativeValueSetter(el);
     if (setter) {
-      setter.call(el, params.value);
+      setter.call(el, matched.value);
     } else {
-      el.value = params.value;
+      el.value = matched.value;
     }
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
