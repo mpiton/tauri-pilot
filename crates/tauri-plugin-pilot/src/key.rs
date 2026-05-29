@@ -11,20 +11,30 @@
 //!       → Tauri accelerator handlers
 //! ```
 //!
-//! # Platform caveats
+//! # Platform caveats (X11 global shortcuts)
 //!
-//! On X11, [`simulate_press`] cannot reliably drive
-//! `tauri-plugin-global-shortcut` handlers. The upstream `global-hotkey` crate
-//! uses `XGrabKey` passive grabs on its Linux/X11 backend (Wayland is
-//! unsupported on Linux), and those grabs match against the X server's logical
-//! modifier state. `enigo`'s `XTestFakeKeyEvent` backend injects each modifier
-//! and keycode as a separate fake-input call, and the modifier state observed
-//! at the moment the main keycode is processed does not always match the
-//! grab's exact-modifier-mask, so the grab may not activate. DOM listeners
-//! and Tauri accelerators are unaffected and continue to receive
-//! `isTrusted=true` events.
+//! `tauri-plugin-global-shortcut` registers its accelerators through the
+//! `global-hotkey` crate, which on X11 uses `XGrabKey` passive grabs keyed on a
+//! *physical* keycode (e.g. `Code::Digit1` → keycode 10, derived from the evdev
+//! scancode and independent of the active layout).
 //!
-//! See issues #45 and #75.
+//! `enigo` injects a [`Key::Unicode`] character by looking its keysym up in the
+//! keymap, but only at shift-level 0. On a layout where the wanted character
+//! sits at a higher level — most importantly the digit row on AZERTY and
+//! similar layouts, where `1` is `Shift`+`&` — enigo cannot find it on the
+//! physical key and instead remaps it onto a spare keycode. That spare keycode
+//! never matches a physical-key grab, so `Control+1`-style global shortcuts
+//! silently fail to fire even though the same key still reaches DOM listeners
+//! as a trusted event. Letters live at level 0 on these layouts, which is why
+//! `Control+Shift+P` fires while `Control+1` did not (issue #114).
+//!
+//! To keep digit shortcuts working regardless of layout, [`simulate_press`]
+//! injects main-row digits as raw physical keycodes (see [`tap_main_key`])
+//! rather than as Unicode characters. Other characters that live above
+//! shift-level 0 on an exotic layout may still be remapped and miss a
+//! physical-key grab.
+//!
+//! See issues #45, #75 and #114.
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::sync::Mutex;
 use thiserror::Error;
@@ -187,6 +197,45 @@ fn single_char(token: &str) -> Option<char> {
     }
 }
 
+/// Physical X11/xkb keycodes for the main number-row digits.
+///
+/// These are layout-independent: X11 derives them from the Linux evdev
+/// scancodes (`KEY_1`..`KEY_0`) offset by 8, so `1` is always keycode 10 and
+/// `0` is keycode 19 — whether the active layout puts the digit on an unshifted
+/// (US QWERTY) or a shifted (e.g. French AZERTY) level. They are exactly the
+/// keycodes `global-hotkey` grabs for `Code::Digit1`..`Code::Digit0`.
+#[cfg(target_os = "linux")]
+fn linux_digit_keycode(ch: char) -> Option<u16> {
+    match ch {
+        '1'..='9' => Some(10 + (ch as u16 - '1' as u16)),
+        '0' => Some(19),
+        _ => None,
+    }
+}
+
+/// Tap (press + release) the combo's main key.
+///
+/// On Linux, main-row digits are injected as raw physical keycodes (see
+/// [`linux_digit_keycode`]) so they reach the exact physical key that
+/// `global-hotkey` grabs. enigo's layout-aware [`Key::Unicode`] path resolves a
+/// digit's keysym only at shift-level 0; on layouts where the digit is shifted
+/// it fails to find it on the physical key and remaps it onto a spare keycode,
+/// which no physical-key grab can match. Every other key — and every key on
+/// macOS/Windows — goes through enigo's `Key` path unchanged.
+fn tap_main_key(enigo: &mut Enigo, key: Key) -> Result<(), KeyError> {
+    #[cfg(target_os = "linux")]
+    if let Key::Unicode(ch) = key
+        && let Some(keycode) = linux_digit_keycode(ch)
+    {
+        return enigo
+            .raw(keycode, Direction::Click)
+            .map_err(|e| KeyError::EnigoInput(e.to_string()));
+    }
+    enigo
+        .key(key, Direction::Click)
+        .map_err(|e| KeyError::EnigoInput(e.to_string()))
+}
+
 /// Press `combo` at the OS level. Modifiers are pressed in order, then the
 /// main key is tapped (press+release), then modifiers are released in reverse
 /// order — the same pattern a human or Playwright would produce.
@@ -230,9 +279,7 @@ pub fn simulate_press(combo: &str) -> Result<(), KeyError> {
                 .map_err(|e| KeyError::EnigoInput(e.to_string()))?;
             pressed.push(*m);
         }
-        enigo
-            .key(parsed.key, Direction::Click)
-            .map_err(|e| KeyError::EnigoInput(e.to_string()))
+        tap_main_key(&mut enigo, parsed.key)
     })();
 
     // Always release the modifiers we actually pressed, in reverse order.
@@ -396,5 +443,29 @@ mod tests {
             parse_combo("Ctrl+NotAKey"),
             Err(KeyError::UnknownKey(_))
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_linux_digit_keycode_maps_digits_to_physical_x11_keycodes() {
+        // evdev KEY_1..KEY_9 are X keycodes 10..18 and KEY_0 is 19 — the exact
+        // keycodes `global-hotkey` grabs for Code::Digit1..Digit9 / Digit0.
+        // Injecting these as raw keycodes is what fixes Control+digit global
+        // shortcuts on layouts (e.g. AZERTY) where the digit is shifted (#114).
+        assert_eq!(linux_digit_keycode('1'), Some(10));
+        assert_eq!(linux_digit_keycode('2'), Some(11));
+        assert_eq!(linux_digit_keycode('5'), Some(14));
+        assert_eq!(linux_digit_keycode('9'), Some(18));
+        assert_eq!(linux_digit_keycode('0'), Some(19));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_linux_digit_keycode_returns_none_for_non_digits() {
+        // Letters and symbols keep enigo's layout-aware Key::Unicode path;
+        // only main-row digits are diverted to a raw physical keycode.
+        for ch in ['a', 'A', 'p', '+', '-', ' ', 'é'] {
+            assert_eq!(linux_digit_keycode(ch), None, "char: {ch}");
+        }
     }
 }

@@ -352,9 +352,11 @@ async fn handle_diff(
 /// reach Tauri accelerators (#45). Native injection via `enigo` produces real
 /// keyboard events that DOM listeners and Tauri accelerators see as trusted.
 ///
-/// Note: on X11, `enigo`'s `XTestFakeKeyEvent` backend does not reliably
-/// drive `XGrabKey`-based passive grabs, so `tauri-plugin-global-shortcut`
-/// handlers may not fire (#75). See the `key` module-level docs for details.
+/// Note: on X11, global shortcuts (`tauri-plugin-global-shortcut` / `XGrabKey`
+/// passive grabs) are keyed on physical keycodes. Letter and digit combos fire
+/// (#114), but characters that sit above shift-level 0 on an exotic layout may
+/// still be remapped by `enigo` and miss the grab. See the `key` module-level
+/// docs (#45, #75, #114).
 #[cfg(feature = "press")]
 async fn handle_press(
     params: Option<&serde_json::Value>,
