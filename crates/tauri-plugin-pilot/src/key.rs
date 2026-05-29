@@ -29,10 +29,13 @@
 //! `Control+Shift+P` fires while `Control+1` did not (issue #114).
 //!
 //! To keep digit shortcuts working regardless of layout, [`simulate_press`]
-//! injects main-row digits as raw physical keycodes (see [`tap_main_key`])
-//! rather than as Unicode characters. Other characters that live above
-//! shift-level 0 on an exotic layout may still be remapped and miss a
-//! physical-key grab.
+//! injects a digit as a raw physical keycode (see [`tap_main_key`]) when it is
+//! part of a modified combo such as `Control+1` — the case that targets a
+//! physical-key grab. A bare `press "1"` keeps enigo's layout-aware
+//! `Key::Unicode` path, so it still types the layout's digit rather than the
+//! unshifted physical key (`&` on AZERTY); reach for `fill` to set input text.
+//! Other characters that live above shift-level 0 on an exotic layout may still
+//! be remapped and miss a physical-key grab.
 //!
 //! See issues #45, #75 and #114.
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
@@ -213,24 +216,48 @@ fn linux_digit_keycode(ch: char) -> Option<u16> {
     }
 }
 
-/// Tap (press + release) the combo's main key.
+/// The raw physical keycode to inject for the combo's main key, or `None` to
+/// use enigo's layout-aware [`Key`] path.
 ///
-/// On Linux, main-row digits are injected as raw physical keycodes (see
-/// [`linux_digit_keycode`]) so they reach the exact physical key that
+/// Returns a keycode only for a digit that is part of a *modified* combo (e.g.
+/// `Control+1`): that is the case targeting a physical-key grab, where matching
+/// `global-hotkey`'s keycode matters more than the character produced. A bare
+/// digit press returns `None` so `press "1"` keeps typing the layout's digit
+/// (`1` on AZERTY) instead of the unshifted physical key (`&`).
+#[cfg(target_os = "linux")]
+fn physical_digit_keycode(key: Key, has_modifiers: bool) -> Option<u16> {
+    match key {
+        Key::Unicode(ch) if has_modifiers => linux_digit_keycode(ch),
+        _ => None,
+    }
+}
+
+/// Tap (press + release) the combo's main key, given whether any modifier is
+/// currently held.
+///
+/// On Linux a modified digit combo is injected as a raw physical keycode (see
+/// [`physical_digit_keycode`]) so it reaches the exact physical key that
 /// `global-hotkey` grabs. enigo's layout-aware [`Key::Unicode`] path resolves a
 /// digit's keysym only at shift-level 0; on layouts where the digit is shifted
 /// it fails to find it on the physical key and remaps it onto a spare keycode,
-/// which no physical-key grab can match. Every other key — and every key on
-/// macOS/Windows — goes through enigo's `Key` path unchanged.
-fn tap_main_key(enigo: &mut Enigo, key: Key) -> Result<(), KeyError> {
-    #[cfg(target_os = "linux")]
-    if let Key::Unicode(ch) = key
-        && let Some(keycode) = linux_digit_keycode(ch)
-    {
+/// which no physical-key grab can match. Bare digits and every other key — and
+/// every key on macOS/Windows — go through enigo's `Key` path unchanged.
+#[cfg(target_os = "linux")]
+fn tap_main_key(enigo: &mut Enigo, key: Key, has_modifiers: bool) -> Result<(), KeyError> {
+    if let Some(keycode) = physical_digit_keycode(key, has_modifiers) {
         return enigo
             .raw(keycode, Direction::Click)
             .map_err(|e| KeyError::EnigoInput(e.to_string()));
     }
+    enigo
+        .key(key, Direction::Click)
+        .map_err(|e| KeyError::EnigoInput(e.to_string()))
+}
+
+/// macOS and Windows have no layout-dependent digit-remapping problem, so every
+/// key goes through enigo's layout-aware [`Key`] path.
+#[cfg(not(target_os = "linux"))]
+fn tap_main_key(enigo: &mut Enigo, key: Key, _has_modifiers: bool) -> Result<(), KeyError> {
     enigo
         .key(key, Direction::Click)
         .map_err(|e| KeyError::EnigoInput(e.to_string()))
@@ -279,7 +306,7 @@ pub fn simulate_press(combo: &str) -> Result<(), KeyError> {
                 .map_err(|e| KeyError::EnigoInput(e.to_string()))?;
             pressed.push(*m);
         }
-        tap_main_key(&mut enigo, parsed.key)
+        tap_main_key(&mut enigo, parsed.key, !parsed.modifiers.is_empty())
     })();
 
     // Always release the modifiers we actually pressed, in reverse order.
@@ -467,5 +494,33 @@ mod tests {
         for ch in ['a', 'A', 'p', '+', '-', ' ', 'é'] {
             assert_eq!(linux_digit_keycode(ch), None, "char: {ch}");
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_physical_digit_keycode_used_for_modified_digit_combos() {
+        // A modified digit combo (e.g. Control+1) targets a physical-key grab,
+        // so it is injected as the raw physical keycode global-hotkey grabbed.
+        assert_eq!(physical_digit_keycode(Key::Unicode('1'), true), Some(10));
+        assert_eq!(physical_digit_keycode(Key::Unicode('0'), true), Some(19));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_physical_digit_keycode_skips_bare_digit_for_character_entry() {
+        // A bare `press "1"` keeps the layout-aware Key::Unicode path so it
+        // types the layout's digit (`1` on AZERTY) rather than the unshifted
+        // physical key (`&`). Only modified combos divert to a raw keycode.
+        assert_eq!(physical_digit_keycode(Key::Unicode('1'), false), None);
+        assert_eq!(physical_digit_keycode(Key::Unicode('9'), false), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_physical_digit_keycode_skips_non_digit_keys() {
+        // Letters and named keys always use enigo's layout-aware path, even in
+        // a modified combo — they resolve correctly at shift-level 0.
+        assert_eq!(physical_digit_keycode(Key::Unicode('a'), true), None);
+        assert_eq!(physical_digit_keycode(Key::Return, true), None);
     }
 }

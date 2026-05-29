@@ -46,9 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `enigo` resolves a `Key::Unicode` digit only at shift-level 0, so on AZERTY
   (where `1` is `Shift`+`&`) it remapped the digit onto a spare keycode that no
   physical-key `XGrabKey` grab matched, while letters (always level 0) worked —
-  the asymmetry #75 could not explain. Main-row digits are now injected as raw
-  physical keycodes, matching the keycode `global-hotkey` grabs and aligning
-  with Playwright's physical-`code` semantics. [#114]
+  the asymmetry #75 could not explain. A digit that is part of a modified combo
+  is now injected as its raw physical keycode, matching the keycode
+  `global-hotkey` grabs. A bare `press "1"` keeps the layout-aware path, so it
+  still types the layout's digit rather than the unshifted physical key. [#114]
 
 ### Security
 
