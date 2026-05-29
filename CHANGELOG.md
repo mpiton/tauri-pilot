@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surface) or a typo previously cleared the selection while the command still
   exited `0`. A successful `select` now guarantees an option was selected.
   [#113]
+- Fire `Control`+digit global shortcuts via `press` on X11 layouts where the
+  digit row is shifted (e.g. French AZERTY). `press "Control+1"` now triggers a
+  registered `Control+Digit1` accelerator, consistent with `Control+Shift+P`.
+  `enigo` resolves a `Key::Unicode` digit only at shift-level 0, so on AZERTY
+  (where `1` is `Shift`+`&`) it remapped the digit onto a spare keycode that no
+  physical-key `XGrabKey` grab matched, while letters (always level 0) worked —
+  the asymmetry #75 could not explain. A digit that is part of a modified combo
+  is now injected as its raw physical keycode, matching the keycode
+  `global-hotkey` grabs. A bare `press "1"` keeps the layout-aware path, so it
+  still types the layout's digit rather than the unshifted physical key. [#114]
 
 ### Security
 
@@ -466,3 +476,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#109]: https://github.com/mpiton/tauri-pilot/issues/109
 [#110]: https://github.com/mpiton/tauri-pilot/issues/110
 [#113]: https://github.com/mpiton/tauri-pilot/issues/113
+[#114]: https://github.com/mpiton/tauri-pilot/issues/114
