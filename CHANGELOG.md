@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`snapshot`, `state`, `click`, …) timed out after 10s. These platforms now
   deliver eval results through the `__callback` IPC command again, while macOS
   keeps the native callback path from [#108]. [#110]
+- Make `select` match by visible option label as well as `value`, and error
+  instead of silently reporting `ok` when no option matches. Setting
+  `HTMLSelectElement.value` to an unmatched string leaves `value=""` /
+  `selectedIndex=-1` per the DOM spec, so passing a label (which snapshots
+  surface) or a typo previously cleared the selection while the command still
+  exited `0`. A successful `select` now guarantees an option was selected.
+  [#113]
 
 ### Security
 
@@ -458,3 +465,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#107]: https://github.com/mpiton/tauri-pilot/pull/107
 [#109]: https://github.com/mpiton/tauri-pilot/issues/109
 [#110]: https://github.com/mpiton/tauri-pilot/issues/110
+[#113]: https://github.com/mpiton/tauri-pilot/issues/113
