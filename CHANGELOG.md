@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is now injected as its raw physical keycode, matching the keycode
   `global-hotkey` grabs. A bare `press "1"` keeps the layout-aware path, so it
   still types the layout's digit rather than the unshifted physical key. [#114]
+- Fire `Shift`+uppercase-letter global shortcuts via `press` on non-US layouts.
+  `press "Control+Shift+P"` — the conventional uppercase spelling — silently
+  failed to fire its accelerator on AZERTY while exiting `0`; only the lowercase
+  `Control+Shift+p` worked. #114 fixed the symmetric digit case but left
+  uppercase letters broken: `parse_combo` keeps the literal `'P'`, whose keysym
+  lives at shift-level 1, so `enigo` could not place it on the physical key and
+  remapped it onto a spare keycode no `XGrabKey` grab matched. An uppercase
+  letter in a modified combo is now lowered to its base key for injection, and
+  the explicitly held `Shift` produces the uppercase character — matching the
+  grab at level 0. A bare `press "P"` keeps `Key::Unicode('P')`, so it still
+  types an uppercase `P`. [#121]
 - Fix a startup panic on Windows ("there is no reactor running, must be called
   from the context of a Tokio 1.x runtime") that aborted the host app before its
   window opened. tokio's `NamedPipeServer` registers with the reactor the moment
@@ -493,3 +504,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#113]: https://github.com/mpiton/tauri-pilot/issues/113
 [#114]: https://github.com/mpiton/tauri-pilot/issues/114
 [#115]: https://github.com/mpiton/tauri-pilot/issues/115
+[#120]: https://github.com/mpiton/tauri-pilot/issues/120
+[#121]: https://github.com/mpiton/tauri-pilot/issues/121
