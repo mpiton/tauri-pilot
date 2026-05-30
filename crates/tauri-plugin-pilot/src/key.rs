@@ -25,19 +25,31 @@
 //! physical key and instead remaps it onto a spare keycode. That spare keycode
 //! never matches a physical-key grab, so `Control+1`-style global shortcuts
 //! silently fail to fire even though the same key still reaches DOM listeners
-//! as a trusted event. Letters live at level 0 on these layouts, which is why
-//! `Control+Shift+P` fires while `Control+1` did not (issue #114).
+//! as a trusted event.
 //!
-//! To keep digit shortcuts working regardless of layout, [`simulate_press`]
-//! injects a digit as a raw physical keycode (see [`tap_main_key`]) when it is
-//! part of a modified combo such as `Control+1` — the case that targets a
-//! physical-key grab. A bare `press "1"` keeps enigo's layout-aware
-//! `Key::Unicode` path, so it still types the layout's digit rather than the
-//! unshifted physical key (`&` on AZERTY); reach for `fill` to set input text.
-//! Other characters that live above shift-level 0 on an exotic layout may still
-//! be remapped and miss a physical-key grab.
+//! The same trap catches an uppercase *letter* written into a `Shift` combo.
+//! `Control+Shift+P` parses to the pre-shifted character `'P'`, whose keysym
+//! lives at shift-level 1; on AZERTY enigo cannot place it on the physical key
+//! and remaps it onto a spare keycode, so the grab never fires (issue #121).
+//! Lowercase `p` sits at level 0, which is why `Control+Shift+p` works.
 //!
-//! See issues #45, #75 and #114.
+//! Two injection-path normalisations keep modified combos hitting the grab
+//! regardless of layout:
+//!
+//! - A digit in a modified combo (e.g. `Control+1`) is injected as a raw
+//!   physical keycode (see [`physical_digit_keycode`] / [`tap_main_key`]) — the
+//!   exact keycode `global-hotkey` grabbed.
+//! - An ASCII-uppercase letter in a modified combo is lowered to its base key
+//!   (see [`normalize_main_key`]); the explicitly held `Shift` then yields the
+//!   uppercase character, matching the grab at level 0.
+//!
+//! A bare `press "1"` or `press "P"` keeps enigo's layout-aware `Key::Unicode`
+//! path, so it still types the layout's character rather than the unshifted
+//! physical key (`&` on AZERTY); reach for `fill` to set input text. Other
+//! characters that live above shift-level 0 on an exotic layout may still be
+//! remapped and miss a physical-key grab.
+//!
+//! See issues #45, #75, #114 and #121.
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::sync::Mutex;
 use thiserror::Error;
@@ -232,6 +244,37 @@ fn physical_digit_keycode(key: Key, has_modifiers: bool) -> Option<u16> {
     }
 }
 
+/// Normalise the combo's main key for injection under any currently-held
+/// modifiers.
+///
+/// When a modifier is held, an ASCII-uppercase letter main key (e.g. `'P'` from
+/// `Control+Shift+P`) is lowered to its base form so enigo resolves it at
+/// shift-level 0 — the physical key the X11 grab is keyed on. The explicitly
+/// held `Shift` then produces the uppercase character, exactly as a human
+/// pressing the key would. Without this, enigo looks the uppercase keysym up at
+/// shift-level 1, fails to place it on the physical key on layouts like AZERTY,
+/// and remaps it onto a spare keycode that matches no grab — the press is lost
+/// even though the exit status is `0` (issue #121).
+///
+/// A bare `press "P"` (no modifiers) keeps `Key::Unicode('P')` so enigo applies
+/// its own shift and types an uppercase `P`, mirroring how a bare digit keeps
+/// the layout-aware path rather than a raw physical keycode. Non-ASCII
+/// uppercase letters are left untouched — only `A`–`Z` are handled.
+///
+/// Linux-only, like the digit raw-keycode path: macOS and Windows resolve a
+/// `Key::Unicode` character through their own keymap lookups that already land
+/// on the physical key regardless of letter case, so they keep enigo's plain
+/// `Key` path unchanged.
+#[cfg(target_os = "linux")]
+fn normalize_main_key(key: Key, has_modifiers: bool) -> Key {
+    match key {
+        Key::Unicode(ch) if has_modifiers && ch.is_ascii_uppercase() => {
+            Key::Unicode(ch.to_ascii_lowercase())
+        }
+        _ => key,
+    }
+}
+
 /// Tap (press + release) the combo's main key, given whether any modifier is
 /// currently held.
 ///
@@ -250,12 +293,14 @@ fn tap_main_key(enigo: &mut Enigo, key: Key, has_modifiers: bool) -> Result<(), 
             .map_err(|e| KeyError::EnigoInput(e.to_string()));
     }
     enigo
-        .key(key, Direction::Click)
+        .key(normalize_main_key(key, has_modifiers), Direction::Click)
         .map_err(|e| KeyError::EnigoInput(e.to_string()))
 }
 
-/// macOS and Windows have no layout-dependent digit-remapping problem, so every
-/// key goes through enigo's layout-aware [`Key`] path.
+/// macOS and Windows have no layout-dependent key-remapping problem (their
+/// keymap lookups resolve a `Key::Unicode` character to the physical key
+/// regardless of case or shift level), so every key goes through enigo's
+/// layout-aware [`Key`] path.
 #[cfg(not(target_os = "linux"))]
 fn tap_main_key(enigo: &mut Enigo, key: Key, _has_modifiers: bool) -> Result<(), KeyError> {
     enigo
@@ -522,5 +567,71 @@ mod tests {
         // a modified combo — they resolve correctly at shift-level 0.
         assert_eq!(physical_digit_keycode(Key::Unicode('a'), true), None);
         assert_eq!(physical_digit_keycode(Key::Return, true), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_normalize_main_key_lowercases_modified_uppercase_letter() {
+        // `Control+Shift+P` parses to Key::Unicode('P'); enigo resolves the
+        // uppercase keysym only at shift-level 1, so on AZERTY it remaps to a
+        // spare keycode no XGrabKey grab matches (#121). Tapping the base
+        // physical key ('p', level 0) under the held Shift hits the grab.
+        assert!(key_eq(
+            normalize_main_key(Key::Unicode('P'), true),
+            Key::Unicode('p')
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_normalize_main_key_keeps_bare_uppercase_letter() {
+        // A bare `press "P"` (no modifiers) means "type uppercase P" — keep the
+        // pre-shifted character so enigo applies its own shift, mirroring how a
+        // bare digit keeps the layout-aware Key::Unicode path.
+        assert!(key_eq(
+            normalize_main_key(Key::Unicode('P'), false),
+            Key::Unicode('P')
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_normalize_main_key_keeps_lowercase_letter() {
+        // Lowercase already resolves at shift-level 0 — untouched in either case.
+        assert!(key_eq(
+            normalize_main_key(Key::Unicode('p'), true),
+            Key::Unicode('p')
+        ));
+        assert!(key_eq(
+            normalize_main_key(Key::Unicode('p'), false),
+            Key::Unicode('p')
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_normalize_main_key_keeps_non_letter_keys() {
+        // Digits and named keys are not ASCII-uppercase letters, so they pass
+        // through unchanged — digits go through the raw-keycode path instead.
+        assert!(key_eq(
+            normalize_main_key(Key::Unicode('1'), true),
+            Key::Unicode('1')
+        ));
+        assert!(key_eq(
+            normalize_main_key(Key::Unicode('+'), true),
+            Key::Unicode('+')
+        ));
+        assert!(key_eq(normalize_main_key(Key::Return, true), Key::Return));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_normalize_main_key_keeps_non_ascii_uppercase() {
+        // Only ASCII A–Z are handled (the case enigo can resolve from the held
+        // Shift). A non-ASCII uppercase letter is left as-is rather than guessed.
+        assert!(key_eq(
+            normalize_main_key(Key::Unicode('É'), true),
+            Key::Unicode('É')
+        ));
     }
 }
