@@ -166,6 +166,17 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_element_deserializes_string_value() {
+        // Regression for #120: the bridge emits `value` as a string ("0" for a
+        // bare <li>), and the reference-snapshot parse in `diff` must accept it.
+        let json =
+            r#"{"ref":"e31","role":"listitem","depth":3,"name":"single hyphen value","value":"0"}"#;
+        let el: SnapshotElement =
+            serde_json::from_str(json).expect("string value should deserialize");
+        assert_eq!(el.value, Some("0".to_owned()));
+    }
+
+    #[test]
     fn test_diff_identical_snapshots() {
         let snapshot = vec![el("e1", "button", 1), el("e2", "input", 2)];
         let result = compute_diff(&snapshot, &snapshot);

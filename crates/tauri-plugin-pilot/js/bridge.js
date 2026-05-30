@@ -386,7 +386,11 @@
         const entry = { ref: ref, role: role, depth: currentDepth };
         const name = getName(node);
         if (name) entry.name = name;
-        if (node.value !== undefined && node.value !== "") entry.value = node.value;
+        // `value` is an IDL property whose type varies by element: a string for
+        // form controls, but a number for `<li>` (ordinal), `<progress>`, and
+        // `<meter>`. Coerce to string so the wire format matches the plugin's
+        // `SnapshotElement.value: Option<String>` contract (#120).
+        if (node.value !== undefined && node.value !== "") entry.value = String(node.value);
         if (node.tagName === "INPUT") {
           var inputType = (node.getAttribute("type") || "text").toLowerCase();
           if (inputType === "checkbox" || inputType === "radio") {
