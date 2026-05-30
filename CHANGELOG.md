@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-30
+
 ### Added
 
 - Add a `screenshot_native` CLI subcommand to capture a native window PNG by
@@ -465,7 +467,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
 [#62]: https://github.com/mpiton/tauri-pilot/pull/62
 [#63]: https://github.com/mpiton/tauri-pilot/pull/63
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mpiton/tauri-pilot/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mpiton/tauri-pilot/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/mpiton/tauri-pilot/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/mpiton/tauri-pilot/compare/v0.5.0...v0.5.1
@@ -499,6 +502,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#105]: https://github.com/mpiton/tauri-pilot/pull/105
 [#106]: https://github.com/mpiton/tauri-pilot/pull/106
 [#107]: https://github.com/mpiton/tauri-pilot/pull/107
+[#108]: https://github.com/mpiton/tauri-pilot/issues/108
 [#109]: https://github.com/mpiton/tauri-pilot/issues/109
 [#110]: https://github.com/mpiton/tauri-pilot/issues/110
 [#113]: https://github.com/mpiton/tauri-pilot/issues/113
