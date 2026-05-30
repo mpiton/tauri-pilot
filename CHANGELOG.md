@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outside any tokio runtime. The Windows pipe is now bound inside the spawned
   server task, which runs on the runtime. The Unix socket path is unchanged: it
   binds with the std `UnixListener`, which needs no runtime. [#115]
+- Stop `diff` aborting on any page containing `<li>` elements. The bridge
+  captured an element's `value` IDL property verbatim, but for `<li>`,
+  `<progress>`, and `<meter>` that property is a number (an `<li>`'s ordinal,
+  defaulting to `0`), so snapshots serialised `"value": 0` while the plugin
+  types `SnapshotElement.value` as `Option<String>`. Parsing such a reference
+  snapshot failed with `invalid type: integer 0, expected a string` (`-32602`),
+  making `diff` unusable on most real apps. The bridge now coerces `value` to a
+  string at capture, matching the wire contract. [#120]
 
 ### Security
 
