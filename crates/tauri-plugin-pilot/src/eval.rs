@@ -223,21 +223,20 @@ mod tests {
         assert!(script.contains("catch"));
     }
 
-    // #110/#126: Native eval result callbacks are not reliable across WebView
-    // backends and macOS headless CI. The wrapped script must `await` the result
-    // and deliver it back through the `__callback` IPC command.
+    // #110/#126: The wrapped script must await the JavaScript result and send it
+    // through `__callback`, avoiding native eval result callbacks entirely.
     #[test]
-    fn test_wrap_script_delivers_via_ipc_callback() {
+    fn test_wrap_script_uses_ipc_callback_delivery() {
         let script = EvalEngine::wrap_script(7, "document.title");
         assert!(
             script.contains("__TAURI_INTERNALS__.invoke('plugin:pilot|__callback'"),
-            "wrap must deliver results via the __callback IPC command (#110/#126); got: {script}"
+            "wrapped script must send eval results through __callback IPC; got: {script}"
         );
         assert!(script.contains("{id:7,result:"));
         assert!(script.contains("{id:7,error:"));
         assert!(
             !script.contains("return {id:7,result:"),
-            "wrap must not depend on a native eval completion result; got: {script}"
+            "wrapped script must not return a native eval completion payload; got: {script}"
         );
     }
 
