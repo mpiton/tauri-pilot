@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-05
+
 ### Fixed
 
 - Restore eval-based commands on macOS headless CI runners by delivering eval
@@ -487,7 +489,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
 [#62]: https://github.com/mpiton/tauri-pilot/pull/62
 [#63]: https://github.com/mpiton/tauri-pilot/pull/63
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/mpiton/tauri-pilot/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mpiton/tauri-pilot/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mpiton/tauri-pilot/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/mpiton/tauri-pilot/compare/v0.5.1...v0.5.2
