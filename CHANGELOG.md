@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore eval-based commands on macOS headless CI runners by delivering eval
+  results through the existing `__callback` IPC command on every platform instead
+  of relying on the native `WKWebView` completion handler, which may never fire
+  without an interactive GUI session. [#126]
+
 ## [0.7.0] - 2026-05-30
 
 ### Added
