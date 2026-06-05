@@ -111,7 +111,7 @@ pub(crate) enum Command {
         #[arg(long)]
         args: Option<String>,
     },
-    /// Capture a screenshot (PNG).
+    /// Capture a full-page screenshot (PNG).
     Screenshot {
         path: Option<PathBuf>,
         #[arg(long)]

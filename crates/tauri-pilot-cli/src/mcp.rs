@@ -877,7 +877,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "screenshot",
-            description: "Capture the WebView or an element selector as a PNG data URL.",
+            description: "Capture the full page or an element selector as a PNG data URL.",
             schema: selector_schema,
             read_only: true,
             destructive: false,

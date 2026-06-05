@@ -1073,7 +1073,17 @@
     if (typeof htmlToImage === "undefined" || !htmlToImage.toPng) {
       throw new Error("html-to-image library not loaded. Bundle it into bridge.js for screenshot support.");
     }
-    var dataUrl = await htmlToImage.toPng(el, { pixelRatio: 1 });
+    var renderOptions = { pixelRatio: 1 };
+    if (!selector) {
+      // html-to-image sizes the capture from clientWidth/clientHeight, which
+      // for documentElement is the viewport — the render always starts at the
+      // document origin, so anything below the fold is silently cropped
+      // (#129). Pass the full scroll dimensions to capture the whole page.
+      var body = document.body;
+      renderOptions.width = Math.max(el.scrollWidth || 0, body ? body.scrollWidth || 0 : 0);
+      renderOptions.height = Math.max(el.scrollHeight || 0, body ? body.scrollHeight || 0 : 0);
+    }
+    var dataUrl = await htmlToImage.toPng(el, renderOptions);
     return dataUrl;
   }
 
