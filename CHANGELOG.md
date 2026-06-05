@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   html-to-image sized the render from the viewport and always started at the
   document origin, so the PNG showed the top of the page regardless of scroll
   position and silently dropped everything below the fold. [#129]
+- Scroll the source element into view before an offset drag. `drag --offset`
+  resolves the drop point with `elementFromPoint`, which is viewport-bound, so
+  a source outside the visible viewport failed with the misleading error
+  "No element at offset (x,y)". The bridge now centers the source in the
+  viewport first, and the residual errors name the actual cause (drop point
+  outside the viewport vs. no element at the computed point). [#130]
 
 ## [0.7.0] - 2026-05-30
 
@@ -527,3 +533,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#126]: https://github.com/mpiton/tauri-pilot/issues/126
 [#128]: https://github.com/mpiton/tauri-pilot/issues/128
 [#129]: https://github.com/mpiton/tauri-pilot/issues/129
+[#130]: https://github.com/mpiton/tauri-pilot/issues/130
