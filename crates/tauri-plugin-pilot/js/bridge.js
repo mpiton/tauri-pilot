@@ -652,10 +652,34 @@
       endX = targetRect.left + targetRect.width / 2;
       endY = targetRect.top + targetRect.height / 2;
     } else if (params.offset) {
-      endX = startX + (params.offset.x || 0);
-      endY = startY + (params.offset.y || 0);
+      // elementFromPoint below is viewport-bound: a start point outside the
+      // viewport would make the lookup miss (#130). Scroll the source into
+      // view first, like a user would, then recompute the start point.
+      // "instant" so a page-level `scroll-behavior: smooth` cannot defer the
+      // scroll past the synchronous rect recompute.
+      var docEl = document.documentElement;
+      var viewportWidth = docEl.clientWidth;
+      var viewportHeight = docEl.clientHeight;
+      if (startX < 0 || startY < 0 || startX >= viewportWidth || startY >= viewportHeight) {
+        source.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+        sourceRect = source.getBoundingClientRect();
+        startX = sourceRect.left + sourceRect.width / 2;
+        startY = sourceRect.top + sourceRect.height / 2;
+      }
+      var offsetX = params.offset.x || 0;
+      var offsetY = params.offset.y || 0;
+      endX = startX + offsetX;
+      endY = startY + offsetY;
       dropTarget = document.elementFromPoint(endX, endY);
-      if (!dropTarget) throw new Error("No element at offset (" + params.offset.x + "," + params.offset.y + ")");
+      if (!dropTarget) {
+        var pointLabel = "(" + Math.round(endX) + "," + Math.round(endY) + ")";
+        if (endX < 0 || endY < 0 || endX >= viewportWidth || endY >= viewportHeight) {
+          throw new Error("Drop point " + pointLabel + " is outside the viewport (" +
+            viewportWidth + "x" + viewportHeight + ") — reduce the offset");
+        }
+        throw new Error("No element at drop point " + pointLabel +
+          " for offset (" + offsetX + "," + offsetY + ")");
+      }
     } else {
       throw new Error("drag requires target or offset");
     }

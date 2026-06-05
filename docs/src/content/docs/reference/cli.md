@@ -521,6 +521,8 @@ tauri-pilot drag <source> [target] [OPTIONS]
 |--------|-------------|
 | `--offset <X,Y>` | Drag by pixel offset instead of to an element (mutually exclusive with `[target]`) |
 
+With `--offset`, the drop point is resolved with `elementFromPoint`, which only hits elements inside the visible viewport. If the source element's centre — the drag start point — is outside the viewport, the bridge scrolls the element into view (centered) before computing coordinates. The offset itself must still land inside the viewport — an offset larger than the visible area fails with a `Drop point ... is outside the viewport` error.
+
 **Examples:**
 
 ```bash
