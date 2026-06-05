@@ -18,7 +18,7 @@ pub(crate) enum EvalError {
 
 type PendingMap = HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>;
 
-/// Engine for executing JS in a `WebView` and resolving native eval callback results.
+/// Engine for executing JS in a `WebView` and resolving eval results delivered via the `__callback` IPC command.
 ///
 /// The core ADR-001 pattern: wrap script in try/catch + return a callback payload,
 /// await the result on a oneshot channel with timeout.
@@ -69,7 +69,7 @@ impl EvalEngine {
         (id, rx)
     }
 
-    /// Resolve a pending eval by ID from a `WebView` eval callback payload.
+    /// Resolve a pending eval by ID from a `__callback` IPC payload.
     pub fn resolve(&self, id: u64, result: Result<serde_json::Value, String>) {
         let sender = self
             .pending

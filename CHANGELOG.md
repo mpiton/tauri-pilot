@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results through the existing `__callback` IPC command on every platform instead
   of relying on the native `WKWebView` completion handler, which may never fire
   without an interactive GUI session. [#126]
+- Update two stale `EvalEngine` doc comments that still described the removed
+  native eval callback model; eval results are now documented as delivered via
+  the `__callback` IPC command on every platform. [#128]
 
 ## [0.7.0] - 2026-05-30
 
@@ -517,3 +520,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#115]: https://github.com/mpiton/tauri-pilot/issues/115
 [#120]: https://github.com/mpiton/tauri-pilot/issues/120
 [#121]: https://github.com/mpiton/tauri-pilot/issues/121
+[#126]: https://github.com/mpiton/tauri-pilot/issues/126
+[#128]: https://github.com/mpiton/tauri-pilot/issues/128
