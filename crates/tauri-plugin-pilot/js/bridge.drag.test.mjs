@@ -107,8 +107,8 @@ function loadBridge({ elements = {}, elementFromPoint } = {}) {
 }
 
 test("drag with offset scrolls a below-fold source into view before resolving the drop point", () => {
-  // Source centre starts at (110,1510), far below the 700px viewport. After
-  // scrollIntoView the centre lands at (110,350); offset (130,0) puts the drop
+  // Source center starts at (110,1510), far below the 700px viewport. After
+  // scrollIntoView the center lands at (110,350); offset (130,0) puts the drop
   // point at (240,350).
   const source = makeElement(rect(100, 1500, 20, 20), {
     visibleRect: rect(100, 340, 20, 20),
@@ -142,7 +142,7 @@ test("drag with offset scrolls a below-fold source into view before resolving th
 });
 
 test("drag with offset scrolls an above-viewport source into view", () => {
-  // Source centre starts at (110,-40), above the fold.
+  // Source center starts at (110,-40), above the fold.
   const source = makeElement(rect(100, -50, 20, 20), {
     visibleRect: rect(100, 340, 20, 20),
   });
@@ -173,9 +173,9 @@ test("drag with offset does not scroll a fully visible source", () => {
   assert.deepEqual(fromPointCalls, [{ x: 240, y: 110 }]);
 });
 
-test("drag with offset does not scroll a source wider than the viewport when its centre is visible", () => {
+test("drag with offset does not scroll a source wider than the viewport when its center is visible", () => {
   // rect spills past both horizontal edges (canvas/timeline case) but the
-  // centre (400,110) — the actual start point — is inside the 800x700
+  // center (400,110) — the actual start point — is inside the 800x700
   // viewport, so scrolling would only move a usable start point around.
   const source = makeElement(rect(-100, 100, 1000, 20));
   const dropTarget = makeElement(rect(500, 80, 100, 100));
