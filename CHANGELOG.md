@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update two stale `EvalEngine` doc comments that still described the removed
   native eval callback model; eval results are now documented as delivered via
   the `__callback` IPC command on every platform. [#128]
+- Capture the full document height in `screenshot` without `--selector`.
+  html-to-image sized the render from the viewport and always started at the
+  document origin, so the PNG showed the top of the page regardless of scroll
+  position and silently dropped everything below the fold. [#129]
 
 ## [0.7.0] - 2026-05-30
 
@@ -522,3 +526,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#121]: https://github.com/mpiton/tauri-pilot/issues/121
 [#126]: https://github.com/mpiton/tauri-pilot/issues/126
 [#128]: https://github.com/mpiton/tauri-pilot/issues/128
+[#129]: https://github.com/mpiton/tauri-pilot/issues/129

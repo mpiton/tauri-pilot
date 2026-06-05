@@ -820,11 +820,18 @@ tauri-pilot ipc create_pr --args '{"title":"Fix bug","branch":"fix/issue-42"}'
 
 ### `screenshot`
 
-Capture the current WebView as a PNG using the injected `html-to-image` bridge.
+Capture the full page as a PNG using the injected `html-to-image` bridge.
 
 ```bash
 tauri-pilot screenshot [path] [OPTIONS]
 ```
+
+Without `--selector`, the capture covers the whole document height, not just
+the visible viewport. The bridge serializes the DOM to render it, so the
+current scroll position is not reflected in the image — what you get is the
+entire page from the top. Use `--selector` to capture a single element
+(works for elements below the fold too). For a pixel-exact capture of the
+native window, use `screenshot_native`.
 
 **Arguments:**
 
