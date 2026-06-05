@@ -64,7 +64,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let identifier = sanitize_identifier(&app.config().identifier);
                 let socket_path = server::socket_path(&identifier);
 
-                let eval_fn = make_eval_fn(app, engine.clone());
+                let eval_fn = make_eval_fn(app);
                 let list_fn = make_list_fn(app);
                 let focus_fn = make_focus_fn(app);
 
@@ -142,7 +142,7 @@ fn sanitize_identifier(raw: &str) -> String {
 /// If `window` is `Some(label)`, targets that specific window (error if not found).
 /// If `window` is `None`, tries "main" first then falls back to the first available window.
 #[cfg(all(any(unix, windows), debug_assertions))]
-fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>, engine: EvalEngine) -> EvalFn {
+fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
     let handle = app.clone();
     Arc::new(move |window: Option<&str>, script: String| {
         let target = if let Some(label) = window {
@@ -159,142 +159,11 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>, engine: EvalEngine
                 .cloned()
                 .ok_or_else(|| "No webview available".to_owned())?
         };
-        #[cfg(target_os = "macos")]
-        {
-            eval_with_webkit_callback(&target, script, engine.clone())
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // Linux (WebKitGTK) and Windows (WebView2) do not resolve a Promise
-            // returned from eval, so results come back via the `__callback` IPC
-            // command (see EvalEngine::wrap_script). This eval is fire-and-forget;
-            // the IPC handler resolves the pending request, not this closure.
-            let _ = &engine;
-            target.eval(&script).map_err(|e| e.to_string())
-        }
+        // Results come back via the `__callback` IPC command (see
+        // EvalEngine::wrap_script). This eval is fire-and-forget; the IPC handler
+        // resolves the pending request, not this closure.
+        target.eval(&script).map_err(|e| e.to_string())
     })
-}
-
-#[cfg(all(target_os = "macos", debug_assertions))]
-fn eval_with_webkit_callback<R: tauri::Runtime>(
-    target: &tauri::WebviewWindow<R>,
-    script: String,
-    engine: EvalEngine,
-) -> Result<(), String> {
-    let eval_id = extract_eval_callback_id(&script);
-    target
-        // SAFETY: `platform.inner()` returns the WKWebView pointer owned by wry
-        // and valid for this `with_webview` closure. `RcBlock` allocates the
-        // completion block on the heap, and WebKit copies it so the callback
-        // stays alive after this scope returns.
-        .with_webview(move |platform| unsafe {
-            use objc2::{AnyThread, runtime::AnyObject};
-            use objc2_foundation::{
-                NSError, NSJSONSerialization, NSJSONWritingOptions, NSString, NSUTF8StringEncoding,
-            };
-            use objc2_web_kit::WKWebView;
-
-            let webview: &WKWebView = &*platform.inner().cast();
-            let handler =
-                block2::RcBlock::new(move |value: *mut AnyObject, error: *mut NSError| {
-                    if !error.is_null() {
-                        resolve_native_eval_error(
-                            &engine,
-                            eval_id,
-                            "native WebKit eval callback returned an error",
-                        );
-                        return;
-                    }
-
-                    if value.is_null() {
-                        resolve_native_eval_error(
-                            &engine,
-                            eval_id,
-                            "native WebKit eval callback returned no value",
-                        );
-                        return;
-                    }
-
-                    let Some(json) = NSJSONSerialization::dataWithJSONObject_options_error(
-                        &*value,
-                        NSJSONWritingOptions::FragmentsAllowed,
-                    )
-                    .ok()
-                    .and_then(|data| {
-                        NSString::initWithData_encoding(
-                            NSString::alloc(),
-                            &data,
-                            NSUTF8StringEncoding,
-                        )
-                    }) else {
-                        resolve_native_eval_error(
-                            &engine,
-                            eval_id,
-                            "native WebKit eval callback result was not JSON serializable",
-                        );
-                        return;
-                    };
-                    let payload = json.to_string();
-                    handle_eval_callback_payload(&engine, &payload);
-                });
-
-            webview
-                .evaluateJavaScript_completionHandler(&NSString::from_str(&script), Some(&handler));
-        })
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(all(target_os = "macos", debug_assertions))]
-fn extract_eval_callback_id(script: &str) -> Option<u64> {
-    script
-        .split("return {id:")
-        .nth(1)?
-        .split_once(',')?
-        .0
-        .parse()
-        .ok()
-}
-
-#[cfg(all(target_os = "macos", debug_assertions))]
-fn resolve_native_eval_error(engine: &EvalEngine, id: Option<u64>, message: &str) {
-    if let Some(id) = id {
-        handler::handle_callback(engine, id, None, Some(message.to_owned()));
-    } else {
-        tracing::warn!(
-            message,
-            "native WebKit eval callback failed before resolving an id"
-        );
-    }
-}
-
-#[cfg(all(target_os = "macos", debug_assertions))]
-fn handle_eval_callback_payload(engine: &EvalEngine, payload: &str) {
-    let parsed = serde_json::from_str::<serde_json::Value>(payload)
-        .ok()
-        .and_then(|value| {
-            if let Some(inner) = value.as_str() {
-                serde_json::from_str::<serde_json::Value>(inner).ok()
-            } else {
-                Some(value)
-            }
-        });
-    let Some(value) = parsed else {
-        tracing::warn!(payload, "eval callback returned non-json payload");
-        return;
-    };
-    let Some(id) = value.get("id").and_then(serde_json::Value::as_u64) else {
-        tracing::warn!(payload = %value, "eval callback payload missing id");
-        return;
-    };
-    let result = value
-        .get("result")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned);
-    let error = value
-        .get("error")
-        .and_then(serde_json::Value::as_str)
-        .map(ToOwned::to_owned);
-    handler::handle_callback(engine, id, result, error);
 }
 
 /// Create a focus function that requests OS focus for a webview window.

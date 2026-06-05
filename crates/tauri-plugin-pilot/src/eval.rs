@@ -87,19 +87,16 @@ impl EvalEngine {
         }
     }
 
-    /// Wrap a user script in the ADR-001 callback pattern for Linux/Windows.
+    /// Wrap a user script in the ADR-001 callback pattern.
     ///
-    /// `WebKitGTK` and `WebView2` do not resolve a Promise returned from a webview
-    /// eval — the eval callback fires with the unresolved Promise object, so a
-    /// return-value delivery never lands and the eval times out (#110). Instead
-    /// the script `await`s the result and delivers it back through the
+    /// `WebView` eval result callbacks are not reliable across platforms and CI
+    /// modes, so the script `await`s the result and delivers it back through the
     /// `__callback` IPC command, which dispatches fine from eval-injected code.
     ///
     /// Normalizes `undefined` results to `null` (string `"null"`) so Tauri does
     /// not drop the `result` field — otherwise a void expression (e.g.,
     /// `element.click()`) would cause the handler to log a bogus "neither
     /// result nor error" warning (#48).
-    #[cfg(not(target_os = "macos"))]
     #[must_use]
     pub fn wrap_script(id: u64, script: &str) -> String {
         format!(
@@ -108,23 +105,6 @@ impl EvalEngine {
              {{id:{id},result:__r===undefined?'null':JSON.stringify(__r)}});\
              }}catch(__e){{await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
              {{id:{id},error:(__e&&__e.message)||String(__e)}});}}}})();"
-        )
-    }
-
-    /// Wrap a user script so the native macOS `WKWebView` completion handler
-    /// receives a tagged payload as the eval return value (#108).
-    ///
-    /// macOS reads the script's return value via `evaluateJavaScript`, so the
-    /// wrapper returns `{id, result}` directly rather than routing through IPC.
-    /// `undefined` is normalized to the string `"null"` for the same reason as
-    /// the non-macOS variant (#48).
-    #[cfg(target_os = "macos")]
-    #[must_use]
-    pub fn wrap_script(id: u64, script: &str) -> String {
-        format!(
-            "(async()=>{{try{{let __r=await({script});\
-             return {{id:{id},result:__r===undefined?'null':JSON.stringify(__r)}};\
-             }}catch(__e){{return {{id:{id},error:(__e&&__e.message)||String(__e)}};}}}})();"
         )
     }
 
@@ -243,36 +223,21 @@ mod tests {
         assert!(script.contains("catch"));
     }
 
-    // #110: Linux (WebKitGTK) and Windows (WebView2) do not resolve a Promise
-    // returned from a webview eval — the eval callback fires with the unresolved
-    // Promise, so a return-value delivery never lands and every eval times out.
-    // The wrapped script must therefore `await` the result and deliver it back
-    // through the `__callback` IPC command, which works from eval-injected code.
-    #[cfg(not(target_os = "macos"))]
+    // #110/#126: The wrapped script must await the JavaScript result and send it
+    // through `__callback`, avoiding native eval result callbacks entirely.
     #[test]
-    fn test_wrap_script_delivers_via_ipc_callback_on_non_macos() {
+    fn test_wrap_script_uses_ipc_callback_delivery() {
         let script = EvalEngine::wrap_script(7, "document.title");
         assert!(
             script.contains("__TAURI_INTERNALS__.invoke('plugin:pilot|__callback'"),
-            "non-macOS wrap must deliver results via the __callback IPC command (#110); got: {script}"
+            "wrapped script must send eval results through __callback IPC; got: {script}"
         );
         assert!(script.contains("{id:7,result:"));
         assert!(script.contains("{id:7,error:"));
-    }
-
-    // macOS keeps the #108 native WKWebView completion-handler path, which reads
-    // the script's return value, so the wrapper returns the tagged payload and
-    // must not depend on the IPC bridge.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn test_wrap_script_returns_payload_for_native_callback_on_macos() {
-        let script = EvalEngine::wrap_script(7, "document.title");
         assert!(
-            script.contains("return {id:7,result:"),
-            "macOS wrap must return the tagged payload for the native callback; got: {script}"
+            !script.contains("return {id:7,result:"),
+            "wrapped script must not return a native eval completion payload; got: {script}"
         );
-        assert!(!script.contains("__callback"));
-        assert!(!script.contains("__TAURI_INTERNALS__"));
     }
 
     #[test]
