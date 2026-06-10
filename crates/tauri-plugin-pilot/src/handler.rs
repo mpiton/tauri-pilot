@@ -82,6 +82,19 @@ fn extract_window(
     }
 }
 
+/// Merge the plugin's compile-time version into a JSON object response.
+///
+/// No-op when the value is not an object. Single source for the
+/// `plugin_version` field so `ping` and `state` report the same value (#135).
+fn inject_plugin_version(result: &mut serde_json::Value) {
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert(
+            "plugin_version".to_owned(),
+            serde_json::json!(env!("CARGO_PKG_VERSION")),
+        );
+    }
+}
+
 /// Dispatch a JSON-RPC method call to the appropriate handler.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub(crate) async fn dispatch(
@@ -105,10 +118,11 @@ pub(crate) async fn dispatch(
     let win = window.as_deref();
 
     let result = match method {
-        "ping" => Ok(serde_json::json!({
-            "status": "ok",
-            "plugin_version": env!("CARGO_PKG_VERSION"),
-        })),
+        "ping" => {
+            let mut result = serde_json::json!({"status": "ok"});
+            inject_plugin_version(&mut result);
+            Ok(result)
+        }
         "windows.list" => {
             if let Some(f) = list_fn {
                 Ok(f())
@@ -148,12 +162,7 @@ pub(crate) async fn dispatch(
         "state" => {
             let mut result =
                 handle_eval_method("state", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await?;
-            if let Some(obj) = result.as_object_mut() {
-                obj.insert(
-                    "plugin_version".to_owned(),
-                    serde_json::json!(env!("CARGO_PKG_VERSION")),
-                );
-            }
+            inject_plugin_version(&mut result);
             Ok(result)
         }
         // `wait` and `watch` both honor a JS-side `options.timeout`; the Rust
