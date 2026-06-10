@@ -406,7 +406,7 @@ pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error>
     }
     .map_err(Error::from)?;
 
-    tracing::info!(path = %pipe_path.display(), "tauri-pilot named pipe listening");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), path = %pipe_path.display(), "tauri-pilot named pipe listening");
 
     let identifier = pipe_path
         .file_name()
@@ -589,7 +589,12 @@ mod tests {
 
         assert_eq!(resp.id, serde_json::json!(1));
         assert!(resp.error.is_none());
-        assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
+        let result = resp.result.expect("ping returns a result");
+        assert_eq!(result["status"], serde_json::json!("ok"));
+        assert_eq!(
+            result["plugin_version"],
+            serde_json::json!(env!("CARGO_PKG_VERSION"))
+        );
 
         handle.abort();
         let _ = handle.await;

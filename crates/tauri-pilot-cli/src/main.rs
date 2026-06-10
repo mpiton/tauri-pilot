@@ -103,6 +103,7 @@ async fn main() -> Result<()> {
         None
     };
     let is_screenshot = matches!(args.command, Command::Screenshot { .. });
+    let is_ping = matches!(args.command, Command::Ping);
     // Capture output kind before command is consumed by run_command
     let output_kind = OutputKind::from(&args.command);
     let result = if is_screenshot && !args.json && std::io::stdout().is_terminal() {
@@ -127,6 +128,15 @@ async fn main() -> Result<()> {
                 crate::style::success(&format!("Saved to {}", path.display()))
             );
         }
+        return Ok(());
+    }
+
+    // `ping` doubles as a version handshake: surface the plugin version baked
+    // into the running app alongside the CLI version and warn on drift, the
+    // signal that was missing when issue #135 was diagnosed. JSON output keeps
+    // the raw `plugin_version` field instead.
+    if is_ping && !args.json {
+        report_ping(&result);
         return Ok(());
     }
 
@@ -211,6 +221,47 @@ fn format_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) 
         OutputKind::Replay | OutputKind::Text => output::format_text(result),
     }
     Ok(())
+}
+
+/// Print the `ping` version handshake: the plugin version embedded in the
+/// running app, the CLI version, and a drift warning when they disagree.
+fn report_ping(result: &Value) {
+    let (summary, warning) = diagnose_versions(
+        env!("CARGO_PKG_VERSION"),
+        result.get("plugin_version").and_then(Value::as_str),
+    );
+    println!("{}", crate::style::success(&summary));
+    if let Some(warning) = warning {
+        eprintln!("{}", crate::style::warn(&warning));
+    }
+}
+
+/// Build the human-facing `ping` summary line and an optional version-drift
+/// warning.
+///
+/// Since 0.7.1 the plugin reports its own compile-time version in the ping
+/// response. A response without that field comes from a plugin <= 0.7.0, which
+/// predates the macOS native-eval fix (issue #135), so the CLI points the user
+/// at an upgrade.
+fn diagnose_versions(cli: &str, plugin: Option<&str>) -> (String, Option<String>) {
+    match plugin {
+        Some(p) if p == cli => (format!("Connected. Plugin and CLI both {p}."), None),
+        Some(p) => (
+            format!("Connected. Plugin {p}, CLI {cli}."),
+            Some(format!(
+                "Plugin {p} and CLI {cli} differ. Rebuild your app against \
+                 tauri-plugin-pilot {cli} (or match the CLI) so they stay in sync."
+            )),
+        ),
+        None => (
+            format!("Connected. Plugin <= 0.7.0, CLI {cli}."),
+            Some(format!(
+                "This plugin predates version reporting (<= 0.7.0). If eval fails \
+                 on macOS, bump tauri-plugin-pilot to >= {cli} and rebuild the app \
+                 (issue #135)."
+            )),
+        ),
+    }
 }
 
 async fn follow_logs(
@@ -1527,6 +1578,31 @@ fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn test_diagnose_versions_match_has_no_warning() {
+        let (line, warning) = diagnose_versions("0.7.1", Some("0.7.1"));
+        assert!(line.contains("0.7.1"));
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn test_diagnose_versions_mismatch_warns() {
+        let (line, warning) = diagnose_versions("0.7.1", Some("0.7.0"));
+        assert!(line.contains("0.7.0"));
+        assert!(line.contains("0.7.1"));
+        let warning = warning.expect("a version mismatch must warn");
+        assert!(warning.contains("0.7.0"));
+        assert!(warning.contains("0.7.1"));
+    }
+
+    #[test]
+    fn test_diagnose_versions_absent_plugin_warns_pre_introspection() {
+        let (line, warning) = diagnose_versions("0.7.1", None);
+        assert!(line.contains("0.7.1"));
+        let warning = warning.expect("an absent plugin version must warn");
+        assert!(warning.contains("135"));
+    }
 
     #[test]
     fn test_mime_from_ext_png() {

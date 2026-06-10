@@ -82,7 +82,30 @@ cargo tauri dev
 
 # Terminal 2 — verify the plugin is reachable
 tauri-pilot ping
-# Expected output: pong
+# Connected. Plugin and CLI both 0.7.1.
 ```
 
-If you see `pong`, the plugin is running and the CLI can reach it. You are ready to start using the snapshot/action workflow.
+`ping` reports the plugin version compiled into your app alongside the CLI version. When they match, you're ready to start using the snapshot/action workflow.
+
+## 7. Keep the plugin and CLI in sync
+
+The plugin is a Rust dependency compiled into your app. The CLI is a separate binary. They're versioned independently, so they drift apart if you update one and not the other. `ping` surfaces a drift:
+
+```bash
+tauri-pilot ping
+# Connected. Plugin 0.7.0, CLI 0.7.1.
+# Plugin 0.7.0 and CLI 0.7.1 differ. Rebuild your app against tauri-plugin-pilot 0.7.1 ...
+```
+
+If `ping` reports `Plugin <= 0.7.0`, or eval commands fail on macOS with `native WebKit eval callback returned an error`, the plugin baked into your app predates the unified eval path (removed in 0.7.1). Update it and rebuild:
+
+```bash
+# git dependency (the setup above): pull the latest commit
+cargo update -p tauri-plugin-pilot
+
+# or pin a released version in src-tauri/Cargo.toml:
+#   tauri-plugin-pilot = "0.7.1"
+
+# then rebuild
+cargo tauri dev
+```

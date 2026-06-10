@@ -2,7 +2,11 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "tauri-pilot", about = "Interactive testing CLI for Tauri apps")]
+#[command(
+    name = "tauri-pilot",
+    version,
+    about = "Interactive testing CLI for Tauri apps"
+)]
 pub(crate) struct Cli {
     /// Socket path (auto-detected if omitted).
     #[arg(long, env = "TAURI_PILOT_SOCKET")]
