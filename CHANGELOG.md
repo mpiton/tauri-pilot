@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tauri-pilot --version` prints the CLI version. The flag was missing, so a
+  caller had no way to confirm which build they were running. [#135]
+- The plugin reports its own version in the `ping` response, and
+  `tauri-pilot ping` now shows the plugin and CLI versions together and warns
+  when they drift. A response without a `plugin_version` field comes from a
+  plugin <= 0.7.0, which predates the macOS native-eval fix, so the CLI points
+  at an upgrade. [#135]
+- `state` output includes the plugin's `plugin_version`. [#135]
+- The plugin logs its version when the socket or named pipe starts listening,
+  so the running plugin version shows up in the app's logs. [#135]
+
 ## [0.7.1] - 2026-06-05
 
 ### Fixed

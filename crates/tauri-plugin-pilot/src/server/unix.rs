@@ -137,7 +137,7 @@ pub fn bind(
     // Must be non-blocking for tokio conversion
     listener.set_nonblocking(true)?;
 
-    tracing::info!(path = %socket_path.display(), "tauri-pilot socket listening");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), path = %socket_path.display(), "tauri-pilot socket listening");
     let inode = inode_from_raw_fd(listener.as_raw_fd());
 
     Ok((
@@ -281,7 +281,12 @@ mod tests {
 
         assert_eq!(resp.id, serde_json::json!(1));
         assert!(resp.error.is_none());
-        assert_eq!(resp.result, Some(serde_json::json!({"status": "ok"})));
+        let result = resp.result.expect("ping returns a result");
+        assert_eq!(result["status"], serde_json::json!("ok"));
+        assert_eq!(
+            result["plugin_version"],
+            serde_json::json!(env!("CARGO_PKG_VERSION"))
+        );
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);

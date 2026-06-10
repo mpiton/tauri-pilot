@@ -406,7 +406,7 @@ pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error>
     }
     .map_err(Error::from)?;
 
-    tracing::info!(path = %pipe_path.display(), "tauri-pilot named pipe listening");
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), path = %pipe_path.display(), "tauri-pilot named pipe listening");
 
     let identifier = pipe_path
         .file_name()

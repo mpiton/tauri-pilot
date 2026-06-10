@@ -105,7 +105,10 @@ pub(crate) async fn dispatch(
     let win = window.as_deref();
 
     let result = match method {
-        "ping" => Ok(serde_json::json!({"status": "ok"})),
+        "ping" => Ok(serde_json::json!({
+            "status": "ok",
+            "plugin_version": env!("CARGO_PKG_VERSION"),
+        })),
         "windows.list" => {
             if let Some(f) = list_fn {
                 Ok(f())
@@ -135,9 +138,23 @@ pub(crate) async fn dispatch(
             data: None,
         }),
         "click" | "fill" | "type" | "select" | "check" | "scroll" | "drag" | "drop" | "text"
-        | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title" | "state"
+        | "html" | "value" | "attrs" | "eval" | "ipc" | "navigate" | "url" | "title"
         | "visible" | "count" | "checked" => {
             handle_eval_method(method, params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+        }
+        // `state` is a bridge-derived method (url/title/ready), but the dispatch
+        // merges the plugin's compile-time version into the result so a single
+        // `state` call also surfaces plugin/CLI version drift (issue #135).
+        "state" => {
+            let mut result =
+                handle_eval_method("state", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await?;
+            if let Some(obj) = result.as_object_mut() {
+                obj.insert(
+                    "plugin_version".to_owned(),
+                    serde_json::json!(env!("CARGO_PKG_VERSION")),
+                );
+            }
+            Ok(result)
         }
         // `wait` and `watch` both honor a JS-side `options.timeout`; the Rust
         // channel timeout must outlive that so the bridge can surface its own
@@ -584,8 +601,23 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_ping_returns_ok() {
         let engine = EvalEngine::new();
-        let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new()).await;
-        assert_eq!(result.expect("dispatch succeeds"), json!({"status": "ok"}));
+        let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new())
+            .await
+            .expect("dispatch succeeds");
+        assert_eq!(result["status"], json!("ok"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_ping_reports_plugin_version() {
+        // The ping response carries the plugin's own compile-time version so a
+        // caller can detect when the plugin baked into the app has drifted from
+        // the CLI (issue #135). Older plugins (<= 0.7.0) omit the field, which
+        // the CLI reads as "pre-introspection, upgrade recommended".
+        let engine = EvalEngine::new();
+        let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new())
+            .await
+            .expect("dispatch succeeds");
+        assert_eq!(result["plugin_version"], json!(env!("CARGO_PKG_VERSION")));
     }
 
     #[cfg(feature = "press")]
@@ -1483,5 +1515,39 @@ mod tests {
         .await
         .expect("dispatch should resolve via callback, not time out");
         assert_eq!(result, json!({"found": true}));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_state_injects_plugin_version() {
+        // `state` returns url/title/ready from the bridge, then the dispatch
+        // merges in the plugin's own version so callers can spot version drift
+        // from a single `state` call (issue #135).
+        let engine = EvalEngine::new();
+        let engine_clone = engine.clone();
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
+                // First register on a fresh engine has id == 1 (see eval.rs).
+                engine_clone.resolve(
+                    1,
+                    Ok(json!({"url": "http://localhost/", "title": "App", "ready": true})),
+                );
+                Ok(())
+            });
+
+        let result = dispatch(
+            "state",
+            None,
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect("dispatch succeeds");
+
+        assert_eq!(result["url"], json!("http://localhost/"));
+        assert_eq!(result["ready"], json!(true));
+        assert_eq!(result["plugin_version"], json!(env!("CARGO_PKG_VERSION")));
     }
 }
