@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Upgrade the docs site to Astro 7.1.5 (from 6.3.2), Starlight 0.41.5 and sharp
+  0.35.3, clearing all 16 open Dependabot alerts. Astro carried four XSS issues
+  and a host-header SSRF in the prerendered error page fetch; sharp inherited
+  four libvips CVEs. Refreshing the lockfile also moved the transitive
+  js-yaml (4.3.0), svgo (4.0.2), vite (8.1.5) and esbuild (0.28.1) onto patched
+  versions. Docs-only — the plugin and CLI crates are untouched.
+
 ## [0.7.2] - 2026-06-10
 
 ### Added
