@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-08-30
+
+### Changed
+
+- Upgrade `rmcp` to 3.1.4 (from 1.7). The only break reaching this codebase is
+  SEP-2322: `ServerHandler::call_tool` now returns `CallToolResponse`, converted
+  at the trait boundary so the internal helpers keep returning `CallToolResult`.
+  The MCP tool surface is unchanged. `base64` 0.23, `windows` 0.62,
+  `core-graphics` 0.25 and `serial_test` 4 move with it. [#143]
+
 ### Fixed
 
 - `drag` now performs a real pointer gesture, so it drives JS drag libraries
@@ -26,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gesture they describe instead of a flat 10 s. The result echoes
   `from`/`to`/`steps` and adds `html5DropHandled` so a caller can see whether a
   native handler claimed the drop. `ok` still means only that the gesture was
-  delivered — assert the effect.
+  delivered — assert the effect. [#142]
 
 ### Security
 
@@ -35,7 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and a host-header SSRF in the prerendered error page fetch; sharp inherited
   four libvips CVEs. Refreshing the lockfile also moved the transitive
   js-yaml (4.3.0), svgo (4.0.2), vite (8.1.5) and esbuild (0.28.1) onto patched
-  versions. Docs-only — the plugin and CLI crates are untouched.
+  versions. Docs-only — the plugin and CLI crates are untouched. [#140]
+
+- Upgrade `quick-xml` to 0.42, clearing RUSTSEC-2026-0194 (quadratic
+  duplicate-attribute check) and RUSTSEC-2026-0195 (unbounded namespace
+  allocation), both scored 7.5. The docs lockfile was refreshed again to drop
+  the vulnerable `js-yaml` and `nanoid` it still carried. `cargo audit` and
+  `npm audit` are both clean. [#143]
 
 ## [0.7.2] - 2026-06-10
 
@@ -534,7 +550,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
 [#62]: https://github.com/mpiton/tauri-pilot/pull/62
 [#63]: https://github.com/mpiton/tauri-pilot/pull/63
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/mpiton/tauri-pilot/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/mpiton/tauri-pilot/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/mpiton/tauri-pilot/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mpiton/tauri-pilot/compare/v0.6.0...v0.7.0
@@ -584,3 +601,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#129]: https://github.com/mpiton/tauri-pilot/issues/129
 [#130]: https://github.com/mpiton/tauri-pilot/issues/130
 [#135]: https://github.com/mpiton/tauri-pilot/issues/135
+[#140]: https://github.com/mpiton/tauri-pilot/pull/140
+[#142]: https://github.com/mpiton/tauri-pilot/pull/142
+[#143]: https://github.com/mpiton/tauri-pilot/pull/143
