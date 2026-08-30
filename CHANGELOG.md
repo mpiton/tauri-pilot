@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `drag` now performs a real pointer gesture, so it drives JS drag libraries
+  (dnd-kit, sortable.js, interact.js, react-dnd's mouse backend) instead of only
+  HTML5 `draggable="true"` handlers. Previously it dispatched HTML5 DragEvents
+  plus a single `mousedown` — no `mousemove` stream and no `mouseup` — which those
+  libraries cannot activate on, while still returning `ok: true`. A drag against a
+  dnd-kit app therefore reported success and did nothing, which is the worst
+  outcome for an agent asserting on it. The gesture now presses the deepest node
+  under the start point when that node is inside the source (library listeners
+  commonly sit on an inner handle, and events only bubble upward; an overlay over
+  the source is ignored), streams interpolated `pointermove`/`mousemove` events
+  hit-tested at each step, emits the HTML5 sequence as before, and releases with
+  `pointerup`/`mouseup`. Every pointer event precedes its compatibility mouse
+  event, as a browser produces them. `steps`, `stepDelayMs` and `settleMs` params
+  tune it over JSON-RPC and MCP, and the Rust-side eval timeout now covers the
+  gesture they describe instead of a flat 10 s. The result echoes
+  `from`/`to`/`steps` and adds `html5DropHandled` so a caller can see whether a
+  native handler claimed the drop. `ok` still means only that the gesture was
+  delivered — assert the effect.
+
 ### Security
 
 - Upgrade the docs site to Astro 7.1.5 (from 6.3.2), Starlight 0.41.5 and sharp

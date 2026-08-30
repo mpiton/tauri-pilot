@@ -502,7 +502,27 @@ tauri-pilot scroll bottom --ref @e4
 
 ### `drag`
 
-Drag an element to another element or by a pixel offset. Dispatches the full HTML5 drag event sequence: `mousedown` → `dragstart` → `dragleave` → `dragenter` → `dragover` → `drop` → `dragend`.
+Drag an element to another element or by a pixel offset.
+
+Two unrelated kinds of drag implementation exist, and they listen for different
+things, so `drag` emits both:
+
+- **HTML5 native drag** (`draggable="true"`) reacts to the drag event sequence:
+  `dragstart` → `dragleave` → `dragenter` → `dragover` → `drop` → `dragend`.
+- **JS drag libraries** (dnd-kit, sortable.js, interact.js, react-dnd's mouse
+  backend) never see those events. They activate on `mousedown`, then track
+  *repeated* `mousemove`/`pointermove` events — usually behind a small distance
+  threshold — and commit on `mouseup`. So `drag` presses, streams interpolated
+  moves from the source to the drop point, and releases. Each pointer event is
+  followed by its compatibility mouse event, the order a browser produces.
+
+The press targets the deepest node under the start point (`elementFromPoint`)
+rather than the resolved element, because library listeners are commonly attached
+to an inner handle or card and events only bubble upward. That node must be the
+source or inside it — when an overlay, toast or backdrop covers the start point,
+`drag` presses the resolved source instead of the thing on top of it. Moves are
+hit-tested the same way at each step, so listeners on elements between the pressed
+node and the document see them too.
 
 ```bash
 tauri-pilot drag <source> [target] [OPTIONS]
@@ -522,6 +542,19 @@ tauri-pilot drag <source> [target] [OPTIONS]
 | `--offset <X,Y>` | Drag by pixel offset instead of to an element (mutually exclusive with `[target]`) |
 
 With `--offset`, the drop point is resolved with `elementFromPoint`, which only hits elements inside the visible viewport. If the source element's center — the drag start point — is outside the viewport, the bridge scrolls the element into view (centered) before computing coordinates. The offset itself must still land inside the viewport — an offset larger than the visible area fails with a `Drop point ... is outside the viewport` error.
+
+The gesture's shape is tunable over JSON-RPC and MCP (the CLI uses the defaults):
+`steps` (default 12, clamped to 1–60) is how many move events are emitted,
+`stepDelayMs` (default 16) is the pause between them, and `settleMs` (default 250)
+is how long the bridge waits after the release so an async state update, request,
+or re-render can land before you assert. The plugin sizes its eval timeout from
+these, so a long gesture is not cut short by the default 10-second budget.
+
+`ok` reports that the gesture was **delivered**, not that the app reacted to it —
+nothing observable from outside can prove a library handled a drop. Always assert
+the expected effect afterwards. The one signal the bridge can observe is
+`html5DropHandled`, which is true when a handler called `preventDefault()` on the
+`drop` event. The result also echoes the `from`/`to` points and `steps` used.
 
 **Examples:**
 

@@ -144,7 +144,7 @@ the JavaScript do not need escaping.
 | `select` | Select a dropdown option |
 | `check` | Toggle a checkbox |
 | `scroll` | Scroll page or element |
-| `drag` | Drag element to element or by offset |
+| `drag` | Drag element to element or by offset (drives HTML5 *and* dnd-kit-style libraries) |
 | `drop` | Simulate file drop on element |
 | `text` | Get element text content |
 | `html` | Get element innerHTML |

@@ -215,6 +215,13 @@ impl PilotMcpServer {
                         params["offset"] = offset;
                     }
                 }
+                // Gesture tunables are optional; the bridge applies its own
+                // defaults and clamps when they are absent.
+                for key in ["steps", "stepDelayMs", "settleMs"] {
+                    if let Some(value) = optional_i32(&args, key)? {
+                        params[key] = json!(value);
+                    }
+                }
                 self.call_app_tool("drag", Some(params), window).await
             }
             "drop" => self.call_drop_tool(args, window).await,
@@ -1423,6 +1430,20 @@ fn drag_schema() -> Arc<JsonObject> {
                 "offset",
                 any_prop("Optional offset object such as {\"x\": 0, \"y\": 100}."),
             ),
+            (
+                "steps",
+                integer_prop("Move events to emit, 1-60 (default 12)."),
+            ),
+            (
+                "stepDelayMs",
+                integer_prop("Pause between move events in ms (default 16)."),
+            ),
+            (
+                "settleMs",
+                integer_prop(
+                    "Wait after the release in ms, for async state updates to land (default 250).",
+                ),
+            ),
         ]),
         &["source"],
     )
@@ -1948,6 +1969,64 @@ mod tests {
 
         server.await.expect("mock server task");
         let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn drag_forwards_gesture_tunables_to_the_bridge() {
+        // The docs advertise steps/stepDelayMs/settleMs over MCP; they only work
+        // if the rebuilt params object carries them through to the bridge.
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-drag-tunables-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "drag");
+            let params = request.params.expect("drag params present");
+            assert_eq!(params["steps"], json!(30));
+            assert_eq!(params["stepDelayMs"], json!(40));
+            assert_eq!(params["settleMs"], json!(1_500));
+            let response = Response::success(request.id, json!({"ok": true}));
+            let mut bytes = serde_json::to_vec(&response).expect("serialize response");
+            bytes.push(b'\n');
+            writer.write_all(&bytes).await.expect("write response");
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert("source".to_owned(), json!("@e5"));
+        args.insert("target".to_owned(), json!("@e8"));
+        args.insert("steps".to_owned(), json!(30));
+        args.insert("stepDelayMs".to_owned(), json!(40));
+        args.insert("settleMs".to_owned(), json!(1_500));
+        let result = pilot
+            .call_tool_by_name("drag", args)
+            .await
+            .expect("tool call succeeds");
+        assert_eq!(result.is_error, Some(false));
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[test]
+    fn drag_schema_declares_the_documented_tunables() {
+        let schema = drag_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("schema has properties");
+        for key in ["steps", "stepDelayMs", "settleMs"] {
+            assert!(properties.contains_key(key), "drag schema is missing {key}");
+        }
     }
 
     #[test]

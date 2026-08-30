@@ -638,7 +638,37 @@
     return { ok: true };
   }
 
-  function drag(params) {
+  // A pointer event followed by the compatibility mouse event a browser would
+  // synthesise from it — same order and same preventDefault gate as `click()`,
+  // since a cancelled pointer event suppresses its mouse counterpart. Goes
+  // through `dispatchPointerEvent`, so a WebView without the `PointerEvent`
+  // constructor still gets a pointer-typed event (a MouseEvent with
+  // pointerId/pointerType patched on) rather than nothing at all — dnd-kit's
+  // default sensor is `PointerSensor`, so that fallback is the whole point.
+  function dispatchGesturePair(node, pointerType, mouseType, x, y, buttons) {
+    var init = { clientX: x, clientY: y, buttons: buttons, view: window };
+    if (!dispatchPointerEvent(node, pointerType, init)) return false;
+    return node.dispatchEvent(new MouseEvent(mouseType, Object.assign({
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+    }, init)));
+  }
+
+  // Deepest node under a viewport point, like a real pointer. Falls back to
+  // `document` when nothing is hit-testable there.
+  function nodeAtPoint(x, y) {
+    return (document.elementFromPoint && document.elementFromPoint(x, y)) || document;
+  }
+
+  function pilotSleep(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  async function drag(params) {
     var source = resolveTarget(params.source || params);
     var sourceRect = source.getBoundingClientRect();
     var startX = sourceRect.left + sourceRect.width / 2;
@@ -684,15 +714,83 @@
       throw new Error("drag requires target or offset");
     }
 
+    // Two families of drag implementation exist and they listen for different
+    // things, so a gesture that only satisfies one silently does nothing in the
+    // other:
+    //
+    //   * HTML5 native DnD (`draggable="true"`) wants dragstart/dragover/drop.
+    //   * JS libraries (dnd-kit, sortable.js, interact.js, react-dnd's mouse
+    //     backend) never see those. They activate on mousedown and then track
+    //     *repeated* mousemove/pointermove events on `document`, usually behind a
+    //     small distance threshold, and commit on mouseup. A single mousedown with
+    //     no movement and no release cannot activate them.
+    //
+    // So emit both: a real press-move-release stream plus the HTML5 sequence.
+    var steps = Number(params.steps);
+    if (!isFinite(steps) || steps < 1) steps = 12;
+    steps = Math.min(Math.floor(steps), 60);
+    var stepDelay = Number(params.stepDelayMs);
+    if (!isFinite(stepDelay) || stepDelay < 0) stepDelay = 16;
+    var settleMs = Number(params.settleMs);
+    if (!isFinite(settleMs) || settleMs < 0) settleMs = 250;
+
     var dt = typeof DataTransfer === "function" ? new DataTransfer() : new ClipboardEvent("").clipboardData;
-    source.dispatchEvent(new MouseEvent("mousedown", { clientX: startX, clientY: startY, bubbles: true }));
+
+    // Press on the deepest node under the point, not the resolved container: a
+    // library's listeners are commonly attached to an inner handle or card, and
+    // events only bubble upward, so pressing the ancestor never reaches them.
+    var pressTarget = source;
+    if (document.elementFromPoint) {
+      var atPoint = document.elementFromPoint(startX, startY);
+      // Only a hit inside the source counts. A toast, backdrop or any overlay
+      // covering the start point would otherwise take the press, the source
+      // would never move, and `drag` would still report ok — the exact false
+      // green this action exists to remove.
+      if (atPoint && (atPoint === source || source.contains(atPoint))) pressTarget = atPoint;
+    }
+
+    dispatchGesturePair(pressTarget, "pointerdown", "mousedown", startX, startY, 1);
     source.dispatchEvent(new DragEvent("dragstart", { clientX: startX, clientY: startY, dataTransfer: dt, bubbles: true }));
+
+    // Each move targets the node under the point. Dispatching on `document`
+    // instead would give the event a propagation path of `[window, document]`
+    // and nothing else, so any listener on an element between the pressed node
+    // and the document never fires — React 17+ delegates on its root container,
+    // not on `document`. Hit-testing costs one lookup per step and still reaches
+    // the document-level listeners libraries install, because these bubble.
+    for (var i = 1; i <= steps; i++) {
+      var moveX = startX + ((endX - startX) * i) / steps;
+      var moveY = startY + ((endY - startY) * i) / steps;
+      dispatchGesturePair(nodeAtPoint(moveX, moveY), "pointermove", "mousemove", moveX, moveY, 1);
+      // The delay spaces the moves apart, so after the last one it separates
+      // nothing and only pushes the drop sequence back.
+      if (stepDelay > 0 && i < steps) await pilotSleep(stepDelay);
+    }
+
     source.dispatchEvent(new DragEvent("dragleave", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
     dropTarget.dispatchEvent(new DragEvent("dragenter", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true, cancelable: true }));
     dropTarget.dispatchEvent(new DragEvent("dragover", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true, cancelable: true }));
-    dropTarget.dispatchEvent(new DragEvent("drop", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true, cancelable: true }));
+    // A cancelled drop event means an HTML5 handler claimed it (preventDefault).
+    var html5DropHandled = !dropTarget.dispatchEvent(
+      new DragEvent("drop", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true, cancelable: true })
+    );
     source.dispatchEvent(new DragEvent("dragend", { clientX: endX, clientY: endY, dataTransfer: dt, bubbles: true }));
-    return { ok: true };
+
+    dispatchGesturePair(nodeAtPoint(endX, endY), "pointerup", "mouseup", endX, endY, 0);
+
+    // Library drops commonly run async work (state update, request, re-render), so
+    // give it a beat before the caller asserts on the DOM.
+    if (settleMs > 0) await pilotSleep(settleMs);
+
+    // `ok` reports that the gesture was delivered — it cannot know whether the app
+    // acted on it. Assert the expected effect separately.
+    return {
+      ok: true,
+      from: { x: startX, y: startY },
+      to: { x: endX, y: endY },
+      steps: steps,
+      html5DropHandled: html5DropHandled,
+    };
   }
 
   function drop(params) {

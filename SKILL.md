@@ -97,6 +97,12 @@ Three target formats, auto-detected:
 | `drag <source> [target] [--offset X,Y]` | `drag @e5 @e8` |
 | `drop <target> --file <path>` | `drop @e3 --file ./img.png` |
 
+`drag` emits an HTML5 drag sequence *and* a real press → interpolated
+`pointermove`/`mousemove` stream → release, so it drives both native
+`draggable="true"` handlers and libraries like dnd-kit or sortable.js. Its `ok`
+means the gesture was delivered, not that the app reacted — assert the expected
+effect afterwards.
+
 ### Assertions
 
 | Command | Example |
