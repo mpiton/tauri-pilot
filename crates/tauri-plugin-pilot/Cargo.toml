@@ -37,7 +37,7 @@ enigo = { version = "0.6.1", optional = true }
 libc = "0.2.184"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Pipes",
@@ -51,11 +51,11 @@ enigo = { version = "0.6.1", features = ["wayland"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
-core-graphics = "0.24"
+core-graphics = "0.25"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
-serial_test = "3"
+serial_test = "4"
 tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [build-dependencies]
