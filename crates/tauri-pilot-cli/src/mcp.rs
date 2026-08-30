@@ -9,8 +9,8 @@ use anyhow::Result;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResult, ErrorCode, Implementation, JsonObject,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+        CallToolRequestParams, CallToolResponse, CallToolResult, ErrorCode, Implementation,
+        JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
         ToolAnnotations,
     },
     service::{MaybeSendFuture, RequestContext, RoleServer},
@@ -644,10 +644,10 @@ impl ServerHandler for PilotMcpServer {
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<CallToolResult, McpError>> + MaybeSendFuture + '_ {
+    ) -> impl Future<Output = Result<CallToolResponse, McpError>> + MaybeSendFuture + '_ {
         let name = request.name.to_string();
         let args = request.arguments.unwrap_or_default();
-        async move { self.call_tool_by_name(&name, args).await }
+        async move { self.call_tool_by_name(&name, args).await.map(Into::into) }
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
