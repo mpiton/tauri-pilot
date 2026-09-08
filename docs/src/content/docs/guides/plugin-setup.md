@@ -112,7 +112,7 @@ cargo tauri dev
 
 ## Android via ADB
 
-On macOS or Linux, follow the setup above with `default-features = false` (Android has no native `press`) and register the plugin in `src-tauri/src/lib.rs`. Start the app with `cargo tauri android dev`.
+On macOS or Linux, follow the setup above with `default-features = false` (Android has no native `press`) and register the plugin in the mobile `run()` entry point in `src-tauri/src/lib.rs`. Start the app with `cargo tauri android dev`.
 
 Connect a device or emulator through ADB, then replace `com.example.app` below with the identifier from `tauri.conf.json`:
 
