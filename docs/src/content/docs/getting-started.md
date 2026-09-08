@@ -6,6 +6,7 @@ description: Install tauri-pilot and start testing your Tauri v2 app interactive
 ## Requirements
 
 - Linux (WebKitGTK) or macOS (WebKit) — Windows planned
+- Android via [ADB](/tauri-pilot/guides/plugin-setup/#android-via-adb)
 - Tauri v2 (v1 not supported)
 - Rust 1.95.0+ (edition 2024)
 

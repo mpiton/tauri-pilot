@@ -6,6 +6,7 @@ use crate::recorder::Recorder;
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
+use std::os::unix::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UnixListener;
 
@@ -45,6 +46,7 @@ fn inode_from_raw_fd(fd: std::os::unix::io::RawFd) -> u64 {
 }
 
 /// Returns true if `path` is a directory owned by the current user with no group/world permissions.
+#[cfg(not(target_os = "android"))]
 fn is_private_dir(path: &std::path::Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     match std::fs::metadata(path) {
@@ -59,6 +61,7 @@ fn is_private_dir(path: &std::path::Path) -> bool {
 
 /// Core implementation — accepts the XDG value directly so tests can call it without mutating
 /// the process environment.
+#[cfg(not(target_os = "android"))]
 fn socket_dir_from(xdg: Option<std::ffi::OsString>) -> std::path::PathBuf {
     if let Some(val) = xdg.filter(|v| !v.is_empty()) {
         let path = std::path::PathBuf::from(&val);
@@ -76,13 +79,21 @@ fn socket_dir_from(xdg: Option<std::ffi::OsString>) -> std::path::PathBuf {
 /// Returns the directory for the socket file.
 /// Prefers `$XDG_RUNTIME_DIR` when it is a private directory (owned by current user, no
 /// group/world access). Falls back to `/tmp` with a warning if the directory is not private.
+#[cfg(not(target_os = "android"))]
 fn socket_dir() -> std::path::PathBuf {
     socket_dir_from(std::env::var_os("XDG_RUNTIME_DIR"))
 }
 
-/// Build the full socket path for the given app identifier.
-pub fn socket_path(identifier: &str) -> std::path::PathBuf {
-    socket_dir().join(format!("tauri-pilot-{identifier}.sock"))
+/// Android uses an abstract address; other Unix platforms use a filesystem path.
+pub fn socket_address(identifier: &str) -> std::io::Result<SocketAddr> {
+    let name = format!("tauri-pilot-{identifier}.sock");
+    #[cfg(target_os = "android")]
+    {
+        use std::os::android::net::SocketAddrExt;
+        SocketAddr::from_abstract_name(name)
+    }
+    #[cfg(not(target_os = "android"))]
+    SocketAddr::from_pathname(socket_dir().join(name))
 }
 
 /// Bind the socket using the **std** (sync) listener so this can be called
@@ -90,10 +101,20 @@ pub fn socket_path(identifier: &str) -> std::path::PathBuf {
 ///
 /// Tries bind first; only removes stale files on `AddrInUse` after verifying
 /// no live server is listening.
-/// Returns a std listener and a [`SocketGuard`] that cleans up on drop.
+/// Abstract sockets are released by the kernel; only filesystem sockets need a guard.
 pub fn bind(
-    socket_path: &std::path::Path,
-) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
+    address: &SocketAddr,
+) -> Result<(std::os::unix::net::UnixListener, Option<SocketGuard>), Error> {
+    let Some(socket_path) = address.as_pathname() else {
+        let listener = std::os::unix::net::UnixListener::bind_addr(address)?;
+        listener.set_nonblocking(true)?;
+        tracing::info!(
+            version = env!("CARGO_PKG_VERSION"),
+            ?address,
+            "tauri-pilot socket listening"
+        );
+        return Ok((listener, None));
+    };
     // SAFETY: umask is always safe to call; we restore the old mask immediately.
     let old_mask = unsafe { libc::umask(0o177) };
     let first_bind = std::os::unix::net::UnixListener::bind(socket_path);
@@ -142,10 +163,10 @@ pub fn bind(
 
     Ok((
         listener,
-        SocketGuard {
+        Some(SocketGuard {
             path: socket_path.to_path_buf(),
             inode,
-        },
+        }),
     ))
 }
 
@@ -153,7 +174,7 @@ pub fn bind(
 /// The `_guard` is held for its `Drop` cleanup.
 pub async fn run(
     listener: std::os::unix::net::UnixListener,
-    _guard: SocketGuard,
+    _guard: Option<SocketGuard>,
     engine: EvalEngine,
     eval_fn: Option<EvalFn>,
     list_fn: Option<ListWindowsFn>,
@@ -191,16 +212,21 @@ async fn accept_loop(
             }
         };
 
-        // Verify the connecting process belongs to the same user.
+        // Authenticate kernel-provided credentials before reading requests.
         match stream.peer_cred() {
             Ok(cred) => {
                 // SAFETY: getuid() is always safe to call; it has no preconditions.
                 let my_uid = unsafe { libc::getuid() };
-                if cred.uid() != my_uid {
+                #[cfg(target_os = "android")]
+                let authorized = android_peer_allowed(cred.uid(), cred.gid(), my_uid);
+                #[cfg(not(target_os = "android"))]
+                let authorized = cred.uid() == my_uid;
+                if !authorized {
                     tracing::warn!(
                         peer_uid = cred.uid(),
-                        expected_uid = my_uid,
-                        "rejected connection from different user"
+                        peer_gid = cred.gid(),
+                        app_uid = my_uid,
+                        "rejected unauthorized Unix peer"
                     );
                     continue;
                 }
@@ -228,7 +254,14 @@ async fn accept_loop(
     }
 }
 
-#[cfg(test)]
+// Android reserves UID 0 for root and 2000 for the ADB shell. This matches
+// Chromium Android DevTools: same UID/GID, and only the app, shell or root.
+#[cfg(target_os = "android")]
+fn android_peer_allowed(uid: u32, gid: u32, app_uid: u32) -> bool {
+    uid == gid && (uid == app_uid || uid == 0 || uid == 2000)
+}
+
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::*;
     use crate::protocol::Response;
@@ -249,7 +282,8 @@ mod tests {
     }
 
     async fn start_test_server(path: &Path) -> tokio::task::JoinHandle<()> {
-        let (listener, guard) = bind(path).expect("bind test socket");
+        let address = SocketAddr::from_pathname(path).expect("test socket address");
+        let (listener, guard) = bind(&address).expect("bind test socket");
         let engine = EvalEngine::new();
         let handle = tokio::spawn(async move {
             run(listener, guard, engine, None, None, None, Recorder::new()).await;
@@ -379,7 +413,8 @@ mod tests {
     async fn test_bind_socket_has_mode_0o600() {
         use std::os::unix::fs::PermissionsExt;
         let socket = unique_socket_path();
-        let (listener, guard) = bind(&socket).expect("bind test socket");
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+        let (listener, guard) = bind(&address).expect("bind test socket");
         let meta = std::fs::metadata(&socket).expect("socket metadata");
         let mode = meta.permissions().mode() & 0o777;
         assert_eq!(

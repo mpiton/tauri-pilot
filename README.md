@@ -221,6 +221,7 @@ Use global flags before `mcp` to pin a specific app socket or window:
 ## Requirements
 
 - **Linux** (WebKitGTK), **macOS** (WebKit), or **Windows** (WebView2)
+- **Android** via [ADB](https://mpiton.github.io/tauri-pilot/guides/plugin-setup/#android-via-adb)
 - **Tauri v2** (v1 not supported)
 - **Rust 1.95.0+** (edition 2024)
 

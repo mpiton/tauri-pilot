@@ -109,3 +109,24 @@ cargo update -p tauri-plugin-pilot
 # then rebuild
 cargo tauri dev
 ```
+
+## Android via ADB
+
+On macOS or Linux, follow the setup above with `default-features = false` (Android has no native `press`) and register the plugin in `src-tauri/src/lib.rs`. Start the app with `cargo tauri android dev`.
+
+Connect a device or emulator through ADB, then replace `com.example.app` below with the identifier from `tauri.conf.json`:
+
+```sh
+pilot_dir=$(mktemp -d /tmp/tauri-pilot.XXXXXX)
+adb forward "localfilesystem:$pilot_dir/pilot.sock" \
+  localabstract:tauri-pilot-com.example.app.sock
+tauri-pilot --socket "$pilot_dir/pilot.sock" snapshot
+```
+
+Remove the forwarding when finished:
+
+```sh
+adb forward --remove "localfilesystem:$pilot_dir/pilot.sock"
+rm -f "$pilot_dir/pilot.sock"
+rmdir "$pilot_dir"
+```

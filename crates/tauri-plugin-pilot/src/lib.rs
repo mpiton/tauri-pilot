@@ -39,6 +39,7 @@ pub(crate) const BRIDGE_JS: &str = concat!(
 /// On non-Unix, non-Windows platforms or in release builds, returns a no-op plugin.
 /// In debug builds on Unix, injects the JS bridge, stores an `EvalEngine`,
 /// and starts a Unix socket server at `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` (falls back to `/tmp` if unavailable).
+/// Android uses the abstract Unix socket `tauri-pilot-{identifier}.sock`, reachable via ADB forwarding.
 /// In debug builds on Windows, starts a Named Pipe server at
 /// `\\.\pipe\tauri-pilot-{identifier}` and registers the instance under `%LOCALAPPDATA%\tauri-pilot\instances\`.
 #[must_use]
@@ -62,7 +63,6 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 app.manage(engine.clone());
 
                 let identifier = sanitize_identifier(&app.config().identifier);
-                let socket_path = server::socket_path(&identifier);
 
                 let eval_fn = make_eval_fn(app);
                 let list_fn = make_list_fn(app);
@@ -76,8 +76,9 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 // listener to tokio once it is already on the runtime.
                 #[cfg(unix)]
                 {
-                    let (listener, guard) = server::bind(&socket_path).map_err(|e| {
-                        tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
+                    let address = server::socket_address(&identifier)?;
+                    let (listener, guard) = server::bind(&address).map_err(|e| {
+                        tracing::error!(?address, "failed to bind socket: {e}");
                         e
                     })?;
                     tauri::async_runtime::spawn(server::run(
@@ -98,7 +99,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 // the context of a Tokio 1.x runtime" (#115).
                 #[cfg(windows)]
                 tauri::async_runtime::spawn(server::run(
-                    socket_path,
+                    server::socket_path(&identifier),
                     engine,
                     Some(eval_fn),
                     Some(list_fn),
