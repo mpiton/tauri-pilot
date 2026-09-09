@@ -131,12 +131,14 @@ tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", default-fe
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
 ```
 
-Start a debug build with `cargo tauri android dev`. Select the device and read the `tauri-pilot socket listening` event from the app's startup logs; for apps logging to Logcat:
+Start a debug build with `cargo tauri android dev`. Select the device and read the `tauri-pilot socket listening` event from the intended app's startup logs. For apps logging to Logcat, use the Android application ID to select its process:
 
 ```sh
 adb devices -l
 pilot_device=YOUR_DEVICE_SERIAL
-adb -s "$pilot_device" logcat -d | grep 'tauri-pilot socket listening'
+pilot_package=YOUR_ANDROID_APPLICATION_ID
+pilot_pid=$(adb -s "$pilot_device" shell pidof "$pilot_package")
+adb -s "$pilot_device" logcat -d --pid="$pilot_pid" | grep 'tauri-pilot socket listening'
 ```
 
 Copy the complete `tauri-pilot-{identifier}-{random}.sock` name into `pilot_name` below. It changes each time the app starts, so update the forwarding after a restart. Once the page has loaded:
