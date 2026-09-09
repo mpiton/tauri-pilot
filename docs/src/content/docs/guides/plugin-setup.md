@@ -141,7 +141,7 @@ pilot_pid=$(adb -s "$pilot_device" shell pidof "$pilot_package")
 adb -s "$pilot_device" logcat -d --pid="$pilot_pid" | grep 'tauri-pilot socket listening'
 ```
 
-Copy the complete `tauri-pilot-{identifier}-{random}.sock` name into `pilot_name` below. It changes each time the app starts, so update the forwarding after a restart. Once the page has loaded:
+Copy the complete `tauri-pilot-{identifier}-{random}.sock` name into `pilot_name` below. The identifier is limited to 16 characters, followed by 16 random hexadecimal digits. The name changes each time the app starts, so update the forwarding after a restart. Once the page has loaded:
 
 ```sh
 pilot_name=NAME_FROM_STARTUP_LOG
@@ -159,7 +159,7 @@ Use the same `-s "$pilot_device"` for all ADB commands when multiple devices are
 
 If forwarding succeeds but the CLI cannot connect, check `adb -s "$pilot_device" shell cat /proc/net/unix | grep tauri-pilot` and compare the name with the current startup log. The plugin only listens in debug builds.
 
-Remove the forwarding when finished:
+Remove the forwarding created above when finished:
 
 ```sh
 adb -s "$pilot_device" forward --remove "localfilesystem:$TAURI_PILOT_SOCKET"
@@ -168,4 +168,11 @@ rmdir "$pilot_dir"
 unset TAURI_PILOT_SOCKET
 ```
 
-On Linux, forwarding to a socket named `tauri-pilot-{identifier}.sock` inside your private `$XDG_RUNTIME_DIR` also enables CLI auto-discovery. Keep the runtime directory when cleaning up. Use a private directory rather than a bare `/tmp` socket, since ADB creates the host socket with its own permissions.
+On Linux, forwarding to a socket named `tauri-pilot-{identifier}.sock` inside your private `$XDG_RUNTIME_DIR` also enables CLI auto-discovery without `TAURI_PILOT_SOCKET`. For this alternative, remove only the forward and socket when finished, keeping the runtime directory:
+
+```sh
+adb -s "$pilot_device" forward --remove "localfilesystem:$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock"
+rm -f "$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock"
+```
+
+Use a private directory rather than a bare `/tmp` socket, since ADB creates the host socket with its own permissions.

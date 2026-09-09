@@ -91,19 +91,25 @@ fn socket_dir() -> std::path::PathBuf {
 pub fn socket_address(identifier: &str) -> std::io::Result<SocketAddr> {
     #[cfg(target_os = "android")]
     {
-        use std::io::Read;
         use std::os::android::net::SocketAddrExt;
 
-        let mut random = [0_u8; 16];
-        std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
-        let name = format!(
-            "tauri-pilot-{identifier}-{:032x}.sock",
-            u128::from_ne_bytes(random)
-        );
-        SocketAddr::from_abstract_name(name)
+        SocketAddr::from_abstract_name(android_socket_name(identifier)?)
     }
     #[cfg(not(target_os = "android"))]
     SocketAddr::from_pathname(socket_dir().join(format!("tauri-pilot-{identifier}.sock")))
+}
+
+#[cfg(any(target_os = "android", test))]
+fn android_socket_name(identifier: &str) -> std::io::Result<String> {
+    use std::io::Read;
+
+    let mut random = [0_u8; 8];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+    // The identifier is only a readable label; cap it to leave room for the random suffix.
+    Ok(format!(
+        "tauri-pilot-{identifier:.16}-{:016x}.sock",
+        u64::from_ne_bytes(random)
+    ))
 }
 
 /// Bind the socket using the **std** (sync) listener so this can be called
@@ -305,6 +311,18 @@ mod tests {
     use tokio::net::UnixStream;
 
     static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    #[test]
+    fn android_socket_name_fits_with_long_identifier() {
+        let name = android_socket_name(&"a".repeat(200)).expect("socket name");
+        assert!(name.len() <= 107, "abstract socket name is too long");
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::linux::net::SocketAddrExt;
+            let address = SocketAddr::from_abstract_name(name).expect("valid abstract address");
+            bind(&address).expect("bind abstract socket");
+        }
+    }
 
     #[test]
     fn android_peer_credentials() {
