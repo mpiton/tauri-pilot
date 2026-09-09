@@ -37,9 +37,10 @@ pub(crate) const BRIDGE_JS: &str = concat!(
 /// Initialize the tauri-pilot plugin.
 ///
 /// On non-Unix, non-Windows platforms or in release builds, returns a no-op plugin.
-/// In debug builds on Unix, injects the JS bridge, stores an `EvalEngine`,
+/// In debug builds on Unix other than Android, injects the JS bridge, stores an `EvalEngine`,
 /// and starts a Unix socket server at `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` (falls back to `/tmp` if unavailable).
-/// Android uses the abstract Unix socket `tauri-pilot-{identifier}.sock`, reachable via ADB forwarding.
+/// Android uses `tauri-pilot-{identifier}-{random}.sock` in the abstract namespace,
+/// reachable via ADB forwarding. The per-instance address is logged at info level.
 /// In debug builds on Windows, starts a Named Pipe server at
 /// `\\.\pipe\tauri-pilot-{identifier}` and registers the instance under `%LOCALAPPDATA%\tauri-pilot\instances\`.
 #[must_use]
@@ -76,7 +77,9 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 // listener to tokio once it is already on the runtime.
                 #[cfg(unix)]
                 {
-                    let address = server::socket_address(&identifier)?;
+                    let address = server::socket_address(&identifier).inspect_err(|e| {
+                        tracing::error!(identifier, "failed to build tauri-pilot socket address: {e}");
+                    })?;
                     let (listener, guard) = server::bind(&address).map_err(|e| {
                         tracing::error!(?address, "failed to bind socket: {e}");
                         e

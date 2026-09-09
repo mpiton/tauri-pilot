@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Android device and emulator support via ADB from Linux or macOS. Each plugin
+  instance uses an abstract socket named `tauri-pilot-{identifier}-{random}.sock`,
+  forwarded with `adb forward localfilesystem:... localabstract:...`. Connections
+  require matching UID/GID pairs for the app, root or ADB shell. [#145]
+
 ## [0.7.3] - 2026-08-30
 
 ### Changed
@@ -604,3 +611,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#140]: https://github.com/mpiton/tauri-pilot/pull/140
 [#142]: https://github.com/mpiton/tauri-pilot/pull/142
 [#143]: https://github.com/mpiton/tauri-pilot/pull/143
+[#145]: https://github.com/mpiton/tauri-pilot/pull/145

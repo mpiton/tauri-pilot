@@ -84,37 +84,69 @@ fn socket_dir() -> std::path::PathBuf {
     socket_dir_from(std::env::var_os("XDG_RUNTIME_DIR"))
 }
 
-/// Android uses an abstract address; other Unix platforms use a filesystem path.
+/// Android uses a random per-instance abstract name; other Unix platforms use a path.
+///
+/// # Errors
+/// Returns an error if OS randomness cannot be read or the address is invalid or too long.
 pub fn socket_address(identifier: &str) -> std::io::Result<SocketAddr> {
-    let name = format!("tauri-pilot-{identifier}.sock");
     #[cfg(target_os = "android")]
     {
+        use std::io::Read;
         use std::os::android::net::SocketAddrExt;
+
+        let mut random = [0_u8; 16];
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+        let name = format!(
+            "tauri-pilot-{identifier}-{:032x}.sock",
+            u128::from_ne_bytes(random)
+        );
         SocketAddr::from_abstract_name(name)
     }
     #[cfg(not(target_os = "android"))]
-    SocketAddr::from_pathname(socket_dir().join(name))
+    SocketAddr::from_pathname(socket_dir().join(format!("tauri-pilot-{identifier}.sock")))
 }
 
 /// Bind the socket using the **std** (sync) listener so this can be called
 /// outside a tokio runtime (e.g. from Tauri plugin `setup`).
 ///
-/// Tries bind first; only removes stale files on `AddrInUse` after verifying
-/// no live server is listening.
-/// Abstract sockets are released by the kernel; only filesystem sockets need a guard.
+/// Returns the listener and a cleanup guard for pathname sockets. Abstract sockets
+/// have no guard because the kernel releases their names when the listener closes.
+///
+/// # Errors
+/// Rejects unnamed addresses and propagates socket binding or configuration errors.
 pub fn bind(
     address: &SocketAddr,
 ) -> Result<(std::os::unix::net::UnixListener, Option<SocketGuard>), Error> {
-    let Some(socket_path) = address.as_pathname() else {
-        let listener = std::os::unix::net::UnixListener::bind_addr(address)?;
-        listener.set_nonblocking(true)?;
-        tracing::info!(
-            version = env!("CARGO_PKG_VERSION"),
-            ?address,
-            "tauri-pilot socket listening"
-        );
-        return Ok((listener, None));
-    };
+    if address.is_unnamed() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "tauri-pilot requires a named Unix socket",
+        )
+        .into());
+    }
+    match address.as_pathname() {
+        Some(path) => bind_pathname(path).map(|(listener, guard)| (listener, Some(guard))),
+        None => bind_abstract(address).map(|listener| (listener, None)),
+    }
+}
+
+/// Abstract addresses use peer credentials, with no filesystem permissions or cleanup.
+fn bind_abstract(address: &SocketAddr) -> Result<std::os::unix::net::UnixListener, Error> {
+    let listener = std::os::unix::net::UnixListener::bind_addr(address)?;
+    listener.set_nonblocking(true)?;
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        ?address,
+        "tauri-pilot socket listening"
+    );
+    Ok(listener)
+}
+
+/// Applies owner-only permissions and removes stale pathname sockets only when
+/// connecting confirms that no live listener remains.
+fn bind_pathname(
+    socket_path: &std::path::Path,
+) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
     // SAFETY: umask is always safe to call; we restore the old mask immediately.
     let old_mask = unsafe { libc::umask(0o177) };
     let first_bind = std::os::unix::net::UnixListener::bind(socket_path);
@@ -163,10 +195,10 @@ pub fn bind(
 
     Ok((
         listener,
-        Some(SocketGuard {
+        SocketGuard {
             path: socket_path.to_path_buf(),
             inode,
-        }),
+        },
     ))
 }
 
@@ -254,9 +286,10 @@ async fn accept_loop(
     }
 }
 
-// Android reserves UID 0 for root and 2000 for the ADB shell. This matches
-// Chromium Android DevTools: same UID/GID, and only the app, shell or root.
-#[cfg(target_os = "android")]
+/// Accepts the canonical app, root (0) and ADB shell (2000) UID/GID pairs.
+/// Peers with a different primary group are outside this policy, matching
+/// Chromium's Android `DevTools` credential check.
+#[cfg(any(target_os = "android", test))]
 fn android_peer_allowed(uid: u32, gid: u32, app_uid: u32) -> bool {
     uid == gid && (uid == app_uid || uid == 0 || uid == 2000)
 }
@@ -272,6 +305,49 @@ mod tests {
     use tokio::net::UnixStream;
 
     static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    #[test]
+    fn android_peer_credentials() {
+        let app_uid = 10123;
+        for (uid, gid, allowed) in [
+            (app_uid, app_uid, true),
+            (0, 0, true),
+            (2000, 2000, true),
+            (app_uid, 0, false),
+            (2000, 0, false),
+            (10124, 10124, false),
+        ] {
+            assert_eq!(
+                android_peer_allowed(uid, gid, app_uid),
+                allowed,
+                "{uid}:{gid}"
+            );
+        }
+    }
+
+    #[test]
+    fn bind_rejects_unnamed_address() {
+        let socket = std::os::unix::net::UnixDatagram::unbound().expect("unnamed socket");
+        let address = socket.local_addr().expect("socket address");
+        assert!(
+            matches!(bind(&address), Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::InvalidInput)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn abstract_listener_is_nonblocking_without_file_guard() {
+        use std::os::linux::net::SocketAddrExt;
+
+        let name = format!("tauri-pilot-abstract-test-{}", std::process::id());
+        let address = SocketAddr::from_abstract_name(name).expect("abstract address");
+        let (listener, guard) = bind(&address).expect("bind abstract socket");
+        assert!(guard.is_none());
+        // SAFETY: the listener owns a valid descriptor; F_GETFL only reads its flags.
+        let flags = unsafe { libc::fcntl(listener.as_raw_fd(), libc::F_GETFL) };
+        assert!(flags >= 0, "read listener flags");
+        assert_ne!(flags & libc::O_NONBLOCK, 0);
+    }
 
     fn unique_socket_path() -> PathBuf {
         let n = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
