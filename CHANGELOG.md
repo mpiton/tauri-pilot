@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forwarded with `adb forward localfilesystem:... localabstract:...`. Connections
   require matching UID/GID pairs for the app, root or ADB shell. [#145]
 
+- iOS Simulator support. A Simulator shares the Mac's filesystem, so the usual
+  socket file is already reachable and the CLI needs no extra flags. Physical
+  devices are not supported yet.
+
 ### Changed
 
 - A bridge command on a page whose origin never said hello no longer runs its

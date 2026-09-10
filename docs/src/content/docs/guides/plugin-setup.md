@@ -179,3 +179,64 @@ rm -f "$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock"
 ```
 
 Use a private directory rather than a bare `/tmp` socket, since ADB creates the host socket with its own permissions.
+
+## iOS Simulator
+
+The computer running the CLI must be a Mac, since building for iOS requires
+Xcode. A Simulator shares the Mac's filesystem, so the plugin's usual socket
+file is already reachable from the CLI and no forwarding is needed.
+
+Before connecting:
+
+- Complete [Tauri's iOS prerequisites](https://v2.tauri.app/start/prerequisites/#ios),
+  including Xcode and the `aarch64-apple-ios-sim` Rust target.
+- Run `cargo tauri ios init` once for the app.
+- Register the plugin in the mobile `run()` entry point in `src-tauri/src/lib.rs`,
+  with the debug guard and `pilot:default` permission shown above. A capability
+  that restricts `platforms` must include `iOS`.
+
+Disabling the desktop `press` backend on iOS is recommended. Replace the shared
+plugin dependency with target-specific entries so desktop builds keep it enabled:
+
+```toml
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", default-features = false }
+
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
+```
+
+Cargo unions features across dependency entries, so keep these mutually
+exclusive rather than adding `default-features = false` to an iOS entry that
+sits alongside a plain one.
+
+`press` needs an OS keyboard backend that iOS does not provide, and
+`screenshot_native` is macOS-only. Use `fill` or `type` for text input, and the
+regular `screenshot`, which captures the webview. Window operations are limited
+to the mobile app's single window.
+
+Start a debug build in a Simulator and use the CLI exactly as you would for a
+desktop app:
+
+```sh
+cargo tauri ios dev
+tauri-pilot ping
+tauri-pilot snapshot
+```
+
+Every Simulator running the same app resolves to the same default socket path,
+so isolate them when running more than one at a time:
+
+```sh
+mkdir -m 700 /tmp/pilot-my-simulator
+SIMCTL_CHILD_XDG_RUNTIME_DIR=/tmp/pilot-my-simulator \
+  xcrun simctl launch SIMULATOR_UDID YOUR_BUNDLE_IDENTIFIER
+tauri-pilot --socket /tmp/pilot-my-simulator/tauri-pilot-YOUR_BUNDLE_IDENTIFIER.sock ping
+```
+
+Keep that directory short and owned by you with mode 0700. The long container
+paths a Simulator uses by default can exceed the length limit on Unix socket
+addresses.
+
+Physical iOS devices are not supported yet: an app sandbox on a device hides
+its socket file from the Mac, so the CLI has no path to open.
