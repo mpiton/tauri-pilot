@@ -109,3 +109,70 @@ cargo update -p tauri-plugin-pilot
 # then rebuild
 cargo tauri dev
 ```
+
+## Android via ADB
+
+The computer running the CLI must use Linux or macOS. The Windows CLI uses named pipes and cannot use this Unix socket forwarding setup.
+
+Before connecting:
+
+- Complete [Tauri's Android prerequisites](https://v2.tauri.app/start/prerequisites/#android), including the SDK, NDK, `ANDROID_HOME` and `NDK_HOME`, and put `adb` on `PATH`.
+- Run `cargo tauri android init` once for the app. Use an emulator or a device with USB debugging enabled and the computer authorized.
+- Register the plugin in the mobile `run()` entry point in `src-tauri/src/lib.rs`, with the debug guard and `pilot:default` permission shown above.
+- Configure the app's logging to capture `tauri_plugin_pilot` tracing events at info level. The listening event contains the socket name needed for forwarding.
+
+Disabling the desktop `press` backend on Android is recommended. Replace the shared plugin dependency with target-specific entries so desktop builds keep it enabled:
+
+```toml
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", default-features = false }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
+```
+
+Start a debug build with `cargo tauri android dev`. Select the device and read the `tauri-pilot socket listening` event from the intended app's startup logs. For apps logging to Logcat, use the Android application ID to select its process:
+
+```sh
+adb devices -l
+pilot_device=YOUR_DEVICE_SERIAL
+pilot_package=YOUR_ANDROID_APPLICATION_ID
+pilot_pid=$(adb -s "$pilot_device" shell pidof "$pilot_package")
+adb -s "$pilot_device" logcat -d --pid="$pilot_pid" | grep 'tauri-pilot socket listening'
+```
+
+Copy the complete `tauri-pilot-{identifier}-{random}.sock` name into `pilot_name` below. The identifier is limited to 16 characters, followed by 16 random hexadecimal digits. The name changes each time the app starts, so update the forwarding after a restart. Once the page has loaded:
+
+```sh
+pilot_name=NAME_FROM_STARTUP_LOG
+pilot_dir=$(mktemp -d /tmp/tauri-pilot.XXXXXX)
+export TAURI_PILOT_SOCKET="$pilot_dir/pilot.sock"
+adb -s "$pilot_device" forward "localfilesystem:$TAURI_PILOT_SOCKET" \
+  "localabstract:$pilot_name"
+tauri-pilot ping
+tauri-pilot snapshot
+```
+
+Use the same `-s "$pilot_device"` for all ADB commands when multiple devices are connected. `TAURI_PILOT_SOCKET` also applies to subsequent CLI commands and MCP processes launched from this shell.
+
+`press` is unavailable on Android and `screenshot_native` is macOS-only. Use `fill` or `type` for text input. Window operations are limited to the mobile app's single window.
+
+If forwarding succeeds but the CLI cannot connect, check `adb -s "$pilot_device" shell cat /proc/net/unix | grep tauri-pilot` and compare the name with the current startup log. The plugin only listens in debug builds.
+
+Remove the forwarding created above when finished:
+
+```sh
+adb -s "$pilot_device" forward --remove "localfilesystem:$TAURI_PILOT_SOCKET"
+rm -f "$TAURI_PILOT_SOCKET"
+rmdir "$pilot_dir"
+unset TAURI_PILOT_SOCKET
+```
+
+On Linux, forwarding to a socket named `tauri-pilot-{identifier}.sock` inside your private `$XDG_RUNTIME_DIR` also enables CLI auto-discovery without `TAURI_PILOT_SOCKET`. For this alternative, remove only the forward and socket when finished, keeping the runtime directory:
+
+```sh
+adb -s "$pilot_device" forward --remove "localfilesystem:$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock"
+rm -f "$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock"
+```
+
+Use a private directory rather than a bare `/tmp` socket, since ADB creates the host socket with its own permissions.

@@ -2,7 +2,9 @@
 
 ## Scope
 
-tauri-pilot is a **debug-only** tool. The plugin runs exclusively under `#[cfg(debug_assertions)]` and should never be included in production builds. The Unix socket is local-only (`/tmp/`) with user-level permissions.
+tauri-pilot is a **debug-only** tool. The plugin runs exclusively under `#[cfg(debug_assertions)]` and should never be included in production builds. Desktop Unix sockets are local files with owner-only permissions.
+
+Android uses the abstract Unix namespace, which has no filesystem permissions. Each instance gets an OS-random socket name, reported in the app's info-level logs, to prevent predictable name pre-binding. Connections are authorized using kernel peer credentials (`SO_PEERCRED`): matching UID/GID pairs for the app, root (0) or ADB shell (2000). Access also depends on the device's SELinux policy. ADB and access to the app's startup logs are trusted; the protocol does not perform a separate server-authentication handshake.
 
 ## Reporting a Vulnerability
 

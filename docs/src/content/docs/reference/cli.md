@@ -385,7 +385,8 @@ tauri-pilot type @e2 " additional text"
 
 Inject keyboard events at the OS level via [`enigo`](https://crates.io/crates/enigo).
 Events are `isTrusted=true` and reach DOM listeners and Tauri accelerators on
-all supported platforms.
+supported desktop platforms. Android has no native `press` backend; use `fill`
+or `type` for text input.
 
 :::caution[X11 global shortcuts]
 On X11, synthetic key events from `enigo`'s `XTestFakeKeyEvent` backend
