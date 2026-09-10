@@ -188,8 +188,8 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
 }
 
 /// Read the current URL of a webview, or `None` when the runtime cannot report it.
-#[cfg(all(any(unix, windows), debug_assertions))]
-fn current_url<R: tauri::Runtime>(wv: &tauri::WebviewWindow<R>) -> Option<tauri::Url> {
+#[cfg(any(unix, windows))]
+pub(crate) fn current_url<R: tauri::Runtime>(wv: &tauri::WebviewWindow<R>) -> Option<tauri::Url> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wv.url()))
         .ok()
         .and_then(Result::ok)

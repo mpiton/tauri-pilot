@@ -1,5 +1,5 @@
 use crate::diff;
-use crate::eval::{EvalEngine, HELLO_ID};
+use crate::eval::{EvalEngine, HELLO_ID, origin_key};
 #[cfg(feature = "press")]
 use crate::key;
 use crate::protocol::RpcError;
@@ -599,32 +599,71 @@ async fn handle_navigate(
     })?;
     let since = engine.hellos();
     let (id, rx, page) = send_script(&script, engine, eval_fn, window)?;
-    let dest = page
-        .as_ref()
-        .zip(params.and_then(|p| p.get("url")?.as_str()))
-        .and_then(|(page, url)| page.join(url).ok())
-        // A `javascript:` URL runs in the current page instead of leaving it.
-        .filter(|dest| dest.scheme() != "javascript");
-    let (Some(page), Some(dest)) = (page, dest) else {
-        return wait(engine, id, rx, DEFAULT_TIMEOUT).await;
-    };
+    let dest = navigate_destination(
+        page.as_ref(),
+        params.and_then(|p| p.get("url").and_then(serde_json::Value::as_str)),
+    );
 
-    if engine.has_bridge(&page) {
-        let result = wait(engine, id, rx, DEFAULT_TIMEOUT).await?;
-        if engine.has_bridge(&dest) {
-            return Ok(result);
+    match (page.as_ref(), dest.as_ref()) {
+        (Some(page), Some(dest)) if origin_key(page) == origin_key(dest) => {
+            if engine.has_bridge(page) {
+                wait(engine, id, rx, DEFAULT_TIMEOUT).await
+            } else {
+                Err(fail_no_bridge(engine, id, page))
+            }
         }
-    } else {
-        // The script still navigates, but this page cannot call back.
-        engine.resolve(id, Err("page has no pilot bridge".to_owned()));
+        (Some(page), Some(dest)) => {
+            if engine.has_bridge(page) {
+                let result = wait(engine, id, rx, DEFAULT_TIMEOUT).await?;
+                if engine.has_bridge(dest) {
+                    return Ok(result);
+                }
+            } else {
+                // The script still navigates, but this page cannot call back.
+                engine.resolve(id, Err("page has no pilot bridge".to_owned()));
+            }
+            wait_dest_bridge(engine, dest, since).await
+        }
+        (Some(page), None) => {
+            if engine.has_bridge(page) {
+                wait(engine, id, rx, DEFAULT_TIMEOUT).await
+            } else {
+                Err(fail_no_bridge(engine, id, page))
+            }
+        }
+        (None, Some(dest)) => {
+            engine.resolve(id, Err("waiting for destination bridge".to_owned()));
+            wait_dest_bridge(engine, dest, since).await
+        }
+        (None, None) => wait(engine, id, rx, DEFAULT_TIMEOUT).await,
     }
+}
 
-    let limit = if engine.has_bridge(&dest) {
+/// Resolve `navigate`'s `url` param against the current page when needed.
+///
+/// Absolute URLs do not need a base, so they survive a missing page URL.
+/// A `javascript:` URL runs in the current document, so dest is that page.
+fn navigate_destination(page: Option<&tauri::Url>, raw: Option<&str>) -> Option<tauri::Url> {
+    let raw = raw?;
+    match tauri::Url::parse(raw) {
+        Ok(absolute) if absolute.scheme() == "javascript" => page.cloned(),
+        Ok(absolute) => Some(absolute),
+        Err(_) => page.and_then(|base| base.join(raw).ok()),
+    }
+}
+
+/// Wait for a hello from `dest`, using the 3s grace on a first visit.
+async fn wait_dest_bridge(
+    engine: &EvalEngine,
+    dest: &tauri::Url,
+    since: u64,
+) -> Result<serde_json::Value, RpcError> {
+    let limit = if engine.has_bridge(dest) {
         DEFAULT_TIMEOUT
     } else {
         BRIDGE_GRACE
     };
-    if engine.wait_bridge(&dest, since, limit).await {
+    if engine.wait_bridge(dest, since, limit).await {
         Ok(serde_json::json!({"ok": true}))
     } else {
         Err(no_bridge_error(
@@ -632,6 +671,14 @@ async fn handle_navigate(
             &format!("navigated to {dest}, but no pilot bridge answered there within {limit:?}"),
         ))
     }
+}
+
+fn fail_no_bridge(engine: &EvalEngine, id: u64, page: &tauri::Url) -> RpcError {
+    engine.resolve(id, Err("page has no pilot bridge".to_owned()));
+    no_bridge_error(
+        engine,
+        &format!("no pilot bridge on the current page ({page})"),
+    )
 }
 
 /// Send a bridge script and wait for its callback.
@@ -750,10 +797,15 @@ pub(crate) fn handle_callback(
     id: u64,
     result: Option<String>,
     error: Option<String>,
+    page: Option<&tauri::Url>,
 ) {
     if id == HELLO_ID {
-        if let Some(page) = result {
-            engine.bridge_hello(&page);
+        // The invoking webview's URL is the origin that was allowed to call
+        // `__callback`. The IPC `result` is client-supplied and is ignored.
+        if let Some(page) = page {
+            engine.bridge_hello(page.as_str());
+        } else {
+            tracing::warn!("bridge hello without a webview URL");
         }
         return;
     }
@@ -776,13 +828,20 @@ pub(crate) fn handle_callback(
     clippy::needless_pass_by_value,
     reason = "tauri::command contract — macro wrapper is the real consumer"
 )]
-pub(crate) fn callback(
+pub(crate) fn callback<R: tauri::Runtime>(
     eval_engine: tauri::State<'_, EvalEngine>,
+    webview: tauri::WebviewWindow<R>,
     id: u64,
     result: Option<String>,
     error: Option<String>,
 ) {
-    handle_callback(&eval_engine, id, result, error);
+    handle_callback(
+        &eval_engine,
+        id,
+        result,
+        error,
+        crate::current_url(&webview).as_ref(),
+    );
 }
 
 /// Legacy Tauri IPC command for the `__callback` handler.
@@ -797,13 +856,20 @@ pub(crate) fn callback(
     clippy::needless_pass_by_value,
     reason = "tauri::command contract — macro wrapper is the real consumer"
 )]
-pub(crate) fn __callback(
+pub(crate) fn __callback<R: tauri::Runtime>(
     eval_engine: tauri::State<'_, EvalEngine>,
+    webview: tauri::WebviewWindow<R>,
     id: u64,
     result: Option<String>,
     error: Option<String>,
 ) {
-    handle_callback(&eval_engine, id, result, error);
+    handle_callback(
+        &eval_engine,
+        id,
+        result,
+        error,
+        crate::current_url(&webview).as_ref(),
+    );
 }
 
 #[cfg(test)]
@@ -987,7 +1053,13 @@ mod tests {
     async fn test_callback_with_json_result() {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
-        handle_callback(&engine, id, Some(r#"{"title":"hello"}"#.to_owned()), None);
+        handle_callback(
+            &engine,
+            id,
+            Some(r#"{"title":"hello"}"#.to_owned()),
+            None,
+            None,
+        );
         let val = rx.await.expect("channel not dropped").expect("eval ok");
         assert_eq!(val, json!({"title": "hello"}));
     }
@@ -999,7 +1071,7 @@ mod tests {
         // Value::Null so the client sees a clean success, not a warn fallback.
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
-        handle_callback(&engine, id, Some("null".to_owned()), None);
+        handle_callback(&engine, id, Some("null".to_owned()), None, None);
         let val = rx.await.expect("channel not dropped").expect("eval ok");
         assert_eq!(val, serde_json::Value::Null);
     }
@@ -1008,7 +1080,7 @@ mod tests {
     async fn test_callback_with_error() {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
-        handle_callback(&engine, id, None, Some("TypeError: x".to_owned()));
+        handle_callback(&engine, id, None, Some("TypeError: x".to_owned()), None);
         let result = rx.await.expect("channel not dropped");
         assert_eq!(result, Err("TypeError: x".to_owned()));
     }
@@ -1892,7 +1964,7 @@ mod tests {
     /// when the app page loads.
     fn engine_with_app_bridge() -> EvalEngine {
         let engine = EvalEngine::new();
-        handle_callback(&engine, 0, Some(APP_PAGE.to_owned()), None);
+        handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
         engine
     }
 
@@ -1922,6 +1994,11 @@ mod tests {
         .await
         .expect_err("navigate to a foreign origin must not report ok");
 
+        assert!(
+            start.elapsed() >= BRIDGE_GRACE,
+            "must wait the 3s grace, took {:?}",
+            start.elapsed()
+        );
         assert!(
             start.elapsed() < DEFAULT_TIMEOUT,
             "took {:?}",
@@ -1977,7 +2054,7 @@ mod tests {
                 let engine = engine_clone.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(500)).await;
-                    handle_callback(&engine, 0, Some(APP_PAGE.to_owned()), None);
+                    handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
                 });
                 Ok(Some(url(FOREIGN_PAGE)))
             });
@@ -2018,5 +2095,88 @@ mod tests {
         .await
         .expect("same-origin navigate succeeds");
         assert_eq!(result, json!({"ok": true}));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_to_new_origin_succeeds_when_hello_arrives() {
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let dest = "https://allowed.example/";
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
+                let engine = engine_clone.clone();
+                engine.resolve(1, Ok(json!({"ok": true})));
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
+                });
+                Ok(Some(url(APP_PAGE)))
+            });
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": dest})),
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect("first visit must succeed when the dest hellos in time");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() < DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_javascript_url_stays_on_page() {
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
+                engine_clone.resolve(1, Ok(json!({"ok": true})));
+                Ok(Some(url(APP_PAGE)))
+            });
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "javascript:void(0)"})),
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect("javascript: navigate stays on the current page");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() < BRIDGE_GRACE,
+            "must not wait the dest grace, took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[test]
+    fn test_hello_uses_webview_url_not_client_payload() {
+        let engine = EvalEngine::new();
+        handle_callback(
+            &engine,
+            HELLO_ID,
+            Some("https://evil.example/".to_owned()),
+            None,
+            Some(&url(APP_PAGE)),
+        );
+        assert!(engine.has_bridge(&url(APP_PAGE)));
+        assert!(
+            !engine.has_bridge(&url("https://evil.example/")),
+            "client-supplied href must not be recorded as a hello"
+        );
     }
 }

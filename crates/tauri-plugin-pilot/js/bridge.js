@@ -133,12 +133,27 @@
     return 0;
   }
 
+  function isPilotIpcUrl(url) {
+    const text = String(url);
+    let path;
+    try {
+      const base = (window.location && window.location.href) || "http://localhost/";
+      path = new URL(text, base).pathname;
+    } catch (_) {
+      const q = text.indexOf("?");
+      path = q === -1 ? text : text.slice(0, q);
+    }
+    // Tauri encodes the command in the IPC path (`.../plugin%3Apilot%7C__callback`).
+    // A query string that happens to contain the same text is still app traffic.
+    return path.indexOf("plugin%3Apilot%7C") !== -1;
+  }
+
   const _originalFetch = window.fetch.bind(window);
   window.fetch = function(input, init) {
     const method = (init && init.method) || (input && input.method) || "GET";
     const url = (typeof input === "string") ? input : (input && input.url) || String(input);
     // Pilot's own IPC (eval callbacks, the bridge hello) is not app traffic.
-    if (url.indexOf("plugin%3Apilot%7C") !== -1) return _originalFetch(input, init);
+    if (isPilotIpcUrl(url)) return _originalFetch(input, init);
     const timestamp = Date.now();
     const requestSize = bodySize(init && init.body);
     return _originalFetch(input, init).then(function(response) {

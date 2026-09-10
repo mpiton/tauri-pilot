@@ -45,11 +45,14 @@ Add `pilot:default` to your app's capability file (e.g. `src-tauri/capabilities/
 
 ```json
 {
+  "remote": {
+    "urls": ["https://allowed.example/*"]
+  },
   "permissions": ["core:default", "pilot:default"]
 }
 ```
 
-Without this permission, eval commands fail with: `eval timed out after 10s`.
+Without this permission, eval commands fail with: `eval timed out after 10s`. List a foreign origin in `remote.urls` on the same capability if you need to drive that origin.
 
 ### 4. Install the CLI
 
