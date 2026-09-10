@@ -127,10 +127,10 @@ Before connecting:
 Disabling the desktop `press` backend on Android is recommended. Replace the shared plugin dependency with target-specific entries so desktop builds keep it enabled:
 
 ```toml
-[target.'cfg(target_os = "android")'.dependencies]
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", default-features = false }
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
 ```
 
@@ -189,7 +189,8 @@ file is already reachable from the CLI and no forwarding is needed.
 Before connecting:
 
 - Complete [Tauri's iOS prerequisites](https://v2.tauri.app/start/prerequisites/#ios),
-  including Xcode and the `aarch64-apple-ios-sim` Rust target.
+  including Xcode and the `aarch64-apple-ios-sim` Rust target
+  (`x86_64-apple-ios` on an Intel Mac).
 - Run `cargo tauri ios init` once for the app.
 - Register the plugin in the mobile `run()` entry point in `src-tauri/src/lib.rs`,
   with the debug guard and `pilot:default` permission shown above. A capability
@@ -199,16 +200,16 @@ Disabling the desktop `press` backend on iOS is recommended. Replace the shared
 plugin dependency with target-specific entries so desktop builds keep it enabled:
 
 ```toml
-[target.'cfg(target_os = "ios")'.dependencies]
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", default-features = false }
 
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
 ```
 
-Cargo unions features across dependency entries, so keep these mutually
-exclusive rather than adding `default-features = false` to an iOS entry that
-sits alongside a plain one.
+Cargo unions features across dependency entries, so use this single combined
+pair rather than one pair per platform: a plain `not(target_os = "ios")` entry
+would also match Android and re-enable `press` there.
 
 `press` needs an OS keyboard backend that iOS does not provide, and
 `screenshot_native` is macOS-only. Use `fill` or `type` for text input, and the
