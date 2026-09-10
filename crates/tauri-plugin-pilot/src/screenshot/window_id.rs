@@ -3,6 +3,12 @@ use super::ScreenshotError;
 /// Minimal description of a layer-0 on-screen window, used to populate the
 /// `available_windows` payload returned with `WINDOW_NOT_FOUND` errors so
 /// callers can pick the right `window_id` without a second round-trip.
+///
+/// `title` is empty for windows owned by another process. The list walks every
+/// on-screen window, and the payload now reaches stderr and the MCP client, so
+/// carrying a stranger's document names, URLs and chat titles out of the host
+/// would leak them to whatever model backs that client. `window_id` and
+/// `owner` are what the caller needs to pick a target.
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 pub(crate) struct DiscoveredWindow {
     pub(crate) window_id: u32,
@@ -57,7 +63,7 @@ pub(crate) fn enumerate_layer_zero_windows(
     use core_graphics::window::{
         CGWindowListCopyWindowInfo, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
         kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly, kCGWindowName,
-        kCGWindowNumber, kCGWindowOwnerName,
+        kCGWindowNumber, kCGWindowOwnerName, kCGWindowOwnerPID,
     };
 
     // SAFETY: `CGWindowListCopyWindowInfo` is a thread-safe CoreGraphics entry
@@ -92,8 +98,10 @@ pub(crate) fn enumerate_layer_zero_windows(
     let title_key = unsafe { CFString::wrap_under_get_rule(kCGWindowName) };
     let layer_key = unsafe { CFString::wrap_under_get_rule(kCGWindowLayer) };
     let number_key = unsafe { CFString::wrap_under_get_rule(kCGWindowNumber) };
+    let owner_pid_key = unsafe { CFString::wrap_under_get_rule(kCGWindowOwnerPID) };
     let bounds_key = unsafe { CFString::wrap_under_get_rule(kCGWindowBounds) };
 
+    let host_pid = i64::from(std::process::id());
     let mut available: Vec<DiscoveredWindow> = Vec::new();
     let mut target_bounds: Option<WindowBounds> = None;
 
@@ -122,11 +130,20 @@ pub(crate) fn enumerate_layer_zero_windows(
             .and_then(|v| v.downcast::<CFString>())
             .map(|v| v.to_string())
             .unwrap_or_default();
-        let title = dict
-            .find(&title_key)
-            .and_then(|v| v.downcast::<CFString>())
-            .map(|v| v.to_string())
-            .unwrap_or_default();
+        let owner_pid = dict
+            .find(&owner_pid_key)
+            .and_then(|v| v.downcast::<CFNumber>())
+            .and_then(|v| v.to_i64());
+        // Titles of other apps' windows never leave the host: see
+        // `DiscoveredWindow`.
+        let title = if owner_pid == Some(host_pid) {
+            dict.find(&title_key)
+                .and_then(|v| v.downcast::<CFString>())
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
 
         if window_id == target && target_bounds.is_none() {
             // CGWindowList stores the bounds rect as a `{Width,Height,X,Y}`

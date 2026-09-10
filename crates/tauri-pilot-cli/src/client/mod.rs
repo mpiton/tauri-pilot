@@ -64,7 +64,37 @@ impl Client {
         }
 
         if let Some(err) = response.error {
-            bail!("RPC error ({}): {}", err.code, err.message);
+            // Structured detail the plugin attaches under `error.data` is the
+            // only way a caller learns, say, the real window ids behind a
+            // WINDOW_NOT_FOUND. Render it under the message instead of
+            // dropping it (#149). `message` is mirrored into `data` by the
+            // plugin, so drop that key rather than printing it twice — but
+            // only when it really is the duplicate: the two crates ship
+            // separately, so a producer carrying a distinct `data.message`
+            // must not lose it in the very path that was fixed to stop
+            // losing detail.
+            let detail = match err.data {
+                Some(serde_json::Value::Object(mut obj)) => {
+                    if obj.get("message").and_then(serde_json::Value::as_str)
+                        == Some(err.message.as_str())
+                    {
+                        obj.remove("message");
+                    }
+                    if obj.is_empty() {
+                        String::new()
+                    } else {
+                        let data = serde_json::Value::Object(obj);
+                        format!(
+                            "\n{}",
+                            serde_json::to_string_pretty(&data)
+                                .unwrap_or_else(|_| data.to_string())
+                        )
+                    }
+                }
+                Some(data) if !data.is_null() => format!("\n{data}"),
+                _ => String::new(),
+            };
+            bail!("RPC error ({}): {}{detail}", err.code, err.message);
         }
 
         // A missing `result` field (or explicit `"result": null`) means the

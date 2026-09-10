@@ -16,6 +16,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `screenshot_native` errors now carry their detail to the terminal. Every RPC
+  error went through one `bail!` in the CLI client that kept the code and the
+  message and dropped `error.data`, so a `WINDOW_NOT_FOUND` printed nothing of
+  the `available_windows` list the plugin builds for it. The fix is in the
+  shared error path, so any command whose plugin side attaches structured data
+  keeps it. The plugin mirrors `message` into `data`, and the CLI drops that
+  key only when it is the exact duplicate, so a producer with a distinct
+  `data.message` still prints it. [#149]
+
+- `screenshot_native` no longer reports a made-up `scale_factor`. The value was
+  the captured PNG's pixel width divided by the window's logical width, which
+  only holds when the PNG is the window. It comes from both axes now and is
+  `null` when they disagree on the ratio: with screen recording denied the
+  `CGWindowList` fallback returns a screen-sized image (2.87 across against
+  2.79 down on a 2.0 display), and the permitted path was off too because
+  `screencapture` padded its own PNG with the window's drop shadow. The
+  `tcc_denied` flag no longer gates the derivation — it reports a permission
+  state, and `capture_with_fallback` raises it after a granted probe whose
+  per-window capture failed for some other reason. Two agreeing ratios are not
+  proof by themselves, since a screen-sized image whose aspect happens to match
+  the window's would pass, so the capture's provenance gates them: a
+  `CGWindowList` PNG asks for `kCGWindowImageNominalResolution` and can only
+  legitimately be 1:1, and anything else from that backend gets no scale.
+  [#149]
+
 - `cargo clippy --all-targets -- -D warnings` passes again. The new
   `manual_is_variant_and` lint rejects the `.ok().is_some_and(...)` in
   `dangerous_mcp_tools_enabled`; it reads `.is_ok_and(...)` now, same
@@ -37,6 +62,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their `var()` resolved. The list is an allowlist, though, so a standard
   painted property that is not on it is missing from the capture as well;
   on macOS `screenshot_native` remains the pixel-exact escape hatch. [#146]
+
+### Changed
+
+- macOS native captures no longer include the window's drop shadow.
+  `capture_screencapture` passes `screencapture -o`, so the PNG matches
+  `kCGWindowBounds` and the scale factor is derivable from it. [#149]
+
+### Security
+
+- `available_windows`, returned with a `WINDOW_NOT_FOUND` error, no longer
+  carries the titles of windows owned by other processes. The list walks every
+  on-screen window, and now that the CLI renders `error.data` that payload
+  reaches stderr and the MCP client, so one stale `--window-id` would have
+  handed a developer's document names, URLs and chat titles to whatever model
+  backs that client. `window_id` and `owner` are what a caller needs to
+  retarget. [#149]
 
 ## [0.7.3] - 2026-08-30
 
@@ -637,3 +678,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#143]: https://github.com/mpiton/tauri-pilot/pull/143
 [#145]: https://github.com/mpiton/tauri-pilot/pull/145
 [#146]: https://github.com/mpiton/tauri-pilot/issues/146
+[#149]: https://github.com/mpiton/tauri-pilot/issues/149
