@@ -243,7 +243,10 @@ mod tests {
             let url = format!("https://{name}.test/")
                 .parse()
                 .expect("valid test URL");
+            // An existing data directory keeps tauri from creating the user's
+            // real one, which races with the umask the socket tests set.
             WebviewWindowBuilder::new(&app, *name, WebviewUrl::External(url))
+                .data_directory(std::env::temp_dir())
                 .build()
                 .expect("build mock window");
         }
