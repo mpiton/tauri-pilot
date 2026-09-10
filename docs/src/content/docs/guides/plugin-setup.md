@@ -226,18 +226,21 @@ tauri-pilot snapshot
 ```
 
 Every Simulator running the same app resolves to the same default socket path,
-so isolate them when running more than one at a time:
+so isolate them when running more than one at a time. The app must already be
+installed on each Simulator (one `cargo tauri ios dev` run against it does
+that); relaunch it with a private socket directory:
 
 ```sh
 mkdir -m 700 /tmp/pilot-my-simulator
 SIMCTL_CHILD_XDG_RUNTIME_DIR=/tmp/pilot-my-simulator \
-  xcrun simctl launch SIMULATOR_UDID YOUR_BUNDLE_IDENTIFIER
+  xcrun simctl launch --terminate-running-process SIMULATOR_UDID YOUR_BUNDLE_IDENTIFIER
 tauri-pilot --socket /tmp/pilot-my-simulator/tauri-pilot-YOUR_BUNDLE_IDENTIFIER.sock ping
 ```
 
-Keep that directory short and owned by you with mode 0700. The long container
-paths a Simulator uses by default can exceed the length limit on Unix socket
-addresses.
+Keep that directory short, owned by you, and mode 0700 — the plugin ignores a
+non-private `XDG_RUNTIME_DIR` and falls back to `/tmp`, and a long path (for
+example, deep inside a Simulator's data container) can exceed the length limit
+on Unix socket addresses.
 
 Physical iOS devices are not supported yet: an app sandbox on a device hides
 its socket file from the Mac, so the CLI has no path to open.
