@@ -867,14 +867,15 @@ the visible viewport. The bridge serializes the DOM to render it, so the
 current scroll position is not reflected in the image — what you get is the
 entire page from the top. Use `--selector` to capture a single element
 (works for elements below the fold too). For a pixel-exact capture of the
-native window, use `screenshot_native`.
+native window, use `screenshot_native` — macOS only, it returns
+`PERMISSION_DENIED` on Linux and Windows.
 
 The bridge also copies only an allowlist of painted CSS properties onto the
 clone it renders (a full computed-style copy wedges WebKit for minutes on
 style-variable-heavy pages). A page that paints through a property outside
-that list renders without it, with no error — if the PNG does not match what
-you see in the app, that is the first thing to check, and `screenshot_native`
-is the way around it.
+that list renders without it, with no error, so if the PNG does not match
+what you see in the app that is the first thing to check. On macOS,
+`screenshot_native` sidesteps the allowlist entirely.
 
 **Arguments:**
 

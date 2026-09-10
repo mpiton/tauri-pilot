@@ -176,9 +176,15 @@ test("the vendored html-to-image still reads includeStyleProperties", () => {
     join(here, "vendor", "html-to-image.iife.js"),
     "utf8",
   );
+  // `includeStyleProperties?` rather than the bare name: the option has to be
+  // *read as a condition*, which is the shape of the expression that picks it
+  // over the full enumeration. The minifier renames the parameter, never the
+  // property, so this survives a rebuild of the same upstream code and fails
+  // if a version bump drops the branch.
   assert.ok(
-    vendor.includes("includeStyleProperties"),
-    "vendored html-to-image dropped includeStyleProperties: re-check " +
-      "scripts/build-html-to-image.sh against the upstream pin (#146)",
+    vendor.includes("includeStyleProperties?"),
+    "vendored html-to-image no longer reads includeStyleProperties as a " +
+      "condition: re-check scripts/build-html-to-image.sh against the " +
+      "upstream pin (#146)",
   );
 });

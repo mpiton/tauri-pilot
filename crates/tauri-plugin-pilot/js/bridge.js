@@ -1248,6 +1248,7 @@
     "overflow-wrap", "hyphens", "direction", "unicode-bidi", "writing-mode",
     "text-orientation", "tab-size", "list-style-type", "list-style-position",
     "list-style-image", "content", "counter-reset", "counter-increment",
+    "counter-set",
     // Replaced content + SVG
     "object-fit", "object-position", "image-rendering", "fill", "fill-opacity",
     "fill-rule", "stroke", "stroke-width", "stroke-opacity", "stroke-linecap",

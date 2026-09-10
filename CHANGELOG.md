@@ -35,8 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repro of that page at the original 156-name cut, pixel-identical output).
   Custom properties are dropped on purpose: computed values already arrive with
   their `var()` resolved. The list is an allowlist, though, so a standard
-  painted property that is not on it is missing from the capture as well —
-  `screenshot_native` remains the pixel-exact escape hatch. [#146]
+  painted property that is not on it is missing from the capture as well;
+  on macOS `screenshot_native` remains the pixel-exact escape hatch. [#146]
 
 ## [0.7.3] - 2026-08-30
 
