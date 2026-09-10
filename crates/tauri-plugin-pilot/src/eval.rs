@@ -121,16 +121,11 @@ impl EvalEngine {
     ///
     /// Also `true` before any hello: without one the engine cannot tell app
     /// origins from foreign ones, so callers keep the plain eval path.
-    /// An `http` URL also matches a hello from the `https` upgrade of the
-    /// same host and port, so an HSTS hop still counts.
+    /// Scheme-specific: a previous `https` hello does not make `http` look
+    /// callable. [`wait_bridge`] still accepts a fresh `https` upgrade.
     pub fn has_bridge(&self, url: &Url) -> bool {
         let bridges = self.bridges.borrow();
-        if bridges.hellos == 0 {
-            return true;
-        }
-        origin_keys(url)
-            .iter()
-            .any(|key| bridges.latest.contains_key(key))
+        bridges.hellos == 0 || bridges.latest.contains_key(&origin_key(url))
     }
 
     /// Origins whose bridge said hello, sorted.
@@ -399,8 +394,8 @@ mod tests {
         engine.bridge_hello("https://example.com/");
         assert!(engine.has_bridge(&url("https://example.com:443/login")));
         assert!(
-            engine.has_bridge(&url("http://example.com/")),
-            "http dest must match an https hello (HSTS)"
+            !engine.has_bridge(&url("http://example.com/")),
+            "a previous https hello must not make http look callable"
         );
         assert!(!engine.has_bridge(&url("https://other.example/")));
 
@@ -409,6 +404,28 @@ mod tests {
         assert!(
             !engine.has_bridge(&url("file:///tmp/b.html")),
             "hostless pages must not share a key"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_bridge_http_dest_matches_fresh_https_hello() {
+        let engine = EvalEngine::new();
+        let https = Url::parse("https://example.com/").expect("valid test URL");
+        let http = Url::parse("http://example.com/").expect("valid test URL");
+        engine.bridge_hello(https.as_str());
+        let since = engine.hellos();
+        assert!(
+            !engine
+                .wait_bridge(&http, since, Duration::from_secs(1))
+                .await,
+            "an old https hello must not count as this navigation's upgrade"
+        );
+        engine.bridge_hello(https.as_str());
+        assert!(
+            engine
+                .wait_bridge(&http, since, Duration::from_secs(1))
+                .await,
+            "a hello after since from the https upgrade must count"
         );
     }
 

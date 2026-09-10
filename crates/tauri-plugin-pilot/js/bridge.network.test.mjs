@@ -60,3 +60,11 @@ test("an app URL whose query contains the IPC substring is still recorded", asyn
   const urls = pilot.networkRequests().map((e) => e.url);
   assert.deepEqual(urls, [app]);
 });
+
+test("an app path that only contains the IPC substring is still recorded", async () => {
+  const pilot = loadBridge();
+  const app = "https://app.example/api/plugin%3Apilot%7C__callback";
+  await window.fetch(app);
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, [app]);
+});

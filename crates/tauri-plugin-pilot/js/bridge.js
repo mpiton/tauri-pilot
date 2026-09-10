@@ -143,9 +143,14 @@
       const q = text.indexOf("?");
       path = q === -1 ? text : text.slice(0, q);
     }
-    // Tauri encodes the command in the IPC path (`.../plugin%3Apilot%7C__callback`).
-    // A query string that happens to contain the same text is still app traffic.
-    return path.indexOf("plugin%3Apilot%7C") !== -1;
+    let decoded;
+    try {
+      decoded = decodeURIComponent(path);
+    } catch (_) {
+      decoded = path;
+    }
+    // Exact IPC path for the two callback commands, not a substring match.
+    return decoded === "/plugin:pilot|callback" || decoded === "/plugin:pilot|__callback";
   }
 
   const _originalFetch = window.fetch.bind(window);

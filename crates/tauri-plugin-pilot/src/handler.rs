@@ -1,5 +1,5 @@
 use crate::diff;
-use crate::eval::{EvalEngine, HELLO_ID, origin_key};
+use crate::eval::{EvalEngine, EvalError, HELLO_ID, origin_key};
 #[cfg(feature = "press")]
 use crate::key;
 use crate::protocol::RpcError;
@@ -614,9 +614,18 @@ async fn handle_navigate(
         }
         (Some(page), Some(dest)) => {
             if engine.has_bridge(page) {
-                let result = wait(engine, id, rx, DEFAULT_TIMEOUT).await?;
-                if engine.has_bridge(dest) {
-                    return Ok(result);
+                // The departing page may be torn down before `__callback` runs.
+                // Treat that timeout as non-fatal and let the dest hello decide.
+                match engine.wait(id, rx, BRIDGE_GRACE).await {
+                    Ok(result) if engine.has_bridge(dest) => return Ok(result),
+                    Ok(_) | Err(EvalError::Timeout(_)) => {}
+                    Err(e) => {
+                        return Err(RpcError {
+                            code: -32603,
+                            message: format!("Eval error: {e}"),
+                            data: None,
+                        });
+                    }
                 }
             } else {
                 // The script still navigates, but this page cannot call back.
@@ -800,12 +809,18 @@ pub(crate) fn handle_callback(
     page: Option<&tauri::Url>,
 ) {
     if id == HELLO_ID {
-        // The invoking webview's URL is the origin that was allowed to call
-        // `__callback`. The IPC `result` is client-supplied and is ignored.
-        if let Some(page) = page {
-            engine.bridge_hello(page.as_str());
-        } else {
-            tracing::warn!("bridge hello without a webview URL");
+        // Record the invoking webview's URL, not the client payload. If the
+        // payload parses as a different origin, the webview likely navigated
+        // before this IPC landed; drop the hello rather than tagging dest.
+        let client = result
+            .as_deref()
+            .and_then(|href| tauri::Url::parse(href).ok());
+        match (page, client.as_ref()) {
+            (Some(webview), Some(client)) if origin_key(webview) != origin_key(client) => {
+                tracing::warn!("bridge hello origin mismatch, ignoring");
+            }
+            (Some(webview), _) => engine.bridge_hello(webview.as_str()),
+            (None, _) => tracing::warn!("bridge hello without a webview URL"),
         }
         return;
     }
@@ -2165,7 +2180,7 @@ mod tests {
 
     #[test]
     fn test_hello_uses_webview_url_not_client_payload() {
-        let engine = EvalEngine::new();
+        let engine = engine_with_app_bridge();
         handle_callback(
             &engine,
             HELLO_ID,
@@ -2177,6 +2192,58 @@ mod tests {
         assert!(
             !engine.has_bridge(&url("https://evil.example/")),
             "client-supplied href must not be recorded as a hello"
+        );
+    }
+
+    #[test]
+    fn test_hello_dropped_when_webview_url_does_not_match_payload() {
+        let engine = engine_with_app_bridge();
+        handle_callback(
+            &engine,
+            HELLO_ID,
+            Some(APP_PAGE.to_owned()),
+            None,
+            Some(&url(FOREIGN_PAGE)),
+        );
+        assert!(engine.has_bridge(&url(APP_PAGE)));
+        assert!(
+            !engine.has_bridge(&url(FOREIGN_PAGE)),
+            "a stale hello must not tag the page the webview already left"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_succeeds_when_page_callback_times_out_but_dest_hellos() {
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let dest = "https://allowed.example/";
+        let eval_fn: crate::server::EvalFn =
+            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
+                let engine = engine_clone.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
+                });
+                Ok(Some(url(APP_PAGE)))
+            });
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": dest})),
+            &engine,
+            Some(&eval_fn),
+            None,
+            None,
+            &Recorder::new(),
+        )
+        .await
+        .expect("dest hello must still succeed if the old page never callbacks");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() < DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
         );
     }
 }
