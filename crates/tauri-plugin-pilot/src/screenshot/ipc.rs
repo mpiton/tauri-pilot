@@ -220,6 +220,10 @@ fn parse_output_path(obj: &serde_json::Map<String, Value>) -> Result<std::path::
 /// success result fills the response with `output_path`, `window_id`, pixel
 /// dimensions, `scale_factor`, `byte_size`, the chosen `backend`, and the
 /// `tcc_denied` flag.
+///
+/// `scale_factor` is `null` when the capture's two axes disagree on the ratio
+/// against the window's logical bounds — the PNG is then not the window, so
+/// the number would not describe it. See `compute_scale_factor`.
 pub(crate) async fn handle_screenshot(params: Option<&Value>) -> Result<Value, RpcError> {
     let req = parse_request(params)?;
 
@@ -313,7 +317,12 @@ fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
         width: 0.0,
         height: 0.0,
     });
-    let scale_factor = compute_scale_factor(metadata.width, logical_bounds.width, tcc_denied);
+    let scale_factor = compute_scale_factor(
+        metadata.width,
+        metadata.height,
+        logical_bounds.width,
+        logical_bounds.height,
+    );
 
     if let Err(err) = std::fs::rename(&tmp_path, &output_path) {
         cleanup_tmp(&tmp_path);
@@ -509,43 +518,69 @@ fn read_png_metadata(path: &Path) -> Result<PngMetadata, RpcError> {
     })
 }
 
-/// Derive the capture's scale factor from its pixel width and the window's
-/// logical width.
+/// Divide a pixel count by its logical (point) counterpart.
 ///
-/// Returns `None` when the number cannot be derived: without screen-recording
-/// permission the `CGWindowList` fallback captures a screen-sized image rather
-/// than the window, so the division compares two unrelated surfaces and yields
-/// a scale no display has. Pixel-diff harnesses tag artifacts by this value,
-/// so an absent scale beats a plausible wrong one (#149).
-///
-/// Falls back to `Some(1.0)` when the logical width is unknown or zero so the
-/// response never carries NaN or Inf.
+/// Rounds to 2 decimal places to absorb the float noise `CGWindowBounds`
+/// carries, so a capture that really is the window lands on the same number
+/// from both axes instead of `2.0` against `2.00000003`. Returns `None` when
+/// the division is not a finite positive number.
 #[cfg(any(target_os = "macos", test))]
-fn compute_scale_factor(pixel_width: u32, logical_width: f64, tcc_denied: bool) -> Option<f32> {
-    if tcc_denied {
-        return None;
+fn rounded_ratio(pixels: u32, logical: f64) -> Option<f64> {
+    let ratio = f64::from(pixels) / logical;
+    if ratio.is_finite() && ratio > 0.0 {
+        Some((ratio * 100.0).round() / 100.0)
+    } else {
+        None
     }
-    if logical_width <= 0.0 {
+}
+
+/// Derive the capture's scale factor from its pixel dimensions and the
+/// window's logical bounds.
+///
+/// Both axes must agree on the ratio. A PNG that is not exactly the window
+/// fails that test, which is what #149 asks for: with screen recording denied
+/// the `CGWindowList` fallback hands back a screen-sized image, and a screen's
+/// aspect is not the window's, so the two ratios part ways (4344/1512 = 2.87
+/// across, 2744/982 = 2.79 down). Pixel-diff harnesses tag artifacts by this
+/// value, so an absent scale beats a plausible wrong one.
+///
+/// The geometry decides, not `tcc_denied` — that flag reports a permission
+/// state, and `capture_with_fallback` also raises it after a *granted* probe
+/// whose per-window `screencapture` call failed, where the fallback image is
+/// the window at 1x and the scale was derivable. The primary backend passes
+/// `screencapture -o` so its own PNG is not padded by the window's shadow.
+///
+/// The check compares two ratios, so a window whose aspect happens to match
+/// the screen's would still pass on a denied capture. Reading the display's
+/// backing scale from `CGDisplayMode` would remove the inference entirely.
+///
+/// Falls back to `Some(1.0)` when the logical bounds are unknown or zero so
+/// the response never carries NaN or Inf.
+#[cfg(any(target_os = "macos", test))]
+fn compute_scale_factor(
+    pixel_width: u32,
+    pixel_height: u32,
+    logical_width: f64,
+    logical_height: f64,
+) -> Option<f32> {
+    if logical_width <= 0.0 || logical_height <= 0.0 {
         return Some(1.0);
     }
-    let scale = f64::from(pixel_width) / logical_width;
-    if scale.is_finite() && scale > 0.0 {
-        // Round to 2 decimal places to avoid `2.00000003` artifacts when the
-        // CGWindowBounds Width carries float noise. Strict-pixel-diff harnesses
-        // tag artifacts by this value, so stability matters more than exact
-        // bit-for-bit fidelity. Truncation to f32 is intentional: Retina scale
-        // factors land in a small finite range (1.0 / 2.0 / 3.0) that f32
-        // represents losslessly.
-        let rounded = (scale * 100.0).round() / 100.0;
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "Retina scale factors fit in f32 without loss"
-        )]
-        let scale_f32 = rounded as f32;
-        Some(scale_f32)
-    } else {
-        Some(1.0)
+    let horizontal = rounded_ratio(pixel_width, logical_width)?;
+    let vertical = rounded_ratio(pixel_height, logical_height)?;
+    // Both sides are a whole number of hundredths, so half a hundredth apart
+    // already means two different numbers.
+    if (horizontal - vertical).abs() > 0.005 {
+        return None;
     }
+    // Truncation to f32 is intentional: Retina scale factors land in a small
+    // finite range (1.0 / 2.0) that f32 represents losslessly.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "Retina scale factors fit in f32 without loss"
+    )]
+    let scale_f32 = horizontal as f32;
+    Some(scale_f32)
 }
 
 #[cfg(test)]
@@ -687,22 +722,44 @@ mod tests {
             assert!(first.get("title").is_some());
             assert!(first.get("layer").is_some());
         }
+        // The test binary owns no on-screen window, so every entry here
+        // belongs to another process and must come back title-less: this
+        // payload now reaches stderr and the MCP client, and other apps'
+        // document names, URLs and chat titles do not belong there.
+        for window in list {
+            assert_eq!(
+                window.get("title").and_then(Value::as_str),
+                Some(""),
+                "a window owned by another process must not carry its title: {window}"
+            );
+        }
     }
 
     #[test]
-    fn test_compute_scale_factor_tcc_denied_reports_no_scale() {
+    fn test_compute_scale_factor_screen_sized_capture_reports_no_scale() {
         // #149: with screen recording denied, `capture_with_fallback` drops to
         // `CGWindowList`, which returns a screen-sized image instead of the
-        // window. Dividing that width by the window's logical width yields a
-        // number no display has (4344 / 1512 = 2.87 on a 2.0 Retina panel).
-        // Pixel-diff harnesses tag artifacts by this value, so a plausible
-        // wrong scale is worse than none.
-        assert_eq!(compute_scale_factor(4344, 1512.0, true), None);
+        // window. A 16" panel at 2172x1372 points against a 1512x982 window
+        // gives 2.87 across and 2.79 down — no display has either.
+        assert_eq!(compute_scale_factor(4344, 2744, 1512.0, 982.0), None);
     }
 
     #[test]
-    fn test_compute_scale_factor_permitted_capture_keeps_derived_scale() {
-        // The derivation still holds when the capture really is the window.
-        assert_eq!(compute_scale_factor(3024, 1512.0, false), Some(2.0));
+    fn test_compute_scale_factor_shadow_padded_capture_reports_no_scale() {
+        // `screencapture` without `-o` pads the PNG with the window's drop
+        // shadow, and by more below the window than beside it, so the two
+        // ratios disagree even though permission was granted.
+        assert_eq!(compute_scale_factor(3248, 2188, 1512.0, 982.0), None);
+    }
+
+    #[test]
+    fn test_compute_scale_factor_window_sized_capture_keeps_derived_scale() {
+        // The derivation holds when the capture really is the window.
+        assert_eq!(compute_scale_factor(3024, 1964, 1512.0, 982.0), Some(2.0));
+    }
+
+    #[test]
+    fn test_compute_scale_factor_unknown_bounds_falls_back_to_one() {
+        assert_eq!(compute_scale_factor(3024, 1964, 0.0, 0.0), Some(1.0));
     }
 }
