@@ -9,7 +9,10 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 /// A function that evaluates JS in the webview.
 /// The first argument is an optional window label (`None` means "use default window").
-pub(crate) type EvalFn = Arc<dyn Fn(Option<&str>, String) -> Result<(), String> + Send + Sync>;
+/// Returns the URL of the page the script was sent to, or `None` when the
+/// webview cannot report it.
+pub(crate) type EvalFn =
+    Arc<dyn Fn(Option<&str>, String) -> Result<Option<tauri::Url>, String> + Send + Sync>;
 
 /// A function that lists all available webview windows and returns their metadata.
 pub(crate) type ListWindowsFn = Arc<dyn Fn() -> serde_json::Value + Send + Sync>;

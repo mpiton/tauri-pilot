@@ -79,11 +79,16 @@ fn main() {
 >
 > ```json
 > {
+>   "remote": {
+>     "urls": ["https://allowed.example/*"]
+>   },
 >   "permissions": ["core:default", "pilot:default"]
 > }
 > ```
 >
 > Without `pilot:default`, eval commands fail with: `eval timed out after 10s`.
+> List a foreign origin in `remote.urls` on the same capability if you need to
+> drive that origin.
 
 ### 2. Install the CLI
 

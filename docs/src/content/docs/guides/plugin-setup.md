@@ -66,11 +66,14 @@ The plugin requires the `pilot:default` permission for its internal `__callback`
 
 ```json
 {
+  "remote": {
+    "urls": ["https://allowed.example/*"]
+  },
   "permissions": ["core:default", "pilot:default"]
 }
 ```
 
-Without this permission, eval commands will time out with "eval timed out after 10s".
+Without this permission, eval commands will time out with "eval timed out after 10s". List a foreign origin in `remote.urls` on the same capability if you need to drive that origin; otherwise commands there fail fast.
 
 ## 6. Verify the setup
 

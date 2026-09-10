@@ -3,7 +3,63 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::oneshot;
+use tauri::Url;
+use tokio::sync::{oneshot, watch};
+
+/// Callback id the bridge sends its hello with when a page loads (#153).
+///
+/// Eval request ids start at 1 (see [`EvalEngine::new`]), so 0 never collides
+/// with a pending eval. `bridge.js` hardcodes the same value.
+pub(crate) const HELLO_ID: u64 = 0;
+
+/// Origins whose bridge said hello, each with the hello count at its latest hello.
+#[derive(Debug, Default)]
+struct Bridges {
+    hellos: u64,
+    latest: HashMap<String, u64>,
+}
+
+/// Key a URL by scheme, host and port.
+///
+/// `Url::origin` is opaque for custom schemes such as `tauri://`, which would
+/// make every app page its own origin, so the key is built by hand.
+/// Default ports are always written (`https://host` and `https://host:443`
+/// share a key). Hostless URLs (`file:`, `data:`) keep the rest of the URL
+/// so they do not inherit each other's hello.
+pub(crate) fn origin_key(url: &Url) -> String {
+    match (
+        url.host_str().filter(|host| !host.is_empty()),
+        url.port_or_known_default(),
+    ) {
+        (Some(host), Some(port)) => format!("{}://{host}:{port}", url.scheme()),
+        (Some(host), None) => format!("{}://{host}", url.scheme()),
+        (None, _) => match url.as_str().split_once('#') {
+            Some((without_fragment, _)) => without_fragment.to_owned(),
+            None => url.as_str().to_owned(),
+        },
+    }
+}
+
+/// Origin keys `url` can match, including an `http` → `https` upgrade.
+///
+/// HSTS (and similar) hops store the hello under `https://host` while
+/// `navigate` still asked for `http://host`. Same host and port, new scheme.
+fn origin_keys(url: &Url) -> Vec<String> {
+    let key = origin_key(url);
+    if url.scheme() != "http" {
+        return vec![key];
+    }
+    let mut https = url.clone();
+    if https.set_scheme("https").is_err() {
+        return vec![key];
+    }
+    let https_key = origin_key(&https);
+    if https_key == key {
+        vec![key]
+    } else {
+        vec![key, https_key]
+    }
+}
 
 /// Error types for eval operations.
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +83,7 @@ pub(crate) struct EvalEngine {
     pending: Arc<Mutex<PendingMap>>,
     next_id: Arc<AtomicU64>,
     last_snapshot: Arc<Mutex<Option<serde_json::Value>>>,
+    bridges: Arc<watch::Sender<Bridges>>,
 }
 
 impl EvalEngine {
@@ -35,7 +92,64 @@ impl EvalEngine {
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(AtomicU64::new(1)),
             last_snapshot: Arc::new(Mutex::new(None)),
+            bridges: Arc::new(watch::Sender::new(Bridges::default())),
         }
+    }
+
+    /// Record a hello from `page` (the invoking webview's URL).
+    ///
+    /// Only pages whose origin may call `__callback` can say hello, so the
+    /// hellos tell which origins answer bridge commands (#153).
+    pub fn bridge_hello(&self, page: &str) {
+        let Ok(url) = Url::parse(page) else {
+            tracing::warn!(page, "bridge hello with an invalid page URL");
+            return;
+        };
+        let key = origin_key(&url);
+        self.bridges.send_modify(|b| {
+            b.hellos += 1;
+            b.latest.insert(key, b.hellos);
+        });
+    }
+
+    /// Number of bridge hellos received so far.
+    pub fn hellos(&self) -> u64 {
+        self.bridges.borrow().hellos
+    }
+
+    /// Whether a bridge on the origin of `url` can answer.
+    ///
+    /// Also `true` before any hello: without one the engine cannot tell app
+    /// origins from foreign ones, so callers keep the plain eval path.
+    /// Scheme-specific: a previous `https` hello does not make `http` look
+    /// callable. [`wait_bridge`] still accepts a fresh `https` upgrade.
+    pub fn has_bridge(&self, url: &Url) -> bool {
+        let bridges = self.bridges.borrow();
+        bridges.hellos == 0 || bridges.latest.contains_key(&origin_key(url))
+    }
+
+    /// Origins whose bridge said hello, sorted.
+    pub fn bridge_origins(&self) -> Vec<String> {
+        let mut origins: Vec<String> = self.bridges.borrow().latest.keys().cloned().collect();
+        origins.sort();
+        origins
+    }
+
+    /// Wait for a hello from the origin of `url` newer than hello number `since`.
+    ///
+    /// Returns `false` when none arrives within `limit`. An `http` destination
+    /// also succeeds when the hello comes from the `https` upgrade of the
+    /// same host and port.
+    pub async fn wait_bridge(&self, url: &Url, since: u64, limit: Duration) -> bool {
+        let keys = origin_keys(url);
+        let mut rx = self.bridges.subscribe();
+        let hello = rx.wait_for(move |b| {
+            keys.iter()
+                .any(|key| b.latest.get(key).is_some_and(|&n| n > since))
+        });
+        tokio::time::timeout(limit, hello)
+            .await
+            .is_ok_and(|seen| seen.is_ok())
     }
 
     /// Store the last snapshot result for later diff comparison.
@@ -250,6 +364,104 @@ mod tests {
         assert!(
             script.contains("__r===undefined?'null':JSON.stringify(__r)"),
             "wrapped script must normalize undefined to the string 'null'; got: {script}"
+        );
+    }
+
+    #[test]
+    fn test_has_bridge_keys_by_scheme_host_and_port() {
+        let engine = EvalEngine::new();
+        let url = |text| Url::parse(text).expect("valid test URL");
+        // Before any hello the engine cannot tell origins apart.
+        assert!(engine.has_bridge(&url("https://example.com/")));
+
+        engine.bridge_hello("tauri://localhost/index.html");
+        // `Url::origin` is opaque for custom schemes; app pages must share a key.
+        assert!(engine.has_bridge(&url("tauri://localhost/settings")));
+        assert!(!engine.has_bridge(&url("https://example.com/")));
+
+        engine.bridge_hello("http://127.0.0.1:8080/");
+        assert!(!engine.has_bridge(&url("http://127.0.0.1:9090/")));
+        assert_eq!(
+            engine.bridge_origins(),
+            ["http://127.0.0.1:8080", "tauri://localhost"]
+        );
+    }
+
+    #[test]
+    fn test_origin_key_normalizes_default_ports_and_opaque_urls() {
+        let engine = EvalEngine::new();
+        let url = |text| Url::parse(text).expect("valid test URL");
+        engine.bridge_hello("https://example.com/");
+        assert!(engine.has_bridge(&url("https://example.com:443/login")));
+        assert!(
+            !engine.has_bridge(&url("http://example.com/")),
+            "a previous https hello must not make http look callable"
+        );
+        assert!(!engine.has_bridge(&url("https://other.example/")));
+
+        engine.bridge_hello("file:///tmp/a.html");
+        assert!(engine.has_bridge(&url("file:///tmp/a.html")));
+        assert!(
+            !engine.has_bridge(&url("file:///tmp/b.html")),
+            "hostless pages must not share a key"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_bridge_http_dest_matches_fresh_https_hello() {
+        let engine = EvalEngine::new();
+        let https = Url::parse("https://example.com/").expect("valid test URL");
+        let http = Url::parse("http://example.com/").expect("valid test URL");
+        engine.bridge_hello(https.as_str());
+        let since = engine.hellos();
+        assert!(
+            !engine
+                .wait_bridge(&http, since, Duration::from_secs(1))
+                .await,
+            "an old https hello must not count as this navigation's upgrade"
+        );
+        engine.bridge_hello(https.as_str());
+        assert!(
+            engine
+                .wait_bridge(&http, since, Duration::from_secs(1))
+                .await,
+            "a hello after since from the https upgrade must count"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_bridge_ignores_hello_from_another_origin() {
+        let engine = EvalEngine::new();
+        let app = Url::parse("tauri://localhost/").expect("valid test URL");
+        let foreign = Url::parse("https://example.com/").expect("valid test URL");
+        engine.bridge_hello(app.as_str());
+        let since = engine.hellos();
+        engine.bridge_hello(app.as_str());
+        assert!(
+            !engine
+                .wait_bridge(&foreign, since, Duration::from_secs(1))
+                .await,
+            "a later hello from the app origin must not count for a foreign dest"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_bridge_ignores_hellos_before_since() {
+        let engine = EvalEngine::new();
+        let app = Url::parse("tauri://localhost/").expect("valid test URL");
+        engine.bridge_hello(app.as_str());
+        let since = engine.hellos();
+        assert!(
+            !engine
+                .wait_bridge(&app, since, Duration::from_secs(1))
+                .await,
+            "an old hello must not count as the new page's"
+        );
+        engine.bridge_hello(app.as_str());
+        assert!(
+            engine
+                .wait_bridge(&app, since, Duration::from_secs(1))
+                .await
         );
     }
 

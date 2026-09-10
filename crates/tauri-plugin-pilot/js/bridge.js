@@ -133,10 +133,32 @@
     return 0;
   }
 
+  function isPilotIpcUrl(url) {
+    const text = String(url);
+    let path;
+    try {
+      const base = (window.location && window.location.href) || "http://localhost/";
+      path = new URL(text, base).pathname;
+    } catch (_) {
+      const q = text.indexOf("?");
+      path = q === -1 ? text : text.slice(0, q);
+    }
+    let decoded;
+    try {
+      decoded = decodeURIComponent(path);
+    } catch (_) {
+      decoded = path;
+    }
+    // Exact IPC path for the two callback commands, not a substring match.
+    return decoded === "/plugin:pilot|callback" || decoded === "/plugin:pilot|__callback";
+  }
+
   const _originalFetch = window.fetch.bind(window);
   window.fetch = function(input, init) {
     const method = (init && init.method) || (input && input.method) || "GET";
     const url = (typeof input === "string") ? input : (input && input.url) || String(input);
+    // Pilot's own IPC (eval callbacks, the bridge hello) is not app traffic.
+    if (isPilotIpcUrl(url)) return _originalFetch(input, init);
     const timestamp = Date.now();
     const requestSize = bodySize(init && init.body);
     return _originalFetch(input, init).then(function(response) {
@@ -1435,4 +1457,14 @@
     storageClear: storageClear,
     formDump: formDump,
   };
+
+  // Tell the plugin this origin can answer (#153). The ACL denies
+  // `__callback` to origins without the pilot permission, and a denied page
+  // can run the bridge but never deliver a result, so its silence here is the
+  // signal. Id 0 is HELLO_ID in eval.rs, never used by an eval request.
+  try {
+    window.__TAURI_INTERNALS__
+      .invoke("plugin:pilot|__callback", { id: 0, result: location.href })
+      .catch(function() {});
+  } catch (_) {}
 })();
