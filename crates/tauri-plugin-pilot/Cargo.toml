@@ -34,7 +34,7 @@ tauri = { version = "2", features = ["unstable"] }
 enigo = { version = "0.6.1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.184"
+libc = "0.2.189"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
@@ -59,4 +59,4 @@ serial_test = "4"
 tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [build-dependencies]
-tauri-plugin = { version = "2.6.1", features = ["build"] }
+tauri-plugin = { version = "2.6.3", features = ["build"] }
