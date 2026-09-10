@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first window by label, and `windows.list` sorts by label. Both used Tauri's
   hash order, which changes from run to run.
 
+- `press` without `--window` now fails when the app has no webview window,
+  instead of sending the key to whatever app has focus.
+
 - `navigate` to an origin the pilot bridge cannot answer from no longer
   reports ok and leaves the session hung. The bridge does run on a foreign
   page, but Tauri's ACL rejects its `__callback` because the pilot permission

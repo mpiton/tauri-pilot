@@ -473,7 +473,13 @@ async fn handle_press(
     // A focuses window X, call B focuses window Y, then both keys land on Y).
     let _order_guard = PRESS_ORDER_LOCK.lock().await;
 
-    match webviews.target(window).and_then(|target| target.focus()) {
+    // With no window to focus, the key would land in whatever app has focus.
+    let target = webviews.target(window).map_err(|e| RpcError {
+        code: -32603,
+        message: format!("cannot focus target window: {e}"),
+        data: None,
+    })?;
+    match target.focus() {
         Ok(()) => {
             // Only wait if the WM actually accepted the focus request —
             // a failed focus call won't transfer focus, so sleeping
@@ -946,6 +952,25 @@ mod tests {
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("focus"));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test]
+    async fn test_dispatch_press_without_any_window_errors() {
+        // Without --window and with no webview, the key would reach another
+        // app. Shift alone keeps a regression harmless.
+        let engine = EvalEngine::new();
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "Shift"})),
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.expect_err("dispatch returns Err");
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview available"));
     }
 
     #[cfg(feature = "press")]
