@@ -318,6 +318,7 @@ fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
         height: 0.0,
     });
     let scale_factor = compute_scale_factor(
+        matches!(backend, ScreenshotBackend::CgWindowList),
         metadata.width,
         metadata.height,
         logical_bounds.width,
@@ -550,14 +551,20 @@ fn rounded_ratio(pixels: u32, logical: f64) -> Option<f64> {
 /// the window at 1x and the scale was derivable. The primary backend passes
 /// `screencapture -o` so its own PNG is not padded by the window's shadow.
 ///
-/// The check compares two ratios, so a window whose aspect happens to match
-/// the screen's would still pass on a denied capture. Reading the display's
-/// backing scale from `CGDisplayMode` would remove the inference entirely.
+/// Two agreeing ratios are not proof on their own, so the capture's provenance
+/// gates them: `nominal_resolution` says the PNG came from `capture_cgwindow`,
+/// which asks CoreGraphics for `kCGWindowImageNominalResolution` and therefore
+/// can only legitimately produce 1:1. Anything else from that backend is not
+/// the window — under TCC denial CoreGraphics ignores the flags and hands back
+/// the screen, which would otherwise slip through whenever its aspect matches
+/// the window's. Reading the display's backing scale from `CGDisplayMode`
+/// would remove the inference entirely.
 ///
 /// Falls back to `Some(1.0)` when the logical bounds are unknown or zero so
 /// the response never carries NaN or Inf.
 #[cfg(any(target_os = "macos", test))]
 fn compute_scale_factor(
+    nominal_resolution: bool,
     pixel_width: u32,
     pixel_height: u32,
     logical_width: f64,
@@ -571,6 +578,9 @@ fn compute_scale_factor(
     // Both sides are a whole number of hundredths, so half a hundredth apart
     // already means two different numbers.
     if (horizontal - vertical).abs() > 0.005 {
+        return None;
+    }
+    if nominal_resolution && (horizontal - 1.0).abs() > 0.005 {
         return None;
     }
     // Truncation to f32 is intentional: Retina scale factors land in a small
@@ -741,7 +751,7 @@ mod tests {
         // `CGWindowList`, which returns a screen-sized image instead of the
         // window. A 16" panel at 2172x1372 points against a 1512x982 window
         // gives 2.87 across and 2.79 down — no display has either.
-        assert_eq!(compute_scale_factor(4344, 2744, 1512.0, 982.0), None);
+        assert_eq!(compute_scale_factor(true, 4344, 2744, 1512.0, 982.0), None);
     }
 
     #[test]
@@ -749,17 +759,41 @@ mod tests {
         // `screencapture` without `-o` pads the PNG with the window's drop
         // shadow, and by more below the window than beside it, so the two
         // ratios disagree even though permission was granted.
-        assert_eq!(compute_scale_factor(3248, 2188, 1512.0, 982.0), None);
+        assert_eq!(compute_scale_factor(false, 3248, 2188, 1512.0, 982.0), None);
     }
 
     #[test]
     fn test_compute_scale_factor_window_sized_capture_keeps_derived_scale() {
         // The derivation holds when the capture really is the window.
-        assert_eq!(compute_scale_factor(3024, 1964, 1512.0, 982.0), Some(2.0));
+        assert_eq!(
+            compute_scale_factor(false, 3024, 1964, 1512.0, 982.0),
+            Some(2.0)
+        );
+    }
+
+    #[test]
+    fn test_compute_scale_factor_screen_sized_capture_at_window_aspect_reports_no_scale() {
+        // The two ratios agree here — a 2172x1372 point screen against a
+        // window at exactly half its size in both directions — so geometry
+        // alone would hand back 4.0. `capture_cgwindow` asked for nominal
+        // resolution, so anything but 1:1 means CoreGraphics did not honour
+        // the flags and the PNG is not the window.
+        assert_eq!(compute_scale_factor(true, 4344, 2744, 1086.0, 686.0), None);
+    }
+
+    #[test]
+    fn test_compute_scale_factor_nominal_window_capture_reports_one() {
+        // `capture_with_fallback` also reaches `capture_cgwindow` after a
+        // granted probe whose per-window `screencapture` call failed. The PNG
+        // is then the window at 1x, and 1.0 describes it.
+        assert_eq!(
+            compute_scale_factor(true, 1512, 982, 1512.0, 982.0),
+            Some(1.0)
+        );
     }
 
     #[test]
     fn test_compute_scale_factor_unknown_bounds_falls_back_to_one() {
-        assert_eq!(compute_scale_factor(3024, 1964, 0.0, 0.0), Some(1.0));
+        assert_eq!(compute_scale_factor(false, 3024, 1964, 0.0, 0.0), Some(1.0));
     }
 }

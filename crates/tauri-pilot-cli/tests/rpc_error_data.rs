@@ -75,6 +75,11 @@ fn spawn_mock_window_not_found_server(socket: &PathBuf) -> thread::JoinHandle<()
 
 /// Run the binary against `socket` with a `screenshot_native` call that is
 /// guaranteed to reach the RPC error path, and return its stderr.
+///
+/// Panics before the caller can `join()` the one-shot mock server when the
+/// binary never reached that path — an arg-parse or environment failure exits
+/// non-zero without ever connecting, which would otherwise leave the server
+/// blocked on `accept()` and hang the test run.
 fn stderr_of_failed_screenshot(socket: &Path) -> String {
     let tmpdir = tempfile::tempdir().expect("tempdir");
     let output_path = tmpdir.path().join("shot.png");
@@ -97,7 +102,12 @@ fn stderr_of_failed_screenshot(socket: &Path) -> String {
         !output.status.success(),
         "a JSON-RPC error must exit non-zero"
     );
-    String::from_utf8_lossy(&output.stderr).into_owned()
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !stderr.contains("RPC error") {
+        let _ = std::fs::remove_file(socket);
+        panic!("binary never reached the RPC error path.\n--- stderr ---\n{stderr}\n--- end ---");
+    }
+    stderr
 }
 
 #[test]
