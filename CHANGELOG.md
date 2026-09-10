@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A second instance of an app that embeds the plugin no longer panics at
+  startup. On Unix the plugin `setup` hook propagated the `AddrInUse` error
+  from the socket bind, which Tauri turns into a fatal `PluginInitialization`
+  error, so the second process died before it showed a window. The plugin is
+  debug-only tooling: it now logs a warning, skips the server and lets the app
+  run, which is what Windows already did. [#152]
+
 - `screenshot_native` errors now carry their detail to the terminal. Every RPC
   error went through one `bail!` in the CLI client that kept the code and the
   message and dropped `error.data`, so a `WINDOW_NOT_FOUND` printed nothing of
@@ -687,3 +694,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#145]: https://github.com/mpiton/tauri-pilot/pull/145
 [#146]: https://github.com/mpiton/tauri-pilot/issues/146
 [#149]: https://github.com/mpiton/tauri-pilot/issues/149
+[#152]: https://github.com/mpiton/tauri-pilot/issues/152

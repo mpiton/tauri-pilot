@@ -43,6 +43,11 @@ pub(crate) const BRIDGE_JS: &str = concat!(
 /// reachable via ADB forwarding. The per-instance address is logged at info level.
 /// In debug builds on Windows, starts a Named Pipe server at
 /// `\\.\pipe\tauri-pilot-{identifier}` and registers the instance under `%LOCALAPPDATA%\tauri-pilot\instances\`.
+///
+/// Failing to start the server never prevents the host app from running: if the
+/// socket cannot be bound (for example because another instance of the same app
+/// already owns it), the failure is logged at warn level and the app starts
+/// without a pilot server.
 #[must_use]
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     #[cfg(not(all(any(unix, windows), debug_assertions)))]
@@ -72,18 +77,27 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let recorder = Recorder::new();
 
                 // Unix binds with the std (sync) `UnixListener`, which needs no
-                // tokio runtime, so binding stays here in `setup` where a failure
-                // surfaces as a hard plugin error. `run` only upgrades the
-                // listener to tokio once it is already on the runtime.
+                // tokio runtime, so binding stays here in `setup` and the socket
+                // is ready before the app finishes starting. `run` only upgrades
+                // the listener to tokio once it is already on the runtime.
+                //
+                // The plugin is debug-only tooling: failing to start the QA
+                // server (e.g. a second instance of the app already owns the
+                // socket, #152) must never prevent the host app from running,
+                // so bind errors are logged and skipped, never returned from
+                // `setup` (where they become a fatal `PluginInitialization`).
                 #[cfg(unix)]
                 {
-                    let address = server::socket_address(&identifier).inspect_err(|e| {
-                        tracing::error!(identifier, "failed to build tauri-pilot socket address: {e}");
-                    })?;
-                    let (listener, guard) = server::bind(&address).map_err(|e| {
-                        tracing::error!(?address, "failed to bind socket: {e}");
-                        e
-                    })?;
+                    let Ok(address) = server::socket_address(&identifier).inspect_err(|e| {
+                        tracing::warn!(identifier, "tauri-pilot server not started, failed to build socket address: {e}");
+                    }) else {
+                        return Ok(());
+                    };
+                    let Ok((listener, guard)) = server::bind(&address).inspect_err(|e| {
+                        tracing::warn!(?address, "tauri-pilot server not started, failed to bind socket: {e}");
+                    }) else {
+                        return Ok(());
+                    };
                     tauri::async_runtime::spawn(server::run(
                         listener,
                         guard,
@@ -500,6 +514,38 @@ mod tests {
         assert!(
             helper_idx < fill_idx,
             "nativeValueSetter must be declared before fill (#85)"
+        );
+    }
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    #[test]
+    fn second_instance_starts_when_socket_already_bound() {
+        // #152: the plugin is debug-only tooling, so a second instance of the
+        // host app must start even though the first one already owns the pilot
+        // socket. The bind failure is logged and the server is skipped.
+        use tauri::Manager;
+
+        let identifier = format!("com.pilot.issue152-{}", std::process::id());
+        let address = super::server::socket_address(&super::sanitize_identifier(&identifier))
+            .expect("socket address");
+        let path = address
+            .as_pathname()
+            .expect("pathname socket")
+            .to_path_buf();
+        // First instance: a live listener on the pilot socket.
+        let _first = std::os::unix::net::UnixListener::bind(&path).expect("bind first instance");
+
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = identifier;
+        let app = tauri::test::mock_builder()
+            .plugin(super::init())
+            .build(context);
+        let _ = std::fs::remove_file(&path);
+
+        let app = app.expect("second instance must start without a pilot server (#152)");
+        assert!(
+            app.try_state::<super::EvalEngine>().is_some(),
+            "plugin setup must still run for the second instance"
         );
     }
 
