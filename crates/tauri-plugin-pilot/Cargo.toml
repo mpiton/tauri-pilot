@@ -56,6 +56,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 serial_test = "4"
+tauri = { version = "2", features = ["test"] }
 tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [build-dependencies]
