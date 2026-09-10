@@ -107,6 +107,9 @@ test("screenshot with selector does not override element dimensions", async () =
   assert.equal("width" in calls[0].options, false);
   assert.equal("height" in calls[0].options, false);
   assert.equal(calls[0].options.pixelRatio, 1);
+  // #146 hits element captures too — the CLI and the MCP tool both take this
+  // path for `--selector`, so the curated list must be passed here as well.
+  assert.ok(Array.isArray(calls[0].options.includeStyleProperties));
 });
 
 test("screenshot with unmatched selector throws element not found", async () => {
@@ -136,18 +139,46 @@ test("screenshot restricts the style properties html-to-image copies", async () 
   // A few hundred names is already quadratic pain on WebKit; keep it small.
   assert.ok(props.length < 200, `expected a curated list, got ${props.length}`);
   assert.equal(props.filter((p) => p.startsWith("--")).length, 0);
-  // Anything the page actually paints has to survive the clone.
+  // Anything the page actually paints has to survive the clone. At least one
+  // name per block of STYLE_PROPERTIES, so deleting a whole category fails
+  // here instead of silently flattening every capture.
   for (const required of [
-    "color",
-    "background-color",
-    "font-family",
+    "display", // box + layout
+    "content-visibility", // ... and the two that hide a subtree
+    "clip",
+    "flex-direction", // flex + grid
+    "background-color", // background + border
     "border-top-width",
-    "transform",
+    "border-image-source",
+    "transform", // paint effects
     "transform-origin",
+    "mask-size",
+    "color", // text
+    "font-family",
     "content",
-    "fill",
+    "-webkit-text-security", // author-masked fields must stay masked
+    "fill", // replaced content + SVG
+    "text-anchor",
+    "appearance", // form controls
   ]) {
     assert.ok(props.includes(required), `missing ${required}`);
   }
   assert.equal(new Set(props).size, props.length, "duplicate property names");
+});
+
+// The whole fix rests on one expression in the vendored bundle:
+// `t.includeStyleProperties ? ... : f(getComputedStyle(documentElement))`.
+// html-to-image silently ignores options it does not know, so a version bump
+// that renames or drops it would put the ~2200-name enumeration back on every
+// cloned element with the suite still green. Pin the option to the artifact.
+test("the vendored html-to-image still reads includeStyleProperties", () => {
+  const vendor = readFileSync(
+    join(here, "vendor", "html-to-image.iife.js"),
+    "utf8",
+  );
+  assert.ok(
+    vendor.includes("includeStyleProperties"),
+    "vendored html-to-image dropped includeStyleProperties: re-check " +
+      "scripts/build-html-to-image.sh against the upstream pin (#146)",
+  );
 });

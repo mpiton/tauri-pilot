@@ -30,10 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attribute on each call, making the clone quadratic (~370 s and 100 % CPU on a
   648-node page, with every later bridge call timing out until it finished).
   The bridge now passes a curated `includeStyleProperties` list of the
-  properties a page actually paints, so the copy drops from ~2240 to 158
-  `setProperty` calls per element (28x faster end-to-end on a Chromium repro of
-  that page, pixel-identical output). Custom properties are dropped on purpose:
-  computed values already arrive with their `var()` resolved. [#146]
+  properties a page actually paints, so the copy drops from ~2200 to 187
+  `setProperty` calls per element (measured 28x faster end-to-end on a Chromium
+  repro of that page at the original 156-name cut, pixel-identical output).
+  Custom properties are dropped on purpose: computed values already arrive with
+  their `var()` resolved. The list is an allowlist, though, so a standard
+  painted property that is not on it is missing from the capture as well —
+  `screenshot_native` remains the pixel-exact escape hatch. [#146]
 
 ## [0.7.3] - 2026-08-30
 

@@ -1205,7 +1205,7 @@
     "max-height", "box-sizing", "aspect-ratio", "margin-top", "margin-right",
     "margin-bottom", "margin-left", "padding-top", "padding-right",
     "padding-bottom", "padding-left", "overflow-x", "overflow-y", "visibility",
-    "opacity", "vertical-align",
+    "opacity", "vertical-align", "content-visibility", "clip",
     // Flex + grid
     "flex-direction", "flex-wrap", "flex-grow", "flex-shrink", "flex-basis",
     "justify-content", "justify-items", "justify-self", "align-content",
@@ -1213,7 +1213,7 @@
     "grid-template-columns", "grid-template-rows", "grid-template-areas",
     "grid-auto-flow", "grid-auto-columns", "grid-auto-rows",
     "grid-column-start", "grid-column-end", "grid-row-start", "grid-row-end",
-    "column-count",
+    "column-count", "column-width",
     // Background + border
     "background-color", "background-image", "background-position",
     "background-size", "background-repeat", "background-clip",
@@ -1226,10 +1226,14 @@
     "border-bottom-right-radius", "border-bottom-left-radius",
     "border-collapse", "border-spacing", "table-layout", "outline-color",
     "outline-style", "outline-width", "outline-offset", "box-shadow",
+    "border-image-source", "border-image-slice", "border-image-width",
+    "border-image-outset", "border-image-repeat",
     // Paint effects
-    "filter", "backdrop-filter", "mix-blend-mode", "clip-path", "mask-image",
-    "transform", "transform-origin", "transform-style", "translate", "rotate",
-    "scale", "perspective",
+    "filter", "backdrop-filter", "mix-blend-mode", "background-blend-mode",
+    "isolation", "clip-path", "mask-image", "mask-size", "mask-position",
+    "mask-repeat", "mask-mode", "mask-composite", "transform",
+    "transform-origin", "transform-style", "translate", "rotate", "scale",
+    "perspective", "perspective-origin", "backface-visibility",
     // Text
     "color", "font-family", "font-size", "font-weight", "font-style",
     "font-variant", "font-stretch", "font-feature-settings",
@@ -1237,16 +1241,21 @@
     "text-align", "text-indent", "text-transform", "text-shadow",
     "text-overflow", "text-decoration-line", "text-decoration-color",
     "text-decoration-style", "text-decoration-thickness",
-    "text-underline-offset", "-webkit-text-fill-color", "-webkit-text-stroke",
+    "text-underline-offset", "-webkit-text-fill-color",
+    "-webkit-text-stroke-width", "-webkit-text-stroke-color",
+    "-webkit-text-security", "-webkit-font-smoothing",
     "-webkit-line-clamp", "-webkit-box-orient", "white-space", "word-break",
     "overflow-wrap", "hyphens", "direction", "unicode-bidi", "writing-mode",
     "text-orientation", "tab-size", "list-style-type", "list-style-position",
-    "list-style-image", "content",
+    "list-style-image", "content", "counter-reset", "counter-increment",
     // Replaced content + SVG
     "object-fit", "object-position", "image-rendering", "fill", "fill-opacity",
     "fill-rule", "stroke", "stroke-width", "stroke-opacity", "stroke-linecap",
     "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "clip-rule",
-    "stop-color", "stop-opacity", "d",
+    "stop-color", "stop-opacity", "d", "text-anchor", "dominant-baseline",
+    "paint-order", "marker-start", "marker-mid", "marker-end",
+    // Form controls
+    "appearance", "-webkit-appearance", "accent-color",
   ];
 
   async function screenshot(options) {

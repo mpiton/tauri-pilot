@@ -869,6 +869,13 @@ entire page from the top. Use `--selector` to capture a single element
 (works for elements below the fold too). For a pixel-exact capture of the
 native window, use `screenshot_native`.
 
+The bridge also copies only an allowlist of painted CSS properties onto the
+clone it renders (a full computed-style copy wedges WebKit for minutes on
+style-variable-heavy pages). A page that paints through a property outside
+that list renders without it, with no error — if the PNG does not match what
+you see in the app, that is the first thing to check, and `screenshot_native`
+is the way around it.
+
 **Arguments:**
 
 | Argument | Description |
