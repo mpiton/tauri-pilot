@@ -14,7 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forwarded with `adb forward localfilesystem:... localabstract:...`. Connections
   require matching UID/GID pairs for the app, root or ADB shell. [#145]
 
+### Changed
+
+- A bridge command on a page whose origin never said hello no longer runs its
+  script before it fails, so a `click` there no longer clicks. `navigate` still
+  runs, since it is the way back to the app origin.
+
 ### Fixed
+
+- Without `--window` and without a `main` window, commands now target the
+  first window by label, and `windows.list` sorts by label. Both used Tauri's
+  hash order, which changes from run to run.
 
 - `navigate` to an origin the pilot bridge cannot answer from no longer
   reports ok and leaves the session hung. The bridge does run on a foreign

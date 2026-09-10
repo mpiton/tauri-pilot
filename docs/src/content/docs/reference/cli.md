@@ -12,7 +12,7 @@ These options can be used with any command.
 | Option | Description |
 |--------|-------------|
 | `--socket <path>` | Explicit path to the Unix socket. Auto-detected if omitted. Env: `TAURI_PILOT_SOCKET` |
-| `--window <label>` | Target a specific window by label. Env: `TAURI_PILOT_WINDOW`. Default: `main`, falls back to first available |
+| `--window <label>` | Target a specific window by label. Env: `TAURI_PILOT_WINDOW`. Default: `main`, falls back to the first window by label |
 | `--json` | Output JSON instead of human-readable text |
 
 ### Socket Auto-Detection
@@ -33,7 +33,7 @@ tauri-pilot click @e3 --window main       # click in the main window
 TAURI_PILOT_WINDOW=settings tauri-pilot snapshot
 ```
 
-If `--window` is not specified, the CLI targets the `main` window and falls back to the first available window. If the specified window label does not exist, the command exits with an error.
+If `--window` is not specified, the CLI targets the `main` window and falls back to the first window by label. If the specified window label does not exist, the command exits with an error.
 
 ## Target Syntax
 

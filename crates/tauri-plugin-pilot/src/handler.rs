@@ -5,7 +5,7 @@ use crate::key;
 use crate::protocol::RpcError;
 use crate::recorder::{RecordEntry, Recorder};
 use crate::screenshot;
-use crate::server::{EvalFn, FocusFn, ListWindowsFn};
+use crate::webview::{TargetWindow, Webviews};
 
 use std::time::Duration;
 #[cfg(feature = "press")]
@@ -164,19 +164,14 @@ fn inject_plugin_version(result: &mut serde_json::Value) {
 }
 
 /// Dispatch a JSON-RPC method call to the appropriate handler.
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn dispatch(
     method: &str,
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
-    list_fn: Option<&ListWindowsFn>,
-    focus_fn: Option<&FocusFn>,
+    webviews: &dyn Webviews,
     recorder: &Recorder,
 ) -> Result<serde_json::Value, RpcError> {
-    #[cfg(not(feature = "press"))]
-    let _ = focus_fn;
-
     // Save original params before window extraction so the recorder can strip
     // "window" internally.
     let original_params = params.cloned();
@@ -191,27 +186,17 @@ pub(crate) async fn dispatch(
             inject_plugin_version(&mut result);
             Ok(result)
         }
-        "windows.list" => {
-            if let Some(f) = list_fn {
-                Ok(f())
-            } else {
-                Err(RpcError {
-                    code: -32603,
-                    message: "No window manager available".to_owned(),
-                    data: None,
-                })
-            }
-        }
+        "windows.list" => Ok(serde_json::json!({"windows": webviews.list()})),
         "snapshot" => {
             let result =
-                handle_eval_method("snapshot", params, engine, eval_fn, win, DEFAULT_TIMEOUT)
+                handle_eval_method("snapshot", params, engine, webviews, win, DEFAULT_TIMEOUT)
                     .await?;
             engine.store_snapshot(&result);
             Ok(result)
         }
-        "diff" => handle_diff(params, engine, eval_fn, win).await,
+        "diff" => handle_diff(params, engine, webviews, win).await,
         #[cfg(feature = "press")]
-        "press" => handle_press(params, focus_fn, win).await,
+        "press" => handle_press(params, webviews, win).await,
         #[cfg(not(feature = "press"))]
         "press" => Err(RpcError {
             code: -32601,
@@ -222,9 +207,9 @@ pub(crate) async fn dispatch(
         "click" | "fill" | "type" | "select" | "check" | "scroll" | "drop" | "text" | "html"
         | "value" | "attrs" | "eval" | "ipc" | "url" | "title" | "visible" | "count"
         | "checked" => {
-            handle_eval_method(method, params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+            handle_eval_method(method, params, engine, webviews, win, DEFAULT_TIMEOUT).await
         }
-        "navigate" => handle_navigate(params, engine, eval_fn, win).await,
+        "navigate" => handle_navigate(params, engine, webviews, win).await,
         // `drag` spends `steps × stepDelayMs + settleMs` in JS timers before it
         // resolves, so the channel timeout has to cover the gesture the caller
         // asked for.
@@ -233,7 +218,7 @@ pub(crate) async fn dispatch(
                 method,
                 params,
                 engine,
-                eval_fn,
+                webviews,
                 win,
                 drag_eval_timeout(params),
             )
@@ -244,7 +229,7 @@ pub(crate) async fn dispatch(
         // `state` call also surfaces plugin/CLI version drift (issue #135).
         "state" => {
             let mut result =
-                handle_eval_method("state", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await?;
+                handle_eval_method("state", params, engine, webviews, win, DEFAULT_TIMEOUT).await?;
             inject_plugin_version(&mut result);
             Ok(result)
         }
@@ -256,7 +241,7 @@ pub(crate) async fn dispatch(
                 method,
                 params,
                 engine,
-                eval_fn,
+                webviews,
                 win,
                 bridge_eval_timeout(params),
             )
@@ -268,21 +253,29 @@ pub(crate) async fn dispatch(
         // two surfaces can't be confused by callers or accidentally folded
         // together by a future refactor.
         "screenshot" => {
-            handle_eval_method(method, params, engine, eval_fn, win, SCREENSHOT_TIMEOUT).await
+            handle_eval_method(method, params, engine, webviews, win, SCREENSHOT_TIMEOUT).await
         }
         "screenshot_native" => screenshot::handle_screenshot(params).await,
         "console.getLogs" => {
-            handle_eval_method("consoleLogs", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+            handle_eval_method(
+                "consoleLogs",
+                params,
+                engine,
+                webviews,
+                win,
+                DEFAULT_TIMEOUT,
+            )
+            .await
         }
         "console.clear" => {
-            handle_eval_method("clearLogs", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+            handle_eval_method("clearLogs", params, engine, webviews, win, DEFAULT_TIMEOUT).await
         }
         "network.getRequests" => {
             handle_eval_method(
                 "networkRequests",
                 params,
                 engine,
-                eval_fn,
+                webviews,
                 win,
                 DEFAULT_TIMEOUT,
             )
@@ -293,34 +286,42 @@ pub(crate) async fn dispatch(
                 "clearNetwork",
                 params,
                 engine,
-                eval_fn,
+                webviews,
                 win,
                 DEFAULT_TIMEOUT,
             )
             .await
         }
         "storage.get" => {
-            handle_eval_method("storageGet", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+            handle_eval_method("storageGet", params, engine, webviews, win, DEFAULT_TIMEOUT).await
         }
         "storage.set" => {
-            handle_eval_method("storageSet", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+            handle_eval_method("storageSet", params, engine, webviews, win, DEFAULT_TIMEOUT).await
         }
         "storage.list" => {
-            handle_eval_method("storageList", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+            handle_eval_method(
+                "storageList",
+                params,
+                engine,
+                webviews,
+                win,
+                DEFAULT_TIMEOUT,
+            )
+            .await
         }
         "storage.clear" => {
             handle_eval_method(
                 "storageClear",
                 params,
                 engine,
-                eval_fn,
+                webviews,
                 win,
                 DEFAULT_TIMEOUT,
             )
             .await
         }
         "forms.dump" => {
-            handle_eval_method("formDump", params, engine, eval_fn, win, DEFAULT_TIMEOUT).await
+            handle_eval_method("formDump", params, engine, webviews, win, DEFAULT_TIMEOUT).await
         }
         "record.start" => {
             recorder.start();
@@ -362,15 +363,9 @@ pub(crate) async fn dispatch(
 async fn handle_diff(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
+    webviews: &dyn Webviews,
     window: Option<&str>,
 ) -> Result<serde_json::Value, RpcError> {
-    let eval_fn = eval_fn.ok_or_else(|| RpcError {
-        code: -32603,
-        message: "No webview available for eval".to_owned(),
-        data: None,
-    })?;
-
     // Determine reference snapshot: from params["reference"] or last stored snapshot
     let reference = if let Some(ref_val) = params.and_then(|p| p.get("reference")) {
         ref_val.clone()
@@ -399,7 +394,7 @@ async fn handle_diff(
             message: msg,
             data: None,
         })?;
-    let result = eval_bridge(&script, engine, eval_fn, window, DEFAULT_TIMEOUT).await?;
+    let result = eval_bridge(&script, engine, webviews, window, DEFAULT_TIMEOUT).await?;
 
     // Parse both snapshots: extract "elements" arrays
     let old_elements: Vec<diff::SnapshotElement> = reference
@@ -450,7 +445,7 @@ async fn handle_diff(
 #[cfg(feature = "press")]
 async fn handle_press(
     params: Option<&serde_json::Value>,
-    focus_fn: Option<&FocusFn>,
+    webviews: &dyn Webviews,
     window: Option<&str>,
 ) -> Result<serde_json::Value, RpcError> {
     let key_str = params
@@ -473,43 +468,30 @@ async fn handle_press(
         data: None,
     })?;
 
-    // An explicit `--window <label>` with no focus hook installed would
-    // otherwise silently drop the focus step and inject into whatever window
-    // currently has focus. Reject before taking any lock.
-    if window.is_some() && focus_fn.is_none() {
-        return Err(RpcError {
-            code: -32603,
-            message: "cannot focus target window: no focus hook installed".to_owned(),
-            data: None,
-        });
-    }
-
     // Hold this lock across the whole focus → settle → inject sequence so
     // two concurrent `press` calls cannot interleave their focus steps (call
     // A focuses window X, call B focuses window Y, then both keys land on Y).
     let _order_guard = PRESS_ORDER_LOCK.lock().await;
 
-    if let Some(focus) = focus_fn {
-        match focus(window) {
-            Ok(()) => {
-                // Only wait if the WM actually accepted the focus request —
-                // a failed focus call won't transfer focus, so sleeping
-                // would just delay the press for nothing.
-                tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
+    match webviews.target(window).and_then(|target| target.focus()) {
+        Ok(()) => {
+            // Only wait if the WM actually accepted the focus request —
+            // a failed focus call won't transfer focus, so sleeping
+            // would just delay the press for nothing.
+            tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
+        }
+        Err(e) => {
+            if let Some(label) = window {
+                // The caller explicitly targeted a window; silently
+                // falling through would deliver the key to whatever
+                // window currently has focus and still return ok.
+                return Err(RpcError {
+                    code: -32603,
+                    message: format!("failed to focus window '{label}': {e}"),
+                    data: None,
+                });
             }
-            Err(e) => {
-                if let Some(label) = window {
-                    // The caller explicitly targeted a window; silently
-                    // falling through would deliver the key to whatever
-                    // window currently has focus and still return ok.
-                    return Err(RpcError {
-                        code: -32603,
-                        message: format!("failed to focus window '{label}': {e}"),
-                        data: None,
-                    });
-                }
-                tracing::warn!(error = %e, "focus before press failed (continuing)");
-            }
+            tracing::warn!(error = %e, "focus before press failed (continuing)");
         }
     }
 
@@ -547,22 +529,16 @@ async fn handle_eval_method(
     method: &str,
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
+    webviews: &dyn Webviews,
     window: Option<&str>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
-    let eval_fn = eval_fn.ok_or_else(|| RpcError {
-        code: -32603,
-        message: "No webview available for eval".to_owned(),
-        data: None,
-    })?;
-
     let script = build_bridge_call(method, params).map_err(|msg| RpcError {
         code: -32602,
         message: msg,
         data: None,
     })?;
-    eval_bridge(&script, engine, eval_fn, window, timeout).await
+    eval_bridge(&script, engine, webviews, window, timeout).await
 }
 
 /// How long `navigate` waits for a hello from an origin whose bridge never
@@ -584,21 +560,19 @@ const BRIDGE_GRACE: Duration = Duration::from_secs(3);
 async fn handle_navigate(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
+    webviews: &dyn Webviews,
     window: Option<&str>,
 ) -> Result<serde_json::Value, RpcError> {
-    let eval_fn = eval_fn.ok_or_else(|| RpcError {
-        code: -32603,
-        message: "No webview available for eval".to_owned(),
-        data: None,
-    })?;
     let script = build_bridge_call("navigate", params).map_err(|msg| RpcError {
         code: -32602,
         message: msg,
         data: None,
     })?;
     let since = engine.hellos();
-    let (id, rx, page) = send_script(&script, engine, eval_fn, window)?;
+    let target = target(webviews, window)?;
+    // Read before the eval so the URL names the page the script lands on.
+    let page = target.url();
+    let (id, rx) = send_script(&script, engine, target.as_ref())?;
     let dest = navigate_destination(
         page.as_ref(),
         params.and_then(|p| p.get("url").and_then(serde_json::Value::as_str)),
@@ -692,41 +666,50 @@ fn fail_no_bridge(engine: &EvalEngine, id: u64, page: &tauri::Url) -> RpcError {
 
 /// Send a bridge script and wait for its callback.
 ///
-/// Fails at once when the page has no bridge that can call back, instead of
-/// waiting out `timeout` (#153). The script has already run on that page.
+/// Refuses without running the script when the page has no bridge that can
+/// call back, instead of waiting out `timeout` (#153).
 async fn eval_bridge(
     script: &str,
     engine: &EvalEngine,
-    eval_fn: &EvalFn,
+    webviews: &dyn Webviews,
     window: Option<&str>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
-    let (id, rx, page) = send_script(script, engine, eval_fn, window)?;
-    if let Some(page) = page.filter(|page| !engine.has_bridge(page)) {
-        engine.resolve(id, Err("page has no pilot bridge".to_owned()));
+    let target = target(webviews, window)?;
+    if let Some(page) = target.url().filter(|page| !engine.has_bridge(page)) {
         return Err(no_bridge_error(
             engine,
             &format!("no pilot bridge on the current page ({page})"),
         ));
     }
+    let (id, rx) = send_script(script, engine, target.as_ref())?;
     wait(engine, id, rx, timeout).await
 }
 
+/// Resolve the window a request targets.
+fn target<'a>(
+    webviews: &'a dyn Webviews,
+    window: Option<&str>,
+) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
+    webviews.target(window).map_err(|e| RpcError {
+        code: -32603,
+        message: format!("Eval failed: {e}"),
+        data: None,
+    })
+}
+
 /// Register a callback, then eval `script` wrapped in the ADR-001 pattern.
-///
-/// Returns the callback id and receiver, plus the page URL from `eval_fn`.
 fn send_script(
     script: &str,
     engine: &EvalEngine,
-    eval_fn: &EvalFn,
-    window: Option<&str>,
+    target: &dyn TargetWindow,
 ) -> Result<CallbackSlot, RpcError> {
     let (id, rx) = engine.register();
     let wrapped = EvalEngine::wrap_script(id, script);
-    match eval_fn(window, wrapped) {
-        Ok(page) => Ok((id, rx, page)),
+    match target.eval(&wrapped) {
+        Ok(()) => Ok((id, rx)),
         Err(e) => {
-            // Clean up pending entry on eval_fn failure
+            // Clean up pending entry on eval failure
             engine.resolve(id, Err(format!("Eval failed: {e}")));
             Err(RpcError {
                 code: -32603,
@@ -737,11 +720,10 @@ fn send_script(
     }
 }
 
-/// Callback id, its receiver, and the URL of the page the script was sent to.
+/// Callback id and its receiver.
 type CallbackSlot = (
     u64,
     tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>,
-    Option<tauri::Url>,
 );
 
 /// Wait for the callback of eval `id`.
@@ -855,7 +837,7 @@ pub(crate) fn callback<R: tauri::Runtime>(
         id,
         result,
         error,
-        crate::current_url(&webview).as_ref(),
+        crate::webview::current_url(&webview).as_ref(),
     );
 }
 
@@ -883,21 +865,28 @@ pub(crate) fn __callback<R: tauri::Runtime>(
         id,
         result,
         error,
-        crate::current_url(&webview).as_ref(),
+        crate::webview::current_url(&webview).as_ref(),
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webview::fake::FakeWebviews;
     use serde_json::json;
 
     #[tokio::test]
     async fn test_dispatch_ping_returns_ok() {
         let engine = EvalEngine::new();
-        let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new())
-            .await
-            .expect("dispatch succeeds");
+        let result = dispatch(
+            "ping",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await
+        .expect("dispatch succeeds");
         assert_eq!(result["status"], json!("ok"));
     }
 
@@ -908,9 +897,15 @@ mod tests {
         // the CLI (issue #135). Older plugins (<= 0.7.0) omit the field, which
         // the CLI reads as "pre-introspection, upgrade recommended".
         let engine = EvalEngine::new();
-        let result = dispatch("ping", None, &engine, None, None, None, &Recorder::new())
-            .await
-            .expect("dispatch succeeds");
+        let result = dispatch(
+            "ping",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await
+        .expect("dispatch succeeds");
         assert_eq!(result["plugin_version"], json!(env!("CARGO_PKG_VERSION")));
     }
 
@@ -924,9 +919,7 @@ mod tests {
             "press",
             Some(&json!({"key": "Control++P"})),
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -937,8 +930,8 @@ mod tests {
 
     #[cfg(feature = "press")]
     #[tokio::test]
-    async fn test_dispatch_press_with_explicit_window_and_no_focus_fn_errors() {
-        // --window <label> with no focus hook must not silently inject into
+    async fn test_dispatch_press_with_unknown_window_errors() {
+        // --window <label> naming no window must not silently inject into
         // the currently focused window. We can pass `window` through params
         // (handler extracts it before dispatch).
         let engine = EvalEngine::new();
@@ -946,9 +939,7 @@ mod tests {
             "press",
             Some(&json!({"key": "Enter", "window": "settings"})),
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -961,7 +952,14 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_press_with_missing_key_returns_invalid_params() {
         let engine = EvalEngine::new();
-        let result = dispatch("press", None, &engine, None, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "press",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
     }
@@ -973,9 +971,7 @@ mod tests {
             "nonexistent",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -984,15 +980,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_snapshot_without_eval_fn() {
+    async fn test_dispatch_snapshot_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "snapshot",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1002,9 +996,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_diff_without_eval_fn() {
+    async fn test_dispatch_diff_without_webview() {
         let engine = EvalEngine::new();
-        let result = dispatch("diff", None, &engine, None, None, None, &Recorder::new()).await;
+        let params = json!({"reference": {"elements": []}});
+        let result = dispatch(
+            "diff",
+            Some(&params),
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -1013,27 +1015,10 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_diff_without_previous_snapshot() {
         let engine = EvalEngine::new();
-        // Provide a dummy eval_fn that always succeeds (won't be called because we fail before)
-        // Actually diff needs eval_fn first, then checks reference.
-        // We need an eval_fn that returns something, but there's no previous snapshot.
-        // Use an eval_fn that will block forever — but we check reference before eval.
-        // Wait: handle_diff checks eval_fn first, then reference.
-        // So with eval_fn but no previous snapshot, we get -32602 after eval completes.
-        // Let's use a sync eval_fn and resolve manually.
-        // Actually the reference check happens BEFORE the eval call, so we can check:
-        // eval_fn present + no reference in params + no last_snapshot → -32602
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(None));
-        let result = dispatch(
-            "diff",
-            None,
-            &engine,
-            Some(&eval_fn),
-            None,
-            None,
-            &Recorder::new(),
-        )
-        .await;
+        // The reference check runs before any eval, so a webview that never
+        // answers is enough: no reference in params + no last_snapshot → -32602
+        let webviews = FakeWebviews::window("main", None);
+        let result = dispatch("diff", None, &engine, &webviews, &Recorder::new()).await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("No previous snapshot"));
@@ -1101,15 +1086,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_console_get_logs_without_eval_fn() {
+    async fn test_dispatch_console_get_logs_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "console.getLogs",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1119,15 +1102,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_console_clear_without_eval_fn() {
+    async fn test_dispatch_console_clear_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "console.clear",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1151,15 +1132,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_network_get_requests_without_eval_fn() {
+    async fn test_dispatch_network_get_requests_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "network.getRequests",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1169,15 +1148,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_network_clear_without_eval_fn() {
+    async fn test_dispatch_network_clear_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "network.clear",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1226,9 +1203,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_watch_without_eval_fn() {
+    async fn test_dispatch_watch_without_webview() {
         let engine = EvalEngine::new();
-        let result = dispatch("watch", None, &engine, None, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "watch",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
@@ -1245,7 +1229,14 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drag_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drag", None, &engine, None, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "drag",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await;
         let err = result.expect_err("dispatch returns Err");
         assert_ne!(err.code, -32601);
     }
@@ -1253,7 +1244,14 @@ mod tests {
     #[tokio::test]
     async fn test_dispatch_drop_routes_to_eval() {
         let engine = EvalEngine::new();
-        let result = dispatch("drop", None, &engine, None, None, None, &Recorder::new()).await;
+        let result = dispatch(
+            "drop",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await;
         let err = result.expect_err("dispatch returns Err");
         assert_ne!(err.code, -32601);
     }
@@ -1273,15 +1271,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_storage_get_without_eval_fn() {
+    async fn test_dispatch_storage_get_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "storage.get",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1291,15 +1287,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_storage_set_without_eval_fn() {
+    async fn test_dispatch_storage_set_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "storage.set",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1309,15 +1303,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_storage_list_without_eval_fn() {
+    async fn test_dispatch_storage_list_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "storage.list",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1327,15 +1319,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_storage_clear_without_eval_fn() {
+    async fn test_dispatch_storage_clear_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "storage.clear",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1395,15 +1385,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_forms_dump_without_eval_fn() {
+    async fn test_dispatch_forms_dump_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
             "forms.dump",
             None,
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await;
@@ -1413,39 +1401,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dispatch_windows_list_without_list_fn() {
+    async fn test_dispatch_windows_list() {
         let engine = EvalEngine::new();
-        let result = dispatch(
-            "windows.list",
-            None,
-            &engine,
-            None,
-            None,
-            None,
-            &Recorder::new(),
-        )
-        .await;
-        let err = result.expect_err("dispatch returns Err");
-        assert_eq!(err.code, -32603);
-        assert!(err.message.contains("No window manager"));
-    }
-
-    #[tokio::test]
-    async fn test_dispatch_windows_list_with_list_fn() {
-        let engine = EvalEngine::new();
-        let list_fn: crate::server::ListWindowsFn = std::sync::Arc::new(
-            || serde_json::json!({"windows": [{"label": "main", "url": "http://localhost", "title": "Test"}]}),
-        );
-        let result = dispatch(
-            "windows.list",
-            None,
-            &engine,
-            None,
-            Some(&list_fn),
-            None,
-            &Recorder::new(),
-        )
-        .await;
+        let webviews = FakeWebviews::window("main", Some("http://localhost/"));
+        let result = dispatch("windows.list", None, &engine, &webviews, &Recorder::new()).await;
         let val = result.expect("dispatch succeeds");
         let windows = val
             .get("windows")
@@ -1460,31 +1419,16 @@ mod tests {
     async fn test_dispatch_window_param_extracted_from_params() {
         let engine = EvalEngine::new();
         // The "window" key must be stripped before being forwarded to the bridge.
-        // We verify this by inspecting the script received by eval_fn.
-        let captured: std::sync::Arc<std::sync::Mutex<String>> =
-            std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        let captured_clone = captured.clone();
+        // We verify this by inspecting the script the webview received.
         let engine_clone = engine.clone();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, script: String| {
-                *captured_clone.lock().expect("captured mutex") = script;
-                // Resolve the callback immediately to avoid blocking for the default 10s timeout.
-                // ID 1 is the first registered callback on a fresh EvalEngine.
-                engine_clone.resolve(1, Ok(serde_json::json!({"ok": true})));
-                Ok(None)
-            });
+        let webviews = FakeWebviews::window("settings", None).on_eval(move || {
+            // Resolve the callback immediately to avoid blocking for the default 10s timeout.
+            // ID 1 is the first registered callback on a fresh EvalEngine.
+            engine_clone.resolve(1, Ok(serde_json::json!({"ok": true})));
+        });
         let params = serde_json::json!({"ref": "el-1", "window": "settings"});
-        let _ = dispatch(
-            "click",
-            Some(&params),
-            &engine,
-            Some(&eval_fn),
-            None,
-            None,
-            &Recorder::new(),
-        )
-        .await;
-        let script = captured.lock().expect("captured mutex").clone();
+        let _ = dispatch("click", Some(&params), &engine, &webviews, &Recorder::new()).await;
+        let script = webviews.scripts().pop().expect("script evaluated");
         // "window" param must not appear in the JS call args
         assert!(!script.contains("\"window\""));
         assert!(script.contains("\"ref\""));
@@ -1500,9 +1444,7 @@ mod tests {
             "screenshot_native",
             Some(&params),
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await
@@ -1524,9 +1466,7 @@ mod tests {
             "screenshot_native",
             Some(&params),
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &Recorder::new(),
         )
         .await
@@ -1551,9 +1491,7 @@ mod tests {
                 "screenshot",
                 Some(&params),
                 &engine,
-                None,
-                None,
-                None,
+                &FakeWebviews::default(),
                 &Recorder::new(),
             )
             .await;
@@ -1567,9 +1505,15 @@ mod tests {
     async fn test_dispatch_record_start_returns_recording() {
         let engine = EvalEngine::new();
         let recorder = Recorder::new();
-        let result = dispatch("record.start", None, &engine, None, None, None, &recorder)
-            .await
-            .expect("dispatch succeeds");
+        let result = dispatch(
+            "record.start",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &recorder,
+        )
+        .await
+        .expect("dispatch succeeds");
         assert_eq!(result["status"], "recording");
         assert!(recorder.is_active());
     }
@@ -1580,9 +1524,15 @@ mod tests {
         let recorder = Recorder::new();
         recorder.start();
         recorder.record("click", Some(&json!({"ref": "e1"})));
-        let result = dispatch("record.stop", None, &engine, None, None, None, &recorder)
-            .await
-            .expect("dispatch succeeds");
+        let result = dispatch(
+            "record.stop",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &recorder,
+        )
+        .await
+        .expect("dispatch succeeds");
         assert_eq!(result["count"], 1);
         assert!(result["entries"].as_array().is_some());
         assert!(!recorder.is_active());
@@ -1593,9 +1543,15 @@ mod tests {
         let engine = EvalEngine::new();
         let recorder = Recorder::new();
         recorder.start();
-        let result = dispatch("record.status", None, &engine, None, None, None, &recorder)
-            .await
-            .expect("dispatch succeeds");
+        let result = dispatch(
+            "record.status",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &recorder,
+        )
+        .await
+        .expect("dispatch succeeds");
         assert_eq!(result["active"], true);
         assert_eq!(result["count"], 0);
     }
@@ -1610,9 +1566,7 @@ mod tests {
             "record.add",
             Some(&params),
             &engine,
-            None,
-            None,
-            None,
+            &FakeWebviews::default(),
             &recorder,
         )
         .await
@@ -1808,10 +1762,9 @@ mod tests {
         // whatever timer the dispatch is parked on. The elapsed value reflects
         // the *effective* Rust-side cap.
         let engine = EvalEngine::new();
-        // eval_fn that accepts the script but never resolves the callback —
+        // A webview that accepts the script but never resolves the callback —
         // the timeout decides who wins.
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(None));
+        let webviews = FakeWebviews::window("main", None);
 
         let params = json!({
             "selector": "[data-testid=\"never-exists\"]",
@@ -1819,17 +1772,9 @@ mod tests {
         });
 
         let start = tokio::time::Instant::now();
-        let err = dispatch(
-            "wait",
-            Some(&params),
-            &engine,
-            Some(&eval_fn),
-            None,
-            None,
-            &Recorder::new(),
-        )
-        .await
-        .expect_err("dispatch must time out");
+        let err = dispatch("wait", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("dispatch must time out");
         let elapsed = start.elapsed();
 
         // The behavioral invariant being defended: the Rust channel must
@@ -1854,17 +1799,14 @@ mod tests {
         // default. The Rust channel must still outlive that default so the
         // bridge gets to surface its own `Timeout waiting for …` rejection.
         let engine = EvalEngine::new();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(None));
+        let webviews = FakeWebviews::window("main", None);
 
         let start = tokio::time::Instant::now();
         let _err = dispatch(
             "wait",
             Some(&json!({"selector": "#root"})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -1882,17 +1824,14 @@ mod tests {
         // Regression guard: `wait` and `watch` share the helper, so the
         // existing `watch` behavior must remain intact.
         let engine = EvalEngine::new();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(None));
+        let webviews = FakeWebviews::window("main", None);
 
         let start = tokio::time::Instant::now();
         let _err = dispatch(
             "watch",
             Some(&json!({"timeout": 25_000_u64})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -1912,21 +1851,17 @@ mod tests {
         // channel error — the buffer is a ceiling, not a per-call cost.
         let engine = EvalEngine::new();
         let engine_clone = engine.clone();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                // The first registered callback on a fresh engine has id == 1
-                // (see EvalEngine::register / next_id init in eval.rs).
-                engine_clone.resolve(1, Ok(json!({"found": true})));
-                Ok(None)
-            });
+        let webviews = FakeWebviews::window("main", None).on_eval(move || {
+            // The first registered callback on a fresh engine has id == 1
+            // (see EvalEngine::register / next_id init in eval.rs).
+            engine_clone.resolve(1, Ok(json!({"found": true})));
+        });
 
         let result = dispatch(
             "wait",
             Some(&json!({"selector": "#root", "timeout": 60_000_u64})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -1941,27 +1876,17 @@ mod tests {
         // from a single `state` call (issue #135).
         let engine = EvalEngine::new();
         let engine_clone = engine.clone();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                // First register on a fresh engine has id == 1 (see eval.rs).
-                engine_clone.resolve(
-                    1,
-                    Ok(json!({"url": "http://localhost/", "title": "App", "ready": true})),
-                );
-                Ok(None)
-            });
+        let webviews = FakeWebviews::window("main", None).on_eval(move || {
+            // First register on a fresh engine has id == 1 (see eval.rs).
+            engine_clone.resolve(
+                1,
+                Ok(json!({"url": "http://localhost/", "title": "App", "ready": true})),
+            );
+        });
 
-        let result = dispatch(
-            "state",
-            None,
-            &engine,
-            Some(&eval_fn),
-            None,
-            None,
-            &Recorder::new(),
-        )
-        .await
-        .expect("dispatch succeeds");
+        let result = dispatch("state", None, &engine, &webviews, &Recorder::new())
+            .await
+            .expect("dispatch succeeds");
 
         assert_eq!(result["url"], json!("http://localhost/"));
         assert_eq!(result["ready"], json!(true));
@@ -1990,20 +1915,15 @@ mod tests {
         // navigate used to report success and leave the session broken.
         let engine = engine_with_app_bridge();
         let engine_clone = engine.clone();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                engine_clone.resolve(1, Ok(json!({"ok": true})));
-                Ok(Some(url(APP_PAGE)))
-            });
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
 
         let start = tokio::time::Instant::now();
         let err = dispatch(
             "navigate",
             Some(&json!({"url": FOREIGN_PAGE})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -2028,21 +1948,12 @@ mod tests {
         // #153: every bridge command used to hang for DEFAULT_TIMEOUT once the
         // webview sat on a foreign origin.
         let engine = engine_with_app_bridge();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(|_w: Option<&str>, _script: String| Ok(Some(url(FOREIGN_PAGE))));
+        let webviews = FakeWebviews::window("main", Some(FOREIGN_PAGE));
 
         let start = tokio::time::Instant::now();
-        let err = dispatch(
-            "title",
-            None,
-            &engine,
-            Some(&eval_fn),
-            None,
-            None,
-            &Recorder::new(),
-        )
-        .await
-        .expect_err("a page without a bridge cannot answer");
+        let err = dispatch("title", None, &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("a page without a bridge cannot answer");
 
         assert!(
             start.elapsed() < Duration::from_secs(1),
@@ -2058,29 +1969,38 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_dispatch_on_page_without_bridge_runs_no_script() {
+        // The page cannot report a result, so a click there must not act on
+        // it either.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", Some(FOREIGN_PAGE));
+        let params = json!({"ref": "e1"});
+        dispatch("click", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("a page without a bridge cannot answer");
+        assert_eq!(webviews.scripts(), Vec::<String>::new());
+    }
+
     #[tokio::test(start_paused = true)]
     async fn test_dispatch_navigate_back_to_app_origin_waits_for_bridge_hello() {
         // #153: the way out of a foreign page is navigating back. The foreign
         // page cannot call back, so success is the app bridge's hello.
         let engine = engine_with_app_bridge();
         let engine_clone = engine.clone();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                let engine = engine_clone.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
-                });
-                Ok(Some(url(FOREIGN_PAGE)))
+        let webviews = FakeWebviews::window("main", Some(FOREIGN_PAGE)).on_eval(move || {
+            let engine = engine_clone.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
             });
+        });
 
         let result = dispatch(
             "navigate",
             Some(&json!({"url": APP_PAGE})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -2092,19 +2012,14 @@ mod tests {
     async fn test_dispatch_navigate_within_app_origin_returns_bridge_result() {
         let engine = engine_with_app_bridge();
         let engine_clone = engine.clone();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                engine_clone.resolve(1, Ok(json!({"ok": true})));
-                Ok(Some(url(APP_PAGE)))
-            });
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
 
         let result = dispatch(
             "navigate",
             Some(&json!({"url": "/settings"})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -2117,25 +2032,21 @@ mod tests {
         let engine = engine_with_app_bridge();
         let engine_clone = engine.clone();
         let dest = "https://allowed.example/";
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                let engine = engine_clone.clone();
-                engine.resolve(1, Ok(json!({"ok": true})));
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
-                });
-                Ok(Some(url(APP_PAGE)))
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE)).on_eval(move || {
+            let engine = engine_clone.clone();
+            engine.resolve(1, Ok(json!({"ok": true})));
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
             });
+        });
 
         let start = tokio::time::Instant::now();
         let result = dispatch(
             "navigate",
             Some(&json!({"url": dest})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -2152,20 +2063,15 @@ mod tests {
     async fn test_dispatch_navigate_javascript_url_stays_on_page() {
         let engine = engine_with_app_bridge();
         let engine_clone = engine.clone();
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                engine_clone.resolve(1, Ok(json!({"ok": true})));
-                Ok(Some(url(APP_PAGE)))
-            });
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
 
         let start = tokio::time::Instant::now();
         let result = dispatch(
             "navigate",
             Some(&json!({"url": "javascript:void(0)"})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await
@@ -2217,24 +2123,20 @@ mod tests {
         let engine = engine_with_app_bridge();
         let engine_clone = engine.clone();
         let dest = "https://allowed.example/";
-        let eval_fn: crate::server::EvalFn =
-            std::sync::Arc::new(move |_w: Option<&str>, _script: String| {
-                let engine = engine_clone.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
-                });
-                Ok(Some(url(APP_PAGE)))
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE)).on_eval(move || {
+            let engine = engine_clone.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
             });
+        });
 
         let start = tokio::time::Instant::now();
         let result = dispatch(
             "navigate",
             Some(&json!({"url": dest})),
             &engine,
-            Some(&eval_fn),
-            None,
-            None,
+            &webviews,
             &Recorder::new(),
         )
         .await

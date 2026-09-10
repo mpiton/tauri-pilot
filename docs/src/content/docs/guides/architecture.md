@@ -99,7 +99,7 @@ The `EvalEngine` maintains:
 - A `HashMap<u64, oneshot::Sender<Result<Value, String>>>` for in-flight requests
 - An `AtomicU64` counter for request IDs
 
-The eval function dynamically resolves the target window on each call — it captures the `AppHandle` and looks up the window by label at eval time, rather than binding to a single window at startup. This allows targeting different windows across requests.
+Handlers reach webviews only through the `Webviews` trait in `webview.rs`. Its Tauri implementation holds the `AppHandle` and resolves the target window on each request: the `--window` label, else `main`, else the first window by label. This allows targeting different windows across requests. Handler tests use an in-memory fake instead.
 
 This makes every eval effectively async and type-safe from the Rust side.
 
@@ -107,7 +107,7 @@ This makes every eval effectively async and type-safe from the Rust side.
 
 The bridge is injected into every page, but Tauri's ACL lets `__callback` through only from origins that hold the pilot permission: the app origin, plus any origin a capability lists in `remote.urls`. On any other origin the script runs and its result is dropped, and a denied call sends the plugin no signal. To find out which origins can answer, the bridge sends a hello on each page load: `__callback` with id `0`, which no eval request uses, and its `location.href` as the result. The `EvalEngine` records the origin (scheme, host and port) of each hello.
 
-The eval function returns the URL of the page it sent the script to. When that page's origin never said hello, the command fails at once instead of waiting 10 seconds, and the error names the origins that did. `navigate` goes one step further. The old page answers before the webview leaves it, so for a destination origin with no hello yet, `navigate` waits up to 3 seconds for a hello from the new page and fails without one. Until the first hello arrives, the plugin cannot tell origins apart and every command takes the plain path.
+Before it sends a script, the handler reads the URL of the target window. When that page's origin never said hello, the command fails at once without running the script, instead of waiting 10 seconds, and the error names the origins that did. `navigate` still runs on such a page, since leaving is the way out, and it goes one step further. The old page answers before the webview leaves it, so for a destination origin with no hello yet, `navigate` waits up to 3 seconds for a hello from the new page and fails without one. Until the first hello arrives, the plugin cannot tell origins apart and every command takes the plain path.
 
 Hellos are tracked per origin, not per window. A slow page allowed by `remote.urls` can miss the 3-second grace on its first visit; later commands succeed once its hello arrives. The plugin records the invoking webview's URL, not the hello payload.
 
@@ -136,6 +136,7 @@ tauri-pilot/
 │   │   │   ├── protocol.rs        # Request, Response, RpcError
 │   │   │   ├── handler.rs         # Dispatch method → handler
 │   │   │   ├── eval.rs            # EvalEngine (callback pattern)
+│   │   │   ├── webview.rs         # Webviews trait: target window, eval, focus
 │   │   │   ├── diff.rs            # Snapshot diff (added/removed/changed)
 │   │   │   ├── key.rs             # press command key-combo parser
 │   │   │   ├── recorder.rs        # record/replay interaction capture

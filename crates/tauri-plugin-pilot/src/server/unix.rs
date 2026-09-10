@@ -1,8 +1,9 @@
-use super::{EvalFn, FocusFn, ListWindowsFn, handle_connection};
+use super::handle_connection;
 
 use crate::error::Error;
 use crate::eval::EvalEngine;
 use crate::recorder::Recorder;
+use crate::webview::Webviews;
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
@@ -214,9 +215,7 @@ pub async fn run(
     listener: std::os::unix::net::UnixListener,
     _guard: Option<SocketGuard>,
     engine: EvalEngine,
-    eval_fn: Option<EvalFn>,
-    list_fn: Option<ListWindowsFn>,
-    focus_fn: Option<FocusFn>,
+    webviews: Arc<dyn Webviews>,
     recorder: Recorder,
 ) {
     let listener = match UnixListener::from_std(listener) {
@@ -226,7 +225,7 @@ pub async fn run(
             return;
         }
     };
-    if let Err(e) = accept_loop(listener, engine, eval_fn, list_fn, focus_fn, recorder).await {
+    if let Err(e) = accept_loop(listener, engine, webviews, recorder).await {
         tracing::error!("socket server error: {e}");
     }
 }
@@ -234,12 +233,10 @@ pub async fn run(
 async fn accept_loop(
     listener: UnixListener,
     engine: EvalEngine,
-    eval_fn: Option<EvalFn>,
-    list_fn: Option<ListWindowsFn>,
-    focus_fn: Option<FocusFn>,
+    webviews: Arc<dyn Webviews>,
     recorder: Recorder,
 ) -> Result<(), Error> {
-    let ctx = Arc::new((engine, eval_fn, list_fn, focus_fn, recorder));
+    let ctx = Arc::new((engine, webviews, recorder));
 
     loop {
         let (stream, _addr) = match listener.accept().await {
@@ -276,16 +273,7 @@ async fn accept_loop(
         }
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(
-                stream,
-                &ctx.0,
-                ctx.1.as_ref(),
-                ctx.2.as_ref(),
-                ctx.3.as_ref(),
-                &ctx.4,
-            )
-            .await
-            {
+            if let Err(e) = handle_connection(stream, &ctx.0, ctx.1.as_ref(), &ctx.2).await {
                 tracing::warn!("connection error: {e}");
             }
         });
@@ -304,6 +292,7 @@ fn android_peer_allowed(uid: u32, gid: u32, app_uid: u32) -> bool {
 mod tests {
     use super::*;
     use crate::protocol::Response;
+    use crate::webview::fake::FakeWebviews;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
@@ -380,7 +369,14 @@ mod tests {
         let (listener, guard) = bind(&address).expect("bind test socket");
         let engine = EvalEngine::new();
         let handle = tokio::spawn(async move {
-            run(listener, guard, engine, None, None, None, Recorder::new()).await;
+            run(
+                listener,
+                guard,
+                engine,
+                Arc::new(FakeWebviews::default()),
+                Recorder::new(),
+            )
+            .await;
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle

@@ -13,6 +13,8 @@ pub(crate) mod recorder;
 pub(crate) mod screenshot;
 #[cfg(any(unix, windows))]
 pub(crate) mod server;
+#[cfg(any(unix, windows))]
+pub(crate) mod webview;
 
 pub use error::Error;
 
@@ -20,8 +22,6 @@ pub use error::Error;
 use eval::EvalEngine;
 #[cfg(any(unix, windows))]
 use recorder::Recorder;
-#[cfg(any(unix, windows))]
-use server::{EvalFn, FocusFn, ListWindowsFn};
 #[cfg(any(unix, windows))]
 use std::sync::Arc;
 #[cfg(any(unix, windows))]
@@ -70,9 +70,8 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
                 let identifier = sanitize_identifier(&app.config().identifier);
 
-                let eval_fn = make_eval_fn(app);
-                let list_fn = make_list_fn(app);
-                let focus_fn = make_focus_fn(app);
+                let webviews: Arc<dyn webview::Webviews> =
+                    Arc::new(webview::TauriWebviews(app.clone()));
 
                 let recorder = Recorder::new();
 
@@ -102,9 +101,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                         listener,
                         guard,
                         engine,
-                        Some(eval_fn),
-                        Some(list_fn),
-                        Some(focus_fn),
+                        webviews,
                         recorder,
                     ));
                 }
@@ -118,9 +115,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 tauri::async_runtime::spawn(server::run(
                     server::socket_path(&identifier),
                     engine,
-                    Some(eval_fn),
-                    Some(list_fn),
-                    Some(focus_fn),
+                    webviews,
                     recorder,
                 ));
 
@@ -153,95 +148,6 @@ fn sanitize_identifier(raw: &str) -> String {
     } else {
         sanitized
     }
-}
-
-/// Create an eval function from the app handle that evaluates JS in a webview.
-///
-/// If `window` is `Some(label)`, targets that specific window (error if not found).
-/// If `window` is `None`, tries "main" first then falls back to the first available window.
-#[cfg(all(any(unix, windows), debug_assertions))]
-fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
-    let handle = app.clone();
-    Arc::new(move |window: Option<&str>, script: String| {
-        let target = if let Some(label) = window {
-            handle
-                .get_webview_window(label)
-                .ok_or_else(|| format!("Window '{label}' not found"))?
-        } else if let Some(w) = handle.get_webview_window("main") {
-            w
-        } else {
-            handle
-                .webview_windows()
-                .values()
-                .next()
-                .cloned()
-                .ok_or_else(|| "No webview available".to_owned())?
-        };
-        // Read before the eval so the URL names the page the script lands on.
-        let page = current_url(&target);
-        // Results come back via the `__callback` IPC command (see
-        // EvalEngine::wrap_script). This eval is fire-and-forget; the IPC handler
-        // resolves the pending request, not this closure.
-        target.eval(&script).map_err(|e| e.to_string())?;
-        Ok(page)
-    })
-}
-
-/// Read the current URL of a webview, or `None` when the runtime cannot report it.
-#[cfg(any(unix, windows))]
-pub(crate) fn current_url<R: tauri::Runtime>(wv: &tauri::WebviewWindow<R>) -> Option<tauri::Url> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wv.url()))
-        .ok()
-        .and_then(Result::ok)
-}
-
-/// Create a focus function that requests OS focus for a webview window.
-///
-/// Resolution mirrors `make_eval_fn`: explicit label first, then `"main"`, then
-/// the first window. The call is best-effort — failures are returned to the
-/// caller (which logs and continues), since the press still has a chance of
-/// landing on whatever window currently holds focus.
-#[cfg(all(any(unix, windows), debug_assertions))]
-fn make_focus_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> FocusFn {
-    let handle = app.clone();
-    Arc::new(move |window: Option<&str>| {
-        let target = if let Some(label) = window {
-            handle
-                .get_webview_window(label)
-                .ok_or_else(|| format!("Window '{label}' not found"))?
-        } else if let Some(w) = handle.get_webview_window("main") {
-            w
-        } else {
-            handle
-                .webview_windows()
-                .values()
-                .next()
-                .cloned()
-                .ok_or_else(|| "No webview available".to_owned())?
-        };
-        target.set_focus().map_err(|e| e.to_string())
-    })
-}
-
-/// Create a list function that enumerates all available webview windows.
-#[cfg(all(any(unix, windows), debug_assertions))]
-fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
-    let handle = app.clone();
-    Arc::new(move || {
-        let windows = handle.webview_windows();
-        // BTreeMap iterates in sorted key order — no explicit sort needed
-        let list: Vec<serde_json::Value> = windows
-            .iter()
-            .map(|(label, wv)| {
-                serde_json::json!({
-                    "label": label,
-                    "url": current_url(wv).map(|url| url.to_string()).unwrap_or_default(),
-                    "title": wv.title().unwrap_or_default(),
-                })
-            })
-            .collect();
-        serde_json::json!({"windows": list})
-    })
 }
 
 #[cfg(test)]

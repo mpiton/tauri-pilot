@@ -1,8 +1,9 @@
-use super::{EvalFn, FocusFn, ListWindowsFn, handle_connection};
+use super::handle_connection;
 
 use crate::error::Error;
 use crate::eval::EvalEngine;
 use crate::recorder::Recorder;
+use crate::webview::Webviews;
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ffi::c_void;
@@ -432,9 +433,7 @@ pub fn bind(pipe_path: &Path) -> Result<(NamedPipeServer, RegistryGuard), Error>
 pub async fn run(
     pipe_path: PathBuf,
     engine: EvalEngine,
-    eval_fn: Option<EvalFn>,
-    list_fn: Option<ListWindowsFn>,
-    focus_fn: Option<FocusFn>,
+    webviews: Arc<dyn Webviews>,
     recorder: Recorder,
 ) {
     let (first_server, guard) = match bind(&pipe_path) {
@@ -445,17 +444,7 @@ pub async fn run(
         }
     };
     let identifier = guard.identifier.clone();
-    if let Err(e) = accept_loop(
-        first_server,
-        &identifier,
-        engine,
-        eval_fn,
-        list_fn,
-        focus_fn,
-        recorder,
-    )
-    .await
-    {
+    if let Err(e) = accept_loop(first_server, &identifier, engine, webviews, recorder).await {
         tracing::error!("named pipe server error: {e}");
     }
 }
@@ -464,12 +453,10 @@ async fn accept_loop(
     first_server: NamedPipeServer,
     identifier: &str,
     engine: EvalEngine,
-    eval_fn: Option<EvalFn>,
-    list_fn: Option<ListWindowsFn>,
-    focus_fn: Option<FocusFn>,
+    webviews: Arc<dyn Webviews>,
     recorder: Recorder,
 ) -> Result<(), Error> {
-    let ctx = Arc::new((engine, eval_fn, list_fn, focus_fn, recorder));
+    let ctx = Arc::new((engine, webviews, recorder));
     let mut server = first_server;
     let pipe_path = socket_path(identifier);
 
@@ -523,16 +510,7 @@ async fn accept_loop(
 
         let ctx = Arc::clone(&ctx);
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(
-                current,
-                &ctx.0,
-                ctx.1.as_ref(),
-                ctx.2.as_ref(),
-                ctx.3.as_ref(),
-                &ctx.4,
-            )
-            .await
-            {
+            if let Err(e) = handle_connection(current, &ctx.0, ctx.1.as_ref(), &ctx.2).await {
                 tracing::warn!("connection error: {e}");
             }
         });
@@ -543,6 +521,7 @@ async fn accept_loop(
 mod tests {
     use super::*;
     use crate::protocol::Response;
+    use crate::webview::fake::FakeWebviews;
     use serial_test::serial;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
@@ -561,7 +540,13 @@ mod tests {
         let engine = EvalEngine::new();
         let path = path.to_path_buf();
         let handle = tokio::spawn(async move {
-            run(path, engine, None, None, None, Recorder::new()).await;
+            run(
+                path,
+                engine,
+                Arc::new(FakeWebviews::default()),
+                Recorder::new(),
+            )
+            .await;
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
         handle
@@ -673,9 +658,7 @@ mod tests {
             run(
                 dup_path,
                 EvalEngine::new(),
-                None,
-                None,
-                None,
+                Arc::new(FakeWebviews::default()),
                 Recorder::new(),
             )
             .await;
