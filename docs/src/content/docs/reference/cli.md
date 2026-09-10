@@ -914,6 +914,12 @@ tauri-pilot navigate "http://localhost:1420/settings"
 tauri-pilot navigate "/"
 ```
 
+Bridge commands only work on origins allowed to call the plugin back: the app
+origin, plus any origin a capability lists in `remote.urls`. When the
+destination is another origin, `navigate` still loads it but fails after 3
+seconds, and later commands fail at once with an error that names the page.
+Run `tauri-pilot navigate` with an app URL to get the session back.
+
 ---
 
 ### `url`

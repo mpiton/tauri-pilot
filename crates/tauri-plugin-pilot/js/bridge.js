@@ -137,6 +137,8 @@
   window.fetch = function(input, init) {
     const method = (init && init.method) || (input && input.method) || "GET";
     const url = (typeof input === "string") ? input : (input && input.url) || String(input);
+    // Pilot's own IPC (eval callbacks, the bridge hello) is not app traffic.
+    if (url.indexOf("plugin%3Apilot%7C") !== -1) return _originalFetch(input, init);
     const timestamp = Date.now();
     const requestSize = bodySize(init && init.body);
     return _originalFetch(input, init).then(function(response) {
@@ -1435,4 +1437,14 @@
     storageClear: storageClear,
     formDump: formDump,
   };
+
+  // Tell the plugin this origin can answer (#153). The ACL denies
+  // `__callback` to origins without the pilot permission, and a denied page
+  // can run the bridge but never deliver a result, so its silence here is the
+  // signal. Id 0 is HELLO_ID in eval.rs, never used by an eval request.
+  try {
+    window.__TAURI_INTERNALS__
+      .invoke("plugin:pilot|__callback", { id: 0, result: location.href })
+      .catch(function() {});
+  } catch (_) {}
 })();

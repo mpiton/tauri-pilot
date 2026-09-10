@@ -103,6 +103,12 @@ The eval function dynamically resolves the target window on each call — it cap
 
 This makes every eval effectively async and type-safe from the Rust side.
 
+### Origins without a callback
+
+The bridge is injected into every page, but Tauri's ACL lets `__callback` through only from origins that hold the pilot permission: the app origin, plus any origin a capability lists in `remote.urls`. On any other origin the script runs and its result is dropped, and a denied call sends the plugin no signal. To find out which origins can answer, the bridge sends a hello on each page load: `__callback` with id `0`, which no eval request uses, and its `location.href` as the result. The `EvalEngine` records the origin (scheme, host and port) of each hello.
+
+The eval function returns the URL of the page it sent the script to. When that page's origin never said hello, the command fails at once instead of waiting 10 seconds, and the error names the origins that did. `navigate` goes one step further. The old page answers before the webview leaves it, so for a destination origin with no hello yet, `navigate` waits up to 3 seconds for a hello from the new page and fails without one. Until the first hello arrives, the plugin cannot tell origins apart and every command takes the plain path.
+
 ## JS Bridge Structure
 
 The JS bridge is compiled into the plugin binary via `include_str!("../js/bridge.js")` and injected into every WebView at boot through `js_init_script()`. It is available before any frontend framework code runs.

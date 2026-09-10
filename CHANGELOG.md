@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `navigate` to an origin the pilot bridge cannot answer from no longer
+  reports ok and leaves the session hung. The bridge does run on a foreign
+  page, but Tauri's ACL rejects its `__callback` because the pilot permission
+  only covers the app origin, so every later command waited out the 10 s eval
+  timeout. The bridge now says hello through `__callback` on each page load,
+  which tells the plugin which origins can answer. `navigate` fails after 3 s
+  when no hello comes from the destination. Other commands on such a page fail
+  at once, and the error names the page and the origins that work. Navigating
+  back to the app origin recovers the session, and an origin listed in a
+  capability's `remote.urls` keeps working. Pilot's own IPC calls also no
+  longer show up in `network.getRequests`. [#153]
+
 - A second instance of an app that embeds the plugin no longer panics at
   startup. On Unix the plugin `setup` hook propagated the `AddrInUse` error
   from the socket bind, which Tauri turns into a fatal `PluginInitialization`
@@ -695,3 +707,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#146]: https://github.com/mpiton/tauri-pilot/issues/146
 [#149]: https://github.com/mpiton/tauri-pilot/issues/149
 [#152]: https://github.com/mpiton/tauri-pilot/issues/152
+[#153]: https://github.com/mpiton/tauri-pilot/issues/153

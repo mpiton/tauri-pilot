@@ -177,11 +177,22 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
                 .cloned()
                 .ok_or_else(|| "No webview available".to_owned())?
         };
+        // Read before the eval so the URL names the page the script lands on.
+        let page = current_url(&target);
         // Results come back via the `__callback` IPC command (see
         // EvalEngine::wrap_script). This eval is fire-and-forget; the IPC handler
         // resolves the pending request, not this closure.
-        target.eval(&script).map_err(|e| e.to_string())
+        target.eval(&script).map_err(|e| e.to_string())?;
+        Ok(page)
     })
+}
+
+/// Read the current URL of a webview, or `None` when the runtime cannot report it.
+#[cfg(all(any(unix, windows), debug_assertions))]
+fn current_url<R: tauri::Runtime>(wv: &tauri::WebviewWindow<R>) -> Option<tauri::Url> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wv.url()))
+        .ok()
+        .and_then(Result::ok)
 }
 
 /// Create a focus function that requests OS focus for a webview window.
@@ -224,11 +235,7 @@ fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
             .map(|(label, wv)| {
                 serde_json::json!({
                     "label": label,
-                    "url": std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wv.url()))
-                        .ok()
-                        .and_then(Result::ok)
-                        .map(|url| url.to_string())
-                        .unwrap_or_default(),
+                    "url": current_url(wv).map(|url| url.to_string()).unwrap_or_default(),
                     "title": wv.title().unwrap_or_default(),
                 })
             })
@@ -258,6 +265,20 @@ mod tests {
         assert!(
             html_idx < pilot_idx,
             "html-to-image must be injected before pilot bridge code"
+        );
+    }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn bridge_says_hello_with_reserved_callback_id() {
+        // #153: the plugin learns which origins can call back from this hello.
+        let hello = format!(
+            r#"invoke("plugin:pilot|__callback", {{ id: {}, result: location.href }})"#,
+            crate::eval::HELLO_ID
+        );
+        assert!(
+            super::BRIDGE_JS.contains(&hello),
+            "bridge must send its hello as `{hello}`"
         );
     }
 
