@@ -3,31 +3,14 @@ use crate::eval::EvalEngine;
 use crate::handler;
 use crate::protocol::{Request, Response};
 use crate::recorder::Recorder;
+use crate::webview::Webviews;
 
-use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-
-/// A function that evaluates JS in the webview.
-/// The first argument is an optional window label (`None` means "use default window").
-/// Returns the URL of the page the script was sent to, or `None` when the
-/// webview cannot report it.
-pub(crate) type EvalFn =
-    Arc<dyn Fn(Option<&str>, String) -> Result<Option<tauri::Url>, String> + Send + Sync>;
-
-/// A function that lists all available webview windows and returns their metadata.
-pub(crate) type ListWindowsFn = Arc<dyn Fn() -> serde_json::Value + Send + Sync>;
-
-/// A function that requests focus for a webview window.
-/// `None` means "default window" (same resolution as `EvalFn`).
-/// Used before native key injection so synthesised OS events reach the right window.
-pub(crate) type FocusFn = Arc<dyn Fn(Option<&str>) -> Result<(), String> + Send + Sync>;
 
 pub(crate) async fn handle_connection<S>(
     stream: S,
     engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
-    list_fn: Option<&ListWindowsFn>,
-    focus_fn: Option<&FocusFn>,
+    webviews: &dyn Webviews,
     recorder: &Recorder,
 ) -> Result<(), Error>
 where
@@ -77,7 +60,7 @@ where
                 -32600,
                 "Invalid JSON-RPC version (expected \"2.0\")",
             ),
-            Ok(req) => dispatch_request(&req, engine, eval_fn, list_fn, focus_fn, recorder).await,
+            Ok(req) => dispatch_request(&req, engine, webviews, recorder).await,
             Err(e) => Response::error(serde_json::Value::Null, -32700, format!("Parse error: {e}")),
         };
 
@@ -93,22 +76,10 @@ where
 pub(crate) async fn dispatch_request(
     req: &Request,
     engine: &EvalEngine,
-    eval_fn: Option<&EvalFn>,
-    list_fn: Option<&ListWindowsFn>,
-    focus_fn: Option<&FocusFn>,
+    webviews: &dyn Webviews,
     recorder: &Recorder,
 ) -> Response {
-    match handler::dispatch(
-        &req.method,
-        req.params.as_ref(),
-        engine,
-        eval_fn,
-        list_fn,
-        focus_fn,
-        recorder,
-    )
-    .await
-    {
+    match handler::dispatch(&req.method, req.params.as_ref(), engine, webviews, recorder).await {
         Ok(result) => Response::success(req.id, result),
         Err(rpc_err) => Response {
             jsonrpc: "2.0".to_owned(),
