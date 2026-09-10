@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `screenshot_native` errors now carry their detail to the terminal. Every RPC
+  error went through one `bail!` in the CLI client that kept the code and the
+  message and dropped `error.data`, so a `WINDOW_NOT_FOUND` printed nothing of
+  the `available_windows` list the plugin builds for it. The fix is in the
+  shared error path, so any command whose plugin side attaches structured data
+  keeps it. [#149]
+
+- `screenshot_native` no longer reports a made-up `scale_factor` when screen
+  recording is denied. The value was the captured PNG's pixel width divided by
+  the window's logical width, which only holds when the PNG is the window —
+  under `tcc_denied` the `CGWindowList` fallback returns a screen-sized image
+  instead, yielding numbers like `2.87` on a 2.0 display. It is `null` now.
+  [#149]
+
 - `cargo clippy --all-targets -- -D warnings` passes again. The new
   `manual_is_variant_and` lint rejects the `.ok().is_some_and(...)` in
   `dangerous_mcp_tools_enabled`; it reads `.is_ok_and(...)` now, same
@@ -637,3 +651,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#143]: https://github.com/mpiton/tauri-pilot/pull/143
 [#145]: https://github.com/mpiton/tauri-pilot/pull/145
 [#146]: https://github.com/mpiton/tauri-pilot/issues/146
+[#149]: https://github.com/mpiton/tauri-pilot/issues/149

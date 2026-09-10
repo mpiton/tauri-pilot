@@ -313,7 +313,7 @@ fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
         width: 0.0,
         height: 0.0,
     });
-    let scale_factor = compute_scale_factor(metadata.width, logical_bounds);
+    let scale_factor = compute_scale_factor(metadata.width, logical_bounds.width, tcc_denied);
 
     if let Err(err) = std::fs::rename(&tmp_path, &output_path) {
         cleanup_tmp(&tmp_path);
@@ -509,15 +509,26 @@ fn read_png_metadata(path: &Path) -> Result<PngMetadata, RpcError> {
     })
 }
 
-/// Derive `scale_factor` by dividing pixel width by logical (point) width.
-/// Falls back to 1.0 when the logical bounds are unknown or zero so the
-/// response never returns NaN/Inf.
-#[cfg(target_os = "macos")]
-fn compute_scale_factor(pixel_width: u32, logical: super::WindowBounds) -> f32 {
-    if logical.width <= 0.0 {
-        return 1.0;
+/// Derive the capture's scale factor from its pixel width and the window's
+/// logical width.
+///
+/// Returns `None` when the number cannot be derived: without screen-recording
+/// permission the `CGWindowList` fallback captures a screen-sized image rather
+/// than the window, so the division compares two unrelated surfaces and yields
+/// a scale no display has. Pixel-diff harnesses tag artifacts by this value,
+/// so an absent scale beats a plausible wrong one (#149).
+///
+/// Falls back to `Some(1.0)` when the logical width is unknown or zero so the
+/// response never carries NaN or Inf.
+#[cfg(any(target_os = "macos", test))]
+fn compute_scale_factor(pixel_width: u32, logical_width: f64, tcc_denied: bool) -> Option<f32> {
+    if tcc_denied {
+        return None;
     }
-    let scale = f64::from(pixel_width) / logical.width;
+    if logical_width <= 0.0 {
+        return Some(1.0);
+    }
+    let scale = f64::from(pixel_width) / logical_width;
     if scale.is_finite() && scale > 0.0 {
         // Round to 2 decimal places to avoid `2.00000003` artifacts when the
         // CGWindowBounds Width carries float noise. Strict-pixel-diff harnesses
@@ -531,9 +542,9 @@ fn compute_scale_factor(pixel_width: u32, logical: super::WindowBounds) -> f32 {
             reason = "Retina scale factors fit in f32 without loss"
         )]
         let scale_f32 = rounded as f32;
-        scale_f32
+        Some(scale_f32)
     } else {
-        1.0
+        Some(1.0)
     }
 }
 
@@ -676,5 +687,22 @@ mod tests {
             assert!(first.get("title").is_some());
             assert!(first.get("layer").is_some());
         }
+    }
+
+    #[test]
+    fn test_compute_scale_factor_tcc_denied_reports_no_scale() {
+        // #149: with screen recording denied, `capture_with_fallback` drops to
+        // `CGWindowList`, which returns a screen-sized image instead of the
+        // window. Dividing that width by the window's logical width yields a
+        // number no display has (4344 / 1512 = 2.87 on a 2.0 Retina panel).
+        // Pixel-diff harnesses tag artifacts by this value, so a plausible
+        // wrong scale is worse than none.
+        assert_eq!(compute_scale_factor(4344, 1512.0, true), None);
+    }
+
+    #[test]
+    fn test_compute_scale_factor_permitted_capture_keeps_derived_scale() {
+        // The derivation still holds when the capture really is the window.
+        assert_eq!(compute_scale_factor(3024, 1512.0, false), Some(2.0));
     }
 }
