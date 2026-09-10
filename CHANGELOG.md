@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forwarded with `adb forward localfilesystem:... localabstract:...`. Connections
   require matching UID/GID pairs for the app, root or ADB shell. [#145]
 
+### Fixed
+
+- `cargo clippy --all-targets -- -D warnings` passes again. The new
+  `manual_is_variant_and` lint rejects the `.ok().is_some_and(...)` in
+  `dangerous_mcp_tools_enabled`; it reads `.is_ok_and(...)` now, same
+  behaviour.
+
 ## [0.7.3] - 2026-08-30
 
 ### Changed

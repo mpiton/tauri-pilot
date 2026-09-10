@@ -676,14 +676,12 @@ fn namespaced_tool_name(name: &str) -> String {
 }
 
 fn dangerous_mcp_tools_enabled() -> bool {
-    std::env::var(ENABLE_DANGEROUS_MCP_TOOLS_ENV)
-        .ok()
-        .is_some_and(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
+    std::env::var(ENABLE_DANGEROUS_MCP_TOOLS_ENV).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 fn validate_navigate_url(url: &str) -> Result<(), McpError> {
