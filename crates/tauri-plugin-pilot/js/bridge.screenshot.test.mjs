@@ -107,6 +107,9 @@ test("screenshot with selector does not override element dimensions", async () =
   assert.equal("width" in calls[0].options, false);
   assert.equal("height" in calls[0].options, false);
   assert.equal(calls[0].options.pixelRatio, 1);
+  // #146 hits element captures too — the CLI and the MCP tool both take this
+  // path for `--selector`, so the curated list must be passed here as well.
+  assert.ok(Array.isArray(calls[0].options.includeStyleProperties));
 });
 
 test("screenshot with unmatched selector throws element not found", async () => {
@@ -115,5 +118,73 @@ test("screenshot with unmatched selector throws element not found", async () => 
   await assert.rejects(
     () => pilot.screenshot({ selector: "#missing" }),
     /Element not found: #missing/,
+  );
+});
+
+// #146: html-to-image's per-property clone path (taken whenever
+// `getComputedStyle(el).cssText` is empty — WebKit and Blink both) copies every
+// name returned by `getComputedStyle(document.documentElement)` onto every
+// cloned element. On a Tailwind v4 page that list is ~2200 names, ~1760 of them
+// custom properties, and WebKit re-serializes the whole style attribute on each
+// `setProperty` — quadratic, minutes of wedged webview. The bridge must hand
+// html-to-image a curated list instead.
+test("screenshot restricts the style properties html-to-image copies", async () => {
+  const documentElement = { scrollWidth: 800, scrollHeight: 600 };
+  const { pilot, calls } = loadBridge({ documentElement, body: null });
+
+  await pilot.screenshot({});
+
+  const props = calls[0].options.includeStyleProperties;
+  assert.ok(Array.isArray(props), "includeStyleProperties must be passed");
+  // A few hundred names is already quadratic pain on WebKit; keep it small.
+  assert.ok(props.length < 200, `expected a curated list, got ${props.length}`);
+  assert.equal(props.filter((p) => p.startsWith("--")).length, 0);
+  // Anything the page actually paints has to survive the clone. At least one
+  // name per block of STYLE_PROPERTIES, so deleting a whole category fails
+  // here instead of silently flattening every capture.
+  for (const required of [
+    "display", // box + layout
+    "content-visibility", // ... and the two that hide a subtree
+    "clip",
+    "flex-direction", // flex + grid
+    "background-color", // background + border
+    "border-top-width",
+    "border-image-source",
+    "transform", // paint effects
+    "transform-origin",
+    "mask-size",
+    "color", // text
+    "font-family",
+    "content",
+    "-webkit-text-security", // author-masked fields must stay masked
+    "fill", // replaced content + SVG
+    "text-anchor",
+    "appearance", // form controls
+  ]) {
+    assert.ok(props.includes(required), `missing ${required}`);
+  }
+  assert.equal(new Set(props).size, props.length, "duplicate property names");
+});
+
+// The whole fix rests on one expression in the vendored bundle:
+// `t.includeStyleProperties ? ... : f(getComputedStyle(documentElement))`.
+// html-to-image silently ignores options it does not know, so a version bump
+// that renames or drops it would put the ~2200-name enumeration back on every
+// cloned element with the suite still green. Pin the option to the artifact.
+test("the vendored html-to-image still reads includeStyleProperties", () => {
+  const vendor = readFileSync(
+    join(here, "vendor", "html-to-image.iife.js"),
+    "utf8",
+  );
+  // `includeStyleProperties?` rather than the bare name: the option has to be
+  // *read as a condition*, which is the shape of the expression that picks it
+  // over the full enumeration. The minifier renames the parameter, never the
+  // property, so this survives a rebuild of the same upstream code and fails
+  // if a version bump drops the branch.
+  assert.ok(
+    vendor.includes("includeStyleProperties?"),
+    "vendored html-to-image no longer reads includeStyleProperties as a " +
+      "condition: re-check scripts/build-html-to-image.sh against the " +
+      "upstream pin (#146)",
   );
 });
