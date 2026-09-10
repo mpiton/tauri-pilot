@@ -21,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dangerous_mcp_tools_enabled`; it reads `.is_ok_and(...)` now, same
   behaviour.
 
+- `screenshot` no longer pins the webview for minutes on style-variable-heavy
+  pages. html-to-image copies computed styles onto the clone, and whenever
+  `getComputedStyle(el).cssText` is empty — WebKit and Blink both — it falls
+  back to one `setProperty` per name in `getComputedStyle(documentElement)`.
+  On a Tailwind v4 page that is ~2200 names, ~1760 of them custom properties,
+  applied to every cloned element; macOS WebKit re-serializes the whole style
+  attribute on each call, making the clone quadratic (~370 s and 100 % CPU on a
+  648-node page, with every later bridge call timing out until it finished).
+  The bridge now passes a curated `includeStyleProperties` list of the
+  properties a page actually paints, so the copy drops from ~2240 to 158
+  `setProperty` calls per element (28x faster end-to-end on a Chromium repro of
+  that page, pixel-identical output). Custom properties are dropped on purpose:
+  computed values already arrive with their `var()` resolved. [#146]
+
 ## [0.7.3] - 2026-08-30
 
 ### Changed
@@ -619,3 +633,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#142]: https://github.com/mpiton/tauri-pilot/pull/142
 [#143]: https://github.com/mpiton/tauri-pilot/pull/143
 [#145]: https://github.com/mpiton/tauri-pilot/pull/145
+[#146]: https://github.com/mpiton/tauri-pilot/issues/146

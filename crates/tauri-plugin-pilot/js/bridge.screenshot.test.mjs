@@ -117,3 +117,37 @@ test("screenshot with unmatched selector throws element not found", async () => 
     /Element not found: #missing/,
   );
 });
+
+// #146: html-to-image's per-property clone path (taken whenever
+// `getComputedStyle(el).cssText` is empty — WebKit and Blink both) copies every
+// name returned by `getComputedStyle(document.documentElement)` onto every
+// cloned element. On a Tailwind v4 page that list is ~2200 names, ~1760 of them
+// custom properties, and WebKit re-serializes the whole style attribute on each
+// `setProperty` — quadratic, minutes of wedged webview. The bridge must hand
+// html-to-image a curated list instead.
+test("screenshot restricts the style properties html-to-image copies", async () => {
+  const documentElement = { scrollWidth: 800, scrollHeight: 600 };
+  const { pilot, calls } = loadBridge({ documentElement, body: null });
+
+  await pilot.screenshot({});
+
+  const props = calls[0].options.includeStyleProperties;
+  assert.ok(Array.isArray(props), "includeStyleProperties must be passed");
+  // A few hundred names is already quadratic pain on WebKit; keep it small.
+  assert.ok(props.length < 200, `expected a curated list, got ${props.length}`);
+  assert.equal(props.filter((p) => p.startsWith("--")).length, 0);
+  // Anything the page actually paints has to survive the clone.
+  for (const required of [
+    "color",
+    "background-color",
+    "font-family",
+    "border-top-width",
+    "transform",
+    "transform-origin",
+    "content",
+    "fill",
+  ]) {
+    assert.ok(props.includes(required), `missing ${required}`);
+  }
+  assert.equal(new Set(props).size, props.length, "duplicate property names");
+});

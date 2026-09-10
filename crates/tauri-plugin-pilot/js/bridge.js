@@ -1188,6 +1188,67 @@
     });
   }
 
+  // html-to-image copies computed styles onto the clone. When
+  // `getComputedStyle(el).cssText` is empty — WebKit and Blink both — it falls
+  // back to one `setProperty` per name in `getComputedStyle(documentElement)`,
+  // which on a Tailwind v4 page is ~2200 names (~1760 of them custom
+  // properties). WebKit re-serializes the whole style attribute on every
+  // `setProperty`, so that copy is quadratic: minutes of 100% CPU on a few
+  // hundred nodes, and the webview stays wedged past the RPC timeout (#146).
+  // Custom properties are dead weight here — computed values arrive with their
+  // `var()` already resolved — so we hand html-to-image the painted properties
+  // only. Anything not in this list is lost from the capture.
+  var STYLE_PROPERTIES = [
+    // Box + layout
+    "display", "position", "top", "right", "bottom", "left", "float", "clear",
+    "z-index", "width", "height", "min-width", "min-height", "max-width",
+    "max-height", "box-sizing", "aspect-ratio", "margin-top", "margin-right",
+    "margin-bottom", "margin-left", "padding-top", "padding-right",
+    "padding-bottom", "padding-left", "overflow-x", "overflow-y", "visibility",
+    "opacity", "vertical-align",
+    // Flex + grid
+    "flex-direction", "flex-wrap", "flex-grow", "flex-shrink", "flex-basis",
+    "justify-content", "justify-items", "justify-self", "align-content",
+    "align-items", "align-self", "order", "row-gap", "column-gap",
+    "grid-template-columns", "grid-template-rows", "grid-template-areas",
+    "grid-auto-flow", "grid-auto-columns", "grid-auto-rows",
+    "grid-column-start", "grid-column-end", "grid-row-start", "grid-row-end",
+    "column-count",
+    // Background + border
+    "background-color", "background-image", "background-position",
+    "background-size", "background-repeat", "background-clip",
+    "background-origin", "background-attachment", "-webkit-background-clip",
+    "border-top-width", "border-right-width", "border-bottom-width",
+    "border-left-width", "border-top-style", "border-right-style",
+    "border-bottom-style", "border-left-style", "border-top-color",
+    "border-right-color", "border-bottom-color", "border-left-color",
+    "border-top-left-radius", "border-top-right-radius",
+    "border-bottom-right-radius", "border-bottom-left-radius",
+    "border-collapse", "border-spacing", "table-layout", "outline-color",
+    "outline-style", "outline-width", "outline-offset", "box-shadow",
+    // Paint effects
+    "filter", "backdrop-filter", "mix-blend-mode", "clip-path", "mask-image",
+    "transform", "transform-origin", "transform-style", "translate", "rotate",
+    "scale", "perspective",
+    // Text
+    "color", "font-family", "font-size", "font-weight", "font-style",
+    "font-variant", "font-stretch", "font-feature-settings",
+    "font-variation-settings", "line-height", "letter-spacing", "word-spacing",
+    "text-align", "text-indent", "text-transform", "text-shadow",
+    "text-overflow", "text-decoration-line", "text-decoration-color",
+    "text-decoration-style", "text-decoration-thickness",
+    "text-underline-offset", "-webkit-text-fill-color", "-webkit-text-stroke",
+    "-webkit-line-clamp", "-webkit-box-orient", "white-space", "word-break",
+    "overflow-wrap", "hyphens", "direction", "unicode-bidi", "writing-mode",
+    "text-orientation", "tab-size", "list-style-type", "list-style-position",
+    "list-style-image", "content",
+    // Replaced content + SVG
+    "object-fit", "object-position", "image-rendering", "fill", "fill-opacity",
+    "fill-rule", "stroke", "stroke-width", "stroke-opacity", "stroke-linecap",
+    "stroke-linejoin", "stroke-dasharray", "stroke-dashoffset", "clip-rule",
+    "stop-color", "stop-opacity", "d",
+  ];
+
   async function screenshot(options) {
     var selector = options && options.selector;
     var el = selector ? document.querySelector(selector) : document.documentElement;
@@ -1195,7 +1256,7 @@
     if (typeof htmlToImage === "undefined" || !htmlToImage.toPng) {
       throw new Error("html-to-image library not loaded. Bundle it into bridge.js for screenshot support.");
     }
-    var renderOptions = { pixelRatio: 1 };
+    var renderOptions = { pixelRatio: 1, includeStyleProperties: STYLE_PROPERTIES };
     if (!selector) {
       // html-to-image sizes the capture from clientWidth/clientHeight, which
       // for documentElement is the viewport — the render always starts at the
