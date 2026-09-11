@@ -133,24 +133,41 @@
     return 0;
   }
 
-  function isPilotIpcUrl(url) {
-    const text = String(url);
-    let path;
-    try {
-      const base = (window.location && window.location.href) || "http://localhost/";
-      path = new URL(text, base).pathname;
-    } catch (_) {
-      const q = text.indexOf("?");
-      path = q === -1 ? text : text.slice(0, q);
-    }
+  // Tauri convertFileSrc(cmd, "ipc") produces `ipc://localhost/<cmd>` on
+  // Unix/macOS and `http(s)://ipc.localhost/<cmd>` on Windows/Android.
+  // WebKit treats `ipc:` as a non-special scheme, so URL.pathname is
+  // `//localhost/<cmd>` rather than `/<cmd>` and an exact-path check misses
+  // the eval/hello callback (#156). Match the raw ipc:// string (do not
+  // decode first, do not use URL()) and parse http(s) with URL so a
+  // userinfo form like `https://ipc.localhost@attacker/...` is not skipped.
+  function isPilotCallbackCommand(cmd) {
     let decoded;
     try {
-      decoded = decodeURIComponent(path);
+      decoded = decodeURIComponent(cmd);
     } catch (_) {
-      decoded = path;
+      decoded = cmd;
     }
-    // Exact IPC path for the two callback commands, not a substring match.
-    return decoded === "/plugin:pilot|callback" || decoded === "/plugin:pilot|__callback";
+    return decoded === "plugin:pilot|__callback" || decoded === "plugin:pilot|callback";
+  }
+
+  function isPilotIpcUrl(url) {
+    const text = String(url);
+    if (/^ipc:/i.test(text)) {
+      const match = text.match(/^ipc:\/\/localhost\/([^/?#]+)(?:[?#]|$)/i);
+      return !!match && isPilotCallbackCommand(match[1]);
+    }
+    if (/^https?:/i.test(text)) {
+      let parsed;
+      try {
+        parsed = new URL(text);
+      } catch (_) {
+        return false;
+      }
+      if (parsed.hostname !== "ipc.localhost") return false;
+      const match = parsed.pathname.match(/^\/([^/]+)$/);
+      return !!match && isPilotCallbackCommand(match[1]);
+    }
+    return false;
   }
 
   const _originalFetch = window.fetch.bind(window);
@@ -208,6 +225,9 @@
   };
 
   XMLHttpRequest.prototype.send = function(body) {
+    if (this._pilot && isPilotIpcUrl(this._pilot.url)) {
+      return _origXhrSend.apply(this, arguments);
+    }
     if (this._pilot) {
       const pilot = this._pilot;
       const timestamp = Date.now();

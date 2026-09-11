@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `network` no longer records the plugin's own `__callback` IPC. Eval and
+  the bridge hello POST to `ipc://localhost/plugin:pilot|__callback` (URL
+  encoded). Fetch skipped that only when `URL.pathname` was exactly
+  `/plugin:pilot|__callback`, which WebKit does not produce for the `ipc:`
+  scheme, and XHR was never skipped. The skip now matches Tauri's IPC URL
+  shapes on both fetch and XHR. [#156]
+
 - `snapshot` and `snapshot -i` now list div-based interactive elements.
   Hosts with `draggable="true"`, `contenteditable`, an `onclick` attribute or
   property, or `tabindex` were dropped because `ROLE_MAP` has no `DIV` entry,
@@ -745,3 +752,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#153]: https://github.com/mpiton/tauri-pilot/issues/153
 [#154]: https://github.com/mpiton/tauri-pilot/issues/154
 [#155]: https://github.com/mpiton/tauri-pilot/issues/155
+[#156]: https://github.com/mpiton/tauri-pilot/issues/156

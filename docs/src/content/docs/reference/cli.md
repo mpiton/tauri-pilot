@@ -1108,7 +1108,7 @@ $ tauri-pilot logs --clear
 
 Display or stream captured network requests (`fetch` and `XMLHttpRequest`).
 
-The JS bridge monkey-patches `fetch` and `XMLHttpRequest` and stores entries in a 200-entry ring buffer with timestamp, method, URL, status code, duration, and error details.
+The JS bridge monkey-patches `fetch` and `XMLHttpRequest` and stores entries in a 200-entry ring buffer with timestamp, method, URL, status code, duration, and error details. The plugin's own `__callback` IPC (`ipc://localhost/plugin:pilot|__callback` and the Windows `http(s)://ipc.localhost/...` form) is not recorded.
 
 ```bash
 tauri-pilot network [OPTIONS]
