@@ -197,7 +197,7 @@ Before connecting:
   that restricts `platforms` must include `iOS`.
 
 Disabling the desktop `press` backend on iOS is recommended. Replace the shared
-plugin dependency — or the Android-only pair from the section above — with these
+plugin dependency — or the combined pair from the Android section above — with these
 target-specific entries, so desktop builds keep it enabled:
 
 ```toml
