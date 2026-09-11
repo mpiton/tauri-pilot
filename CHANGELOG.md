@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `snapshot` and `snapshot -i` now list div-based interactive elements.
+  Hosts with `draggable="true"`, `contenteditable`, an `onclick` attribute or
+  property, or `tabindex` were dropped because `ROLE_MAP` has no `DIV` entry,
+  so `walk()` emitted no ref. `isInteractiveElement` also ignored draggable,
+  contenteditable, and `onclick`; a `tabindex` host was already treated as
+  interactive. They now get a ref (`textbox` for contenteditable, `generic`
+  otherwise). Layout wrappers without those signals stay out of the tree,
+  as do unmapped hosts whose only signal is `tabindex < 0`. [#155]
+
 - `fill`, `type`, and `check` no longer report ok on an element that cannot
   take the write. Assigning `.value` or `.checked` on a plain `<div>` created
   an expando and left the visible text unchanged, which is the same silent
@@ -735,3 +744,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#152]: https://github.com/mpiton/tauri-pilot/issues/152
 [#153]: https://github.com/mpiton/tauri-pilot/issues/153
 [#154]: https://github.com/mpiton/tauri-pilot/issues/154
+[#155]: https://github.com/mpiton/tauri-pilot/issues/155

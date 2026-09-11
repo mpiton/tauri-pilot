@@ -161,7 +161,7 @@ tauri-pilot snapshot [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-i`, `--interactive` | Only include interactive elements (buttons, inputs, links, etc.) |
+| `-i`, `--interactive` | Only include interactive elements (native controls plus draggable, contenteditable, onclick, and tabindex hosts) |
 | `-s`, `--selector <sel>` | Scope the snapshot to the subtree matching this CSS selector |
 | `-d`, `--depth <n>` | Maximum tree depth to traverse |
 | `--save <file>` | Save the snapshot to a JSON file for later comparison with `diff --ref` |
