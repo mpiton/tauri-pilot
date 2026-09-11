@@ -72,7 +72,7 @@ Three target formats, auto-detected:
 | Command | Description |
 |---------|-------------|
 | `snapshot` | Full accessibility tree |
-| `snapshot -i` | Interactive elements only (native controls plus draggable, contenteditable, and clickable hosts) |
+| `snapshot -i` | Interactive elements only (native controls plus draggable, contenteditable, onclick, and tabindex hosts) |
 | `snapshot -s ".panel"` | Scope to CSS selector |
 | `snapshot -d 3` | Limit tree depth |
 | `snapshot --save file.snap` | Save snapshot to file |

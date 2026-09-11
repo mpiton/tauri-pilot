@@ -150,6 +150,8 @@ test("snapshot includes a draggable card and assigns a usable ref (#155)", () =>
   const fromInteractive = named(interactive, "Kanban card");
   assert.ok(fromFull, "full snapshot must emit the draggable card");
   assert.ok(fromInteractive, "snapshot -i must emit the draggable card");
+  assert.equal(fromFull.role, "generic");
+  assert.equal(fromInteractive.role, "generic");
   assert.equal(typeof fromFull.ref, "string");
   assert.equal(fullPilot.resolve(fromFull.ref), card);
   assert.equal(
@@ -185,13 +187,27 @@ test("snapshot -i includes contenteditable, onclick attribute, and onclick prope
     text: "Tab target",
     attrs: { tabindex: "0" },
   });
+  const skipTarget = makeEl("div", {
+    text: "Skip wrapper",
+    attrs: { tabindex: "-1" },
+  });
   const inert = makeEl("div", { text: "Just a box" });
   const notDrag = makeEl("div", {
     text: "Not draggable",
     attrs: { draggable: "false" },
   });
   const body = makeEl("body", {
-    children: [editor, plaintext, attrEditor, attrClick, propClick, tabbable, inert, notDrag],
+    children: [
+      editor,
+      plaintext,
+      attrEditor,
+      attrClick,
+      propClick,
+      tabbable,
+      skipTarget,
+      inert,
+      notDrag,
+    ],
   });
   const pilot = loadBridge(body);
   const interactive = pilot.snapshot({ interactive: true }).elements;
@@ -210,12 +226,20 @@ test("snapshot -i includes contenteditable, onclick attribute, and onclick prope
   assert.equal(attrEditorEl.role, "textbox");
   assert.equal(pilot.resolve(attrEditorEl.ref), attrEditor);
   assert.ok(attrEl, "onclick attribute must make a div appear in snapshot -i");
+  assert.equal(attrEl.role, "generic");
   assert.ok(propEl, "onclick property must make a div appear in snapshot -i");
+  assert.equal(propEl.role, "generic");
   assert.ok(tabEl, "tabindex must still emit a previously unmapped div");
+  assert.equal(tabEl.role, "generic");
   assert.equal(pilot.resolve(editorEl.ref), editor);
   assert.equal(pilot.resolve(attrEl.ref), attrClick);
   assert.equal(pilot.resolve(propEl.ref), propClick);
   assert.equal(pilot.resolve(tabEl.ref), tabbable);
+  assert.equal(
+    named(interactive, "Skip wrapper"),
+    undefined,
+    "unmapped tabindex=-1 wrappers must stay out of snapshot -i",
+  );
   assert.equal(
     named(interactive, "Just a box"),
     undefined,
@@ -234,11 +258,16 @@ test("snapshot -i lists the contenteditable host, not inherited descendants (#15
     isContentEditable: true,
     contentEditable: "inherit",
   });
+  const island = makeEl("div", {
+    text: "Widget island",
+    contentEditable: "false",
+    attrs: { contenteditable: "false" },
+  });
   const editor = makeEl("div", {
     text: "Editor",
     isContentEditable: true,
     contentEditable: "true",
-    children: [paragraph],
+    children: [paragraph, island],
   });
   const body = makeEl("body", { children: [editor] });
   const pilot = loadBridge(body);
@@ -250,7 +279,41 @@ test("snapshot -i lists the contenteditable host, not inherited descendants (#15
     undefined,
     "inherited contenteditable on inner nodes must not flood snapshot -i",
   );
+  assert.equal(
+    named(interactive, "Widget island"),
+    undefined,
+    "contenteditable=false islands must stay out of snapshot -i",
+  );
   assert.equal(pilot.resolve(named(interactive, "Editor").ref), editor);
+});
+
+test("snapshot -i keeps an explicit-role host with tabindex=-1 and drops an unmapped -1 wrapper (#155)", () => {
+  const dialog = makeEl("div", {
+    text: "Modal",
+    attrs: { role: "dialog", tabindex: "-1" },
+  });
+  const wrapper = makeEl("div", {
+    text: "Dismissable layer",
+    attrs: { tabindex: "-1" },
+  });
+  const tabbable = makeEl("div", {
+    text: "Tab target",
+    attrs: { tabindex: "0" },
+  });
+  const body = makeEl("body", { children: [dialog, wrapper, tabbable] });
+  const interactive = loadBridge(body).snapshot({ interactive: true }).elements;
+
+  const dialogEl = named(interactive, "Modal");
+  assert.ok(dialogEl, "explicit role=dialog must still appear with tabindex=-1");
+  assert.equal(dialogEl.role, "dialog");
+  assert.equal(
+    named(interactive, "Dismissable layer"),
+    undefined,
+    "unmapped tabindex=-1 wrappers must stay out of snapshot -i",
+  );
+  const tabEl = named(interactive, "Tab target");
+  assert.ok(tabEl, "tabindex=0 host must still appear");
+  assert.equal(tabEl.role, "generic");
 });
 
 test("snapshot -i still lists native controls and skips a wrapping layout div (#155)", () => {

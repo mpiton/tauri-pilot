@@ -318,8 +318,19 @@
   // entry, so interactive hosts built on unmapped tags need a fallback (#155).
   function fallbackRole(el) {
     if (carriesContentEditable(el)) return "textbox";
-    if (isInteractiveElement(el)) return "generic";
-    return null;
+    if (!isInteractiveElement(el)) return null;
+    // Negative tabindex is a focus trap, not a widget. Skip unmapped hosts
+    // whose only extra signal is tabindex < 0 (Radix DismissableLayer, etc.).
+    const tab = parseInt(el.getAttribute("tabindex"), 10);
+    if (
+      tab < 0 &&
+      String(el.getAttribute("draggable") || "").toLowerCase() !== "true" &&
+      !el.hasAttribute("onclick") &&
+      typeof el.onclick !== "function"
+    ) {
+      return null;
+    }
+    return "generic";
   }
 
   function getName(el) {
