@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `fill`, `type`, and `check` no longer report ok on an element that cannot
+  take the write. Assigning `.value` or `.checked` on a plain `<div>` created
+  an expando and left the visible text unchanged, which is the same silent
+  no-op `select` was hardened against. `fill` and `type` now accept
+  `<input>`, `<textarea>`, `<select>`, and contenteditable hosts (including
+  Tiptap / ProseMirror-style editors, via `insertText`), and throw on
+  anything else. `check` accepts only checkbox and radio inputs. [#154]
+
 - Without `--window` and without a `main` window, commands now target the
   first window by label, and `windows.list` sorts by label. Both used Tauri's
   hash order, which changes from run to run.

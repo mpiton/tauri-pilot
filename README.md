@@ -143,11 +143,11 @@ the JavaScript do not need escaping.
 | `snapshot` | Accessibility tree with refs (`--save` to persist) |
 | `diff` | Compare snapshots, show only changes |
 | `click` | Click an element |
-| `fill` | Clear + type in an input |
+| `fill` | Clear + type in an input, textarea, select, or contenteditable |
 | `type` | Type without clearing |
 | `press` | Send a keystroke |
 | `select` | Select a dropdown option |
-| `check` | Toggle a checkbox |
+| `check` | Toggle a checkbox or radio |
 | `scroll` | Scroll page or element |
 | `drag` | Drag element to element or by offset (drives HTML5 *and* dnd-kit-style libraries) |
 | `drop` | Simulate file drop on element |

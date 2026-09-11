@@ -119,7 +119,7 @@ Key internals:
 
 - **Snapshot**: Uses a manual recursive traversal over `node.children` to walk the DOM. A `ROLE_MAP` maps implicit HTML element roles (e.g. `<button>` → `"button"`, `<a>` → `"link"`) for elements without an explicit ARIA role.
 - **Actions**: Dispatch realistic DOM event sequences — `focus → mousedown → mouseup → click` — ensuring compatibility with React, Vue, and other frameworks that rely on synthetic events.
-- **`fill`**: Uses the native `HTMLInputElement` value setter via `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set` to trigger React's synthetic change events correctly.
+- **`fill` / `type`**: On `<input>`, `<textarea>`, and `<select>`, write through the element's own prototype `value` setter so React sees the change. On contenteditable hosts, replace or insert via `document.execCommand("insertText")`. Anything else throws. A reported `ok` means the value landed.
 - **Console capture**: Monkey-patches `console.log/warn/error/info`, stores entries in a 500-entry ring buffer with `id`, `timestamp`, `level`, `args`, and `source`. Exposed via `consoleLogs(options)` and `clearLogs()`.
 
 ## Project Structure

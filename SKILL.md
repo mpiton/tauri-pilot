@@ -97,6 +97,10 @@ Three target formats, auto-detected:
 | `drag <source> [target] [--offset X,Y]` | `drag @e5 @e8` |
 | `drop <target> --file <path>` | `drop @e3 --file ./img.png` |
 
+`fill` / `type` accept `<input>`, `<textarea>`, `<select>`, and contenteditable
+elements, and error on anything else. `check` accepts only checkbox and radio
+inputs. `ok` means the value actually landed.
+
 `drag` emits an HTML5 drag sequence *and* a real press → interpolated
 `pointermove`/`mousemove` stream → release, so it drives both native
 `draggable="true"` handlers and libraries like dnd-kit or sortable.js. Its `ok`

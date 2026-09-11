@@ -62,15 +62,15 @@ pub(crate) enum Command {
     },
     /// Click an element.
     Click { target: String },
-    /// Clear and fill an input with a value.
+    /// Clear and fill an input, textarea, select, or contenteditable element.
     Fill { target: String, value: String },
-    /// Type text character by character.
+    /// Type text character by character into an editable element.
     Type { target: String, text: String },
     /// Press a keyboard key.
     Press { key: String },
     /// Select an option in a <select>.
     Select { target: String, value: String },
-    /// Toggle a checkbox.
+    /// Toggle a checkbox or radio input.
     Check { target: String },
     /// Scroll the page or an element.
     Scroll {

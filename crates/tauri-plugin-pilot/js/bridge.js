@@ -540,14 +540,91 @@
     return desc && typeof desc.set === "function" ? desc.set : null;
   }
 
+  function elementTag(el) {
+    return el && el.tagName ? String(el.tagName).toLowerCase() : "";
+  }
+
+  function isValueElement(el) {
+    const tag = elementTag(el);
+    return tag === "input" || tag === "textarea" || tag === "select";
+  }
+
+  // Realm-safe: `isContentEditable` is an instance property, not a constructor
+  // check, so a contenteditable node from another window/iframe still matches.
+  // Fall back to the contentEditable IDL string for hosts that only expose that.
+  function isContentEditable(el) {
+    if (!el) return false;
+    if (el.isContentEditable === true) return true;
+    const mode = el.contentEditable != null ? String(el.contentEditable).toLowerCase() : "";
+    return mode === "true" || mode === "plaintext-only";
+  }
+
+  function requireEditable(el, action) {
+    if (isValueElement(el) || isContentEditable(el)) return;
+    const reported = (elementTag(el) || String(el)).slice(0, 64);
+    throw new Error(action + " requires an <input>, <textarea>, <select>, or contenteditable element, got: " + reported);
+  }
+
+  function requireCheckable(el) {
+    const tag = elementTag(el);
+    const type = el && el.type != null ? String(el.type).toLowerCase() : "";
+    if (tag === "input" && (type === "checkbox" || type === "radio")) return;
+    const reported = (tag === "input" ? "input type=" + type : tag || String(el)).slice(0, 64);
+    throw new Error('check requires an <input type="checkbox"> or <input type="radio">, got: ' + reported);
+  }
+
+  function tryExecCommand(command, value) {
+    try {
+      return typeof document.execCommand === "function" && document.execCommand(command, false, value);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function collapseToEnd(el) {
+    try {
+      const doc = el.ownerDocument || document;
+      const range = doc.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const view = doc.defaultView || window;
+      const sel = view.getSelection && view.getSelection();
+      if (!sel) return;
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) {}
+  }
+
+  function fillContentEditable(el, value) {
+    if (tryExecCommand("selectAll") && tryExecCommand("insertText", value)) return;
+    el.textContent = value;
+  }
+
+  function typeContentEditable(el, text) {
+    collapseToEnd(el);
+    for (const ch of text) {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
+      if (!tryExecCommand("insertText", ch)) {
+        el.textContent = (el.textContent || "") + ch;
+        el.dispatchEvent(new InputEvent("input", { data: ch, inputType: "insertText", bubbles: true }));
+      }
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true }));
+    }
+  }
+
   function fill(params) {
     const el = resolveTarget(params);
+    requireEditable(el, "fill");
     el.focus();
-    const setter = nativeValueSetter(el);
-    if (setter) {
-      setter.call(el, params.value);
+    if (isValueElement(el)) {
+      const setter = nativeValueSetter(el);
+      if (setter) {
+        setter.call(el, params.value);
+      } else {
+        el.value = params.value;
+      }
     } else {
-      el.value = params.value;
+      fillContentEditable(el, params.value);
     }
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -556,7 +633,12 @@
 
   function typeText(params) {
     const el = resolveTarget(params);
+    requireEditable(el, "type");
     el.focus();
+    if (!isValueElement(el)) {
+      typeContentEditable(el, params.text);
+      return { ok: true };
+    }
     const setter = nativeValueSetter(el);
     for (const ch of params.text) {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
@@ -615,6 +697,7 @@
 
   function check(params) {
     const el = resolveTarget(params);
+    requireCheckable(el);
     el.checked = !el.checked;
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };

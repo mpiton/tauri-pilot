@@ -444,6 +444,68 @@ mod tests {
         );
     }
 
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn bridge_fill_type_check_reject_non_editable_targets() {
+        // #154: fill/type/check used to assign `.value` / `.checked` on any
+        // element. On a <div> that creates an expando and reports ok while
+        // nothing visible changed. Same failure class as the select guard
+        // after nativeValueSetter: a reported ok must mean the action landed.
+        let js = super::BRIDGE_JS;
+
+        let body_of = |fn_decl: &str| -> &str {
+            let start = js
+                .find(fn_decl)
+                .unwrap_or_else(|| panic!("{fn_decl} missing"));
+            let after = start + fn_decl.len();
+            let end = js[after..]
+                .find("\n  function ")
+                .map_or(js.len(), |off| after + off);
+            &js[start..end]
+        };
+
+        let fill_body = body_of("function fill(params)");
+        let type_body = body_of("function typeText(params)");
+        let check_body = body_of("function check(params)");
+        let editable_body = body_of("function requireEditable(");
+        let checkable_body = body_of("function requireCheckable(");
+
+        assert!(
+            fill_body.contains("requireEditable(el, \"fill\")"),
+            "fill must reject non-editable targets before writing (#154)"
+        );
+        assert!(
+            type_body.contains("requireEditable(el, \"type\")"),
+            "typeText must reject non-editable targets before writing (#154)"
+        );
+        assert!(
+            check_body.contains("requireCheckable("),
+            "check must reject non-checkbox/radio targets before toggling (#154)"
+        );
+        assert!(
+            editable_body
+                .contains("requires an <input>, <textarea>, <select>, or contenteditable element"),
+            "fill/type error must name the accepted elements (#154)"
+        );
+        assert!(
+            checkable_body
+                .contains("check requires an <input type=\"checkbox\"> or <input type=\"radio\">"),
+            "check error must name checkbox and radio (#154)"
+        );
+        assert!(
+            !editable_body.contains("instanceof") && !checkable_body.contains("instanceof"),
+            "fill/type/check guards must be realm-safe — no instanceof (#154)"
+        );
+        assert!(
+            body_of("function fillContentEditable(").contains("insertText"),
+            "fill must edit contenteditable via insertText so rich-text editors see the write (#154)"
+        );
+        assert!(
+            body_of("function isContentEditable(").contains("plaintext-only"),
+            "contenteditable detection must accept plaintext-only hosts (#154)"
+        );
+    }
+
     #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
     #[test]
     fn second_instance_starts_when_socket_already_bound() {
