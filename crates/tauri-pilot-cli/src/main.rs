@@ -1374,7 +1374,8 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 let _ = write!(cmd, " {amt}");
             }
             if let Some(t) = resolve_export_target(Some(entry)) {
-                let _ = write!(cmd, " --target {t}");
+                // Equals form so a signed coord (`-10,20`) is not a new flag.
+                let _ = write!(cmd, " --target={t}");
             }
             cmd
         }
@@ -2028,6 +2029,29 @@ mod tests {
         assert_eq!(
             p,
             json!({"x": 100, "y": 200, "direction": "left", "amount": null})
+        );
+    }
+
+    #[test]
+    fn test_entry_to_cli_command_scroll_emits_target() {
+        assert_eq!(
+            entry_to_cli_command(
+                "scroll",
+                &json!({"direction": "down", "amount": 50, "ref": "e12"})
+            ),
+            "tauri-pilot scroll 'down' 50 --target='@e12'"
+        );
+        assert_eq!(
+            entry_to_cli_command("scroll", &json!({"direction": "down", "selector": "#log"})),
+            "tauri-pilot scroll 'down' --target='#log'"
+        );
+        assert_eq!(
+            entry_to_cli_command("scroll", &json!({"direction": "up", "x": 100, "y": 200})),
+            "tauri-pilot scroll 'up' --target=100,200"
+        );
+        assert_eq!(
+            entry_to_cli_command("scroll", &json!({"direction": "down", "x": -10, "y": 20})),
+            "tauri-pilot scroll 'down' --target=-10,20"
         );
     }
 }

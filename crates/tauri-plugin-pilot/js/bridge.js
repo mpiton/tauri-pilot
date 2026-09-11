@@ -794,15 +794,50 @@
     return { ok: true };
   }
 
+  function overflowValue(style, axis) {
+    if (!style) return "";
+    return style[axis] || style.overflow || "";
+  }
+
+  function axisCanScroll(el, style, axis, scrollSize, clientSize) {
+    var overflow = overflowValue(style, axis);
+    return (overflow === "auto" || overflow === "scroll" || overflow === "overlay")
+      && el[scrollSize] > el[clientSize];
+  }
+
+  function canScroll(el) {
+    if (!el || el === window) return false;
+    var style = null;
+    if (typeof window.getComputedStyle === "function") {
+      style = window.getComputedStyle(el);
+    }
+    if (!style) style = el.style;
+    return axisCanScroll(el, style, "overflowY", "scrollHeight", "clientHeight")
+      || axisCanScroll(el, style, "overflowX", "scrollWidth", "clientWidth");
+  }
+
+  // Coords resolve to the topmost node at the point, usually a child inside
+  // the scroller. scrollTop/scrollBy on that child is a no-op.
+  function nearestScrollTarget(el) {
+    if (!el || el === window) return el;
+    var node = el;
+    while (node && node !== document && node !== document.documentElement && node !== document.body) {
+      if (canScroll(node)) return node;
+      node = node.parentElement;
+    }
+    return el;
+  }
+
   function scroll(options) {
     const dir = (options && options.direction) || "down";
     const amount = (options && options.amount) || 300;
     // Same target shapes as click/fill/text: snapshot ref, CSS selector, or
     // coordinates. No target still means the page (`window`), which is why
     // this cannot call `resolveTarget` unconditionally (#157).
-    const target = (options && (options.ref || options.selector || (options.x != null && options.y != null)))
+    const resolved = (options && (options.ref || options.selector || (options.x != null && options.y != null)))
       ? resolveTarget(options)
       : window;
+    const target = nearestScrollTarget(resolved);
 
     if (dir === "top") {
       if (target === window) {

@@ -77,7 +77,13 @@ pub(crate) enum Command {
         direction: String,
         amount: Option<i32>,
         /// Element to scroll: `@ref`, CSS selector, or `x,y`. Defaults to the page.
-        #[arg(long, visible_alias = "ref", value_name = "TARGET")]
+        // Signed coords (`-10,20`) look like flags unless hyphen values are allowed.
+        #[arg(
+            long,
+            visible_alias = "ref",
+            value_name = "TARGET",
+            allow_hyphen_values = true
+        )]
         target: Option<String>,
     },
     /// Drag an element to another element or by offset.
@@ -349,6 +355,7 @@ mod tests {
     fn test_parse_target_coords() {
         assert_eq!(parse_target("100,200"), Target::Coords(100, 200));
         assert_eq!(parse_target("0, 0"), Target::Coords(0, 0));
+        assert_eq!(parse_target("-10,20"), Target::Coords(-10, 20));
     }
 
     #[test]
@@ -984,6 +991,20 @@ mod tests {
                 assert_eq!(target, None);
             }
             _ => panic!("expected Scroll"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scroll_negative_coords() {
+        let equals = Cli::parse_from(["tauri-pilot", "scroll", "down", "--target=-10,20"]);
+        let spaced = Cli::parse_from(["tauri-pilot", "scroll", "down", "--target", "-10,20"]);
+        for cli in [equals, spaced] {
+            match cli.command {
+                Command::Scroll {
+                    target: Some(t), ..
+                } => assert_eq!(t, "-10,20"),
+                _ => panic!("expected Scroll with negative coords"),
+            }
         }
     }
 }

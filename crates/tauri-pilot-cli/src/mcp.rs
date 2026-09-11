@@ -1881,6 +1881,65 @@ mod tests {
     }
 
     #[test]
+    fn optional_scroll_target_accepts_target_or_ref() {
+        let mut target_only = Map::new();
+        target_only.insert("target".to_owned(), json!("#log"));
+        assert_eq!(
+            optional_scroll_target(&target_only).expect("target"),
+            Some("#log".to_owned())
+        );
+
+        let mut ref_only = Map::new();
+        ref_only.insert("ref".to_owned(), json!("e1"));
+        assert_eq!(
+            optional_scroll_target(&ref_only).expect("ref"),
+            Some("e1".to_owned())
+        );
+
+        let empty = Map::new();
+        assert_eq!(optional_scroll_target(&empty).expect("neither"), None);
+
+        let mut both = Map::new();
+        both.insert("target".to_owned(), json!("#log"));
+        both.insert("ref".to_owned(), json!("e1"));
+        let err = optional_scroll_target(&both).expect_err("both set");
+        assert!(
+            err.message.contains("not both"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn optional_scroll_target_ref_selector_builds_selector_params() {
+        let mut args = Map::new();
+        args.insert("ref".to_owned(), json!("#log"));
+        let target = optional_scroll_target(&args).expect("ref alias");
+        let params = build_scroll_params("down", Some(50), target.as_deref());
+        assert_eq!(
+            params,
+            json!({"selector": "#log", "direction": "down", "amount": 50})
+        );
+    }
+
+    #[tokio::test]
+    async fn scroll_rejects_target_and_ref_together() {
+        let mut args = Map::new();
+        args.insert("target".to_owned(), json!("#log"));
+        args.insert("ref".to_owned(), json!("e1"));
+        let err = PilotMcpServer::new(None, None)
+            .call_tool_by_name("scroll", args)
+            .await
+            .expect_err("both set");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("not both"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[test]
     fn pilot_screenshot_tool_advertises_path_only_contract() {
         let tool = cached_tools()
             .iter()

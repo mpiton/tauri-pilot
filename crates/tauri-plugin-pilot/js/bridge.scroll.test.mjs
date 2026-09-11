@@ -31,6 +31,8 @@ function makeScroller() {
     clientHeight: 200,
     clientWidth: 200,
     scrollWidth: 400,
+    style: { overflow: "auto", overflowY: "auto", overflowX: "auto" },
+    parentElement: null,
     calls: [],
     scrollBy(dx, dy) {
       this.calls.push(["scrollBy", dx, dy]);
@@ -59,6 +61,9 @@ function loadBridge({ queryResult, fromPoint } = {}) {
     },
     scrollTo(x, y) {
       windowCalls.push(["scrollTo", x, y]);
+    },
+    getComputedStyle(el) {
+      return (el && el.style) || { overflow: "", overflowX: "", overflowY: "" };
     },
   };
   globalThis.document = {
@@ -114,6 +119,31 @@ test("scroll with coordinates scrolls the element at that point", () => {
     ok: true,
   });
   assert.deepEqual(el.calls, [["scrollBy", 0, -20]]);
+});
+
+test("scroll with coordinates walks up to the nearest scroller", () => {
+  const scroller = makeScroller();
+  const child = {
+    tagName: "SPAN",
+    scrollTop: 0,
+    scrollLeft: 0,
+    scrollHeight: 16,
+    clientHeight: 16,
+    scrollWidth: 40,
+    clientWidth: 40,
+    style: { overflow: "visible", overflowY: "visible", overflowX: "visible" },
+    parentElement: scroller,
+    calls: [],
+    scrollBy(dx, dy) {
+      this.calls.push(["scrollBy", dx, dy]);
+    },
+  };
+  const pilot = loadBridge({ fromPoint: child });
+  assert.deepEqual(pilot.scroll({ direction: "down", amount: 50, x: 10, y: 40 }), {
+    ok: true,
+  });
+  assert.deepEqual(scroller.calls, [["scrollBy", 0, 50]]);
+  assert.deepEqual(child.calls, []);
 });
 
 test("scroll throws when no element is at the coordinates", () => {

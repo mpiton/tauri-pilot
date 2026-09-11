@@ -445,19 +445,14 @@ fn require_target(step: &Step) -> Result<&str> {
 
 /// Resolve the optional scroll target from a TOML step.
 ///
-/// `target` uses the same `@ref` / CSS / `x,y` syntax as click. `ref = "e1"`
-/// is the established snapshot-ref field (same as `wait`) and is rewritten to
-/// `@e1` so [`build_scroll_params`] routes it as a ref. Setting both is an
-/// error.
+/// `target` and `ref` are aliases: both keep the raw `@ref` / CSS / `x,y`
+/// value. [`build_scroll_params`] classifies bare snapshot ids (`e1`). Setting
+/// both is an error.
 fn scroll_step_target(step: &Step) -> Result<Option<String>> {
     match (step.target.as_deref(), step.step_ref.as_deref()) {
         (Some(_), Some(_)) => anyhow::bail!("scroll step sets both `target` and `ref`; pick one"),
         (Some(target), None) => Ok(Some(target.to_owned())),
-        (None, Some(r)) => Ok(Some(if r.starts_with('@') {
-            r.to_owned()
-        } else {
-            format!("@{r}")
-        })),
+        (None, Some(r)) => Ok(Some(r.to_owned())),
         (None, None) => Ok(None),
     }
 }
@@ -882,6 +877,16 @@ ref = "e1"
 action = "scroll"
 target = "#log"
 amount = 50
+
+[[step]]
+action = "scroll"
+direction = "down"
+ref = "#log"
+
+[[step]]
+action = "scroll"
+direction = "left"
+ref = "100,200"
 "##,
         )
         .expect("valid toml");
@@ -889,13 +894,29 @@ amount = 50
             scroll_step_target(&scenario.step[0])
                 .expect("ref step")
                 .as_deref(),
-            Some("@e1")
+            Some("e1")
+        );
+        assert_eq!(
+            build_scroll_params("down", None, Some("e1")),
+            json!({"ref": "e1", "direction": "down", "amount": null})
         );
         assert_eq!(
             scroll_step_target(&scenario.step[1])
                 .expect("target step")
                 .as_deref(),
             Some("#log")
+        );
+        assert_eq!(
+            scroll_step_target(&scenario.step[2])
+                .expect("ref selector")
+                .as_deref(),
+            Some("#log")
+        );
+        assert_eq!(
+            scroll_step_target(&scenario.step[3])
+                .expect("ref coords")
+                .as_deref(),
+            Some("100,200")
         );
     }
 
