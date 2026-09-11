@@ -575,4 +575,64 @@ mod tests {
             "paragraph must stay out of INTERACTIVE_ROLES so interactive snapshots still exclude <p> (#109)"
         );
     }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn bridge_snapshot_emits_div_based_interactive_hosts() {
+        // #155: unmapped tags (DIV) were dropped from snapshots even when they
+        // carried draggable/contenteditable/onclick, so `snapshot -i` had no
+        // ref for Kanban cards or editors. The walk still requires a role, so
+        // getRole must call the fallback, and DIV must stay out of ROLE_MAP or
+        // every layout wrapper would flood the tree.
+        let js = super::BRIDGE_JS;
+
+        assert!(
+            bridge_fn_body(js, "function getRole(").contains("fallbackRole(el)"),
+            "getRole must fall back so unmapped interactive hosts get a role (#155)"
+        );
+
+        let interactive = bridge_fn_body(js, "function isInteractiveElement(");
+        assert!(
+            interactive.contains("getAttribute(\"draggable\")"),
+            "isInteractiveElement must read the draggable attribute (#155)"
+        );
+        assert!(
+            interactive.contains("=== \"true\""),
+            "isInteractiveElement must require draggable=\"true\", not a truthy value (#155)"
+        );
+        assert!(
+            interactive.contains("hasAttribute(\"onclick\")"),
+            "isInteractiveElement must treat an onclick attribute as interactive (#155)"
+        );
+        assert!(
+            interactive.contains("typeof el.onclick"),
+            "isInteractiveElement must treat an onclick property as interactive (#155)"
+        );
+        assert!(
+            interactive.contains("carriesContentEditable(el)"),
+            "isInteractiveElement must call carriesContentEditable, not inherited isContentEditable (#155)"
+        );
+
+        let fallback = bridge_fn_body(js, "function fallbackRole(");
+        assert!(
+            fallback.contains("carriesContentEditable(el)"),
+            "fallbackRole must detect contenteditable hosts (#155)"
+        );
+        assert!(
+            fallback.contains("return \"textbox\""),
+            "contenteditable hosts must snapshot as textbox (#155)"
+        );
+        assert!(
+            fallback.contains("return \"generic\""),
+            "other unmapped interactive hosts must snapshot as generic (#155)"
+        );
+
+        let map_start = js.find("const ROLE_MAP = {").expect("ROLE_MAP missing");
+        let map_body = &js[map_start..];
+        let map_end = map_body.find("};").expect("ROLE_MAP unterminated");
+        assert!(
+            !map_body[..map_end].contains("DIV:"),
+            "ROLE_MAP must not map DIV, or layout wrappers flood the snapshot (#155)"
+        );
+    }
 }

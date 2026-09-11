@@ -311,7 +311,15 @@
     const explicit = el.getAttribute("role");
     if (explicit) return explicit;
     if (el.tagName === "INPUT") return inputRole(el);
-    return ROLE_MAP[el.tagName] || null;
+    return ROLE_MAP[el.tagName] || fallbackRole(el);
+  }
+
+  // walk() emits a node only when getRole() is non-null. ROLE_MAP has no DIV
+  // entry, so interactive hosts built on unmapped tags need a fallback (#155).
+  function fallbackRole(el) {
+    if (carriesContentEditable(el)) return "textbox";
+    if (isInteractiveElement(el)) return "generic";
+    return null;
   }
 
   function getName(el) {
@@ -360,6 +368,13 @@
       return true;
     }
     if (el.hasAttribute("tabindex")) return true;
+    if (String(el.getAttribute("draggable") || "").toLowerCase() === "true") {
+      return true;
+    }
+    if (carriesContentEditable(el)) return true;
+    if (el.hasAttribute("onclick") || typeof el.onclick === "function") {
+      return true;
+    }
     const role = el.getAttribute("role");
     return role ? INTERACTIVE_ROLES.has(role) : false;
   }
@@ -557,6 +572,16 @@
     if (el.isContentEditable === true) return true;
     const mode = el.contentEditable != null ? String(el.contentEditable).toLowerCase() : "";
     return mode === "true" || mode === "plaintext-only";
+  }
+
+  // Snapshot interactivity: only the host that carries contenteditable, not
+  // descendants whose IDL `isContentEditable` is inherited (#155).
+  function carriesContentEditable(el) {
+    const mode = el.contentEditable != null ? String(el.contentEditable).toLowerCase() : "";
+    if (mode === "true" || mode === "plaintext-only") return true;
+    if (!el.hasAttribute || !el.hasAttribute("contenteditable")) return false;
+    const attr = String(el.getAttribute("contenteditable") || "").toLowerCase();
+    return attr === "true" || attr === "plaintext-only" || attr === "";
   }
 
   function requireEditable(el, action) {

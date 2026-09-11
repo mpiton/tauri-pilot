@@ -35,7 +35,7 @@ tauri-pilot diff
 
 The `diff` command compares the current page with the last snapshot and returns only added, removed, and changed elements. This saves significant tokens — a typical diff after a click is 2-5 lines vs 50-100 for a full re-snapshot.
 
-The `-i` flag filters to interactive elements only, reducing noise in the output.
+The `-i` flag filters to interactive elements only, reducing noise in the output. That set includes native controls and unmapped hosts with `draggable="true"`, `contenteditable`, an `onclick` handler, or `tabindex`.
 
 ## Structured output with --json
 

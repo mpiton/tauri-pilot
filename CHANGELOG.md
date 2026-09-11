@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `snapshot` and `snapshot -i` now list div-based interactive elements.
+  Hosts with `draggable="true"`, `contenteditable`, an `onclick` attribute or
+  property, or `tabindex` were dropped because `ROLE_MAP` has no `DIV` entry
+  and `isInteractiveElement` never treated those signals as interactive, so
+  there was no ref to `click`, `fill`, or `drag`. They now get a ref
+  (`textbox` for contenteditable, `generic` otherwise). Layout wrappers
+  without those signals stay out of the tree. [#155]
+
 - `fill`, `type`, and `check` no longer report ok on an element that cannot
   take the write. Assigning `.value` or `.checked` on a plain `<div>` created
   an expando and left the visible text unchanged, which is the same silent
