@@ -385,8 +385,8 @@ tauri-pilot type @e2 " additional text"
 
 Inject keyboard events at the OS level via [`enigo`](https://crates.io/crates/enigo).
 Events are `isTrusted=true` and reach DOM listeners and Tauri accelerators on
-supported desktop platforms. Android has no native `press` backend; use `fill`
-or `type` for text input.
+supported desktop platforms. Android and iOS have no native `press` backend;
+use `fill` or `type` for text input.
 
 :::caution[X11 global shortcuts]
 On X11, synthetic key events from `enigo`'s `XTestFakeKeyEvent` backend
@@ -868,7 +868,8 @@ current scroll position is not reflected in the image — what you get is the
 entire page from the top. Use `--selector` to capture a single element
 (works for elements below the fold too). For a pixel-exact capture of the
 native window, use `screenshot_native` — macOS only, it returns
-`PERMISSION_DENIED` on Linux and Windows.
+`PERMISSION_DENIED` on Linux, Windows, Android and iOS. A Simulator build is an
+iOS build even though the host is a Mac, so use `screenshot` there.
 
 The bridge also copies only an allowlist of painted CSS properties onto the
 clone it renders (a full computed-style copy wedges WebKit for minutes on

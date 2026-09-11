@@ -197,7 +197,8 @@ Before connecting:
   that restricts `platforms` must include `iOS`.
 
 Disabling the desktop `press` backend on iOS is recommended. Replace the shared
-plugin dependency with target-specific entries so desktop builds keep it enabled:
+plugin dependency — or the Android-only pair from the section above — with these
+target-specific entries, so desktop builds keep it enabled:
 
 ```toml
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
@@ -208,8 +209,9 @@ tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
 ```
 
 Cargo unions features across dependency entries, so use this single combined
-pair rather than one pair per platform: a plain `not(target_os = "ios")` entry
-would also match Android and re-enable `press` there.
+pair rather than one pair per platform. A leftover `not(target_os = "android")`
+or a naive `not(target_os = "ios")` entry matches the other mobile OS and
+re-enables `press` there.
 
 `press` needs an OS keyboard backend that iOS does not provide, and
 `screenshot_native` is macOS-only. Use `fill` or `type` for text input, and the
@@ -225,10 +227,12 @@ tauri-pilot ping
 tauri-pilot snapshot
 ```
 
-Every Simulator running the same app resolves to the same default socket path,
-so isolate them when running more than one at a time. The app must already be
-installed on each Simulator (one `cargo tauri ios dev` run against it does
-that); relaunch it with a private socket directory:
+A desktop build and every Simulator running the same app all resolve to the
+same default socket path. Whichever starts first owns it; the others log a
+warning, start without a pilot server, and the CLI then drives that first
+instance instead. Quit the extra ones, or give a Simulator its own socket
+directory. The app must already be installed on it (one `cargo tauri ios dev`
+run against that Simulator does this):
 
 ```sh
 mkdir -m 700 /tmp/pilot-my-simulator
