@@ -133,24 +133,27 @@
     return 0;
   }
 
+  // Tauri convertFileSrc(cmd, "ipc") produces `ipc://localhost/<cmd>` on
+  // Unix/macOS and `http(s)://ipc.localhost/<cmd>` on Windows/Android.
+  // WebKit treats `ipc:` as a non-special scheme, so URL.pathname is
+  // `//localhost/<cmd>` rather than `/<cmd>` and an exact-path check misses
+  // the eval/hello callback (#156).
   function isPilotIpcUrl(url) {
     const text = String(url);
-    let path;
-    try {
-      const base = (window.location && window.location.href) || "http://localhost/";
-      path = new URL(text, base).pathname;
-    } catch (_) {
-      const q = text.indexOf("?");
-      path = q === -1 ? text : text.slice(0, q);
-    }
     let decoded;
     try {
-      decoded = decodeURIComponent(path);
+      decoded = decodeURIComponent(text);
     } catch (_) {
-      decoded = path;
+      decoded = text;
     }
-    // Exact IPC path for the two callback commands, not a substring match.
-    return decoded === "/plugin:pilot|callback" || decoded === "/plugin:pilot|__callback";
+    const isIpc =
+      /^ipc:\/\//i.test(decoded) ||
+      /^https?:\/\/ipc\.localhost(?:[:/]|$)/i.test(decoded);
+    if (!isIpc) return false;
+    const path = decoded.split("#")[0].split("?")[0];
+    const slash = path.lastIndexOf("/");
+    const cmd = slash === -1 ? path : path.slice(slash + 1);
+    return cmd === "plugin:pilot|__callback" || cmd === "plugin:pilot|callback";
   }
 
   const _originalFetch = window.fetch.bind(window);
@@ -208,6 +211,9 @@
   };
 
   XMLHttpRequest.prototype.send = function(body) {
+    if (this._pilot && isPilotIpcUrl(this._pilot.url)) {
+      return _origXhrSend.apply(this, arguments);
+    }
     if (this._pilot) {
       const pilot = this._pilot;
       const timestamp = Date.now();
