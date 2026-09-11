@@ -1290,13 +1290,19 @@
         return null;
       }
 
+      var result = gone ? { gone: true } : { found: true };
+      var target = selector || ref;
+      var timeoutMsg = gone
+        ? "Timeout waiting for " + target + " to disappear"
+        : "Timeout waiting for " + target;
+
       var el = check();
-      if (!gone && el) return res({ found: true });
-      if (gone && !el) return res({ found: true });
+      if (!gone && el) return res(result);
+      if (gone && !el) return res(result);
 
       var timer = setTimeout(function () {
         observer.disconnect();
-        rej(new Error("Timeout waiting for " + (selector || ref)));
+        rej(new Error(timeoutMsg));
       }, timeout);
 
       var observer = new MutationObserver(function () {
@@ -1304,11 +1310,11 @@
         if (!gone && found) {
           observer.disconnect();
           clearTimeout(timer);
-          res({ found: true });
+          res(result);
         } else if (gone && !found) {
           observer.disconnect();
           clearTimeout(timer);
-          res({ found: true });
+          res(result);
         }
       });
 

@@ -32,12 +32,10 @@ pub(crate) fn format_text(value: &serde_json::Value) {
         }
         return;
     }
-    // {ok: true} → "✓ ok", {found: true} → "✓ found"
-    for key in ["ok", "found", "cleared"] {
-        if value.get(key).and_then(serde_json::Value::as_bool) == Some(true) {
-            println!("{}", crate::style::success(key));
-            return;
-        }
+    // {ok: true} → "✓ ok", {gone: true} → "✓ gone", {found: true} → "✓ found"
+    if let Some(key) = text_status_flag(value) {
+        println!("{}", crate::style::success(key));
+        return;
     }
     // {status: "ok"} → "✓ ok", {status: "error"} → "✗ error"
     if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
@@ -53,6 +51,14 @@ pub(crate) fn format_text(value: &serde_json::Value) {
         serde_json::Value::Null => {}
         other => println!("{other}"),
     }
+}
+
+/// First true flag printed as `✓ <key>`. `gone` precedes `found` so
+/// `wait --gone` prints `✓ gone` even if both flags are set (issue #159).
+fn text_status_flag(value: &serde_json::Value) -> Option<&'static str> {
+    ["ok", "gone", "found", "cleared"]
+        .into_iter()
+        .find(|key| value.get(*key).and_then(serde_json::Value::as_bool) == Some(true))
 }
 
 /// Format a snapshot result as an indented accessibility tree.
@@ -832,6 +838,16 @@ mod tests {
     #[test]
     fn test_format_text_found_does_not_panic() {
         format_text(&json!({"found": true}));
+    }
+
+    #[test]
+    fn test_text_status_flag_gone_is_gone_not_found() {
+        assert_eq!(text_status_flag(&json!({"gone": true})), Some("gone"));
+        assert_eq!(text_status_flag(&json!({"found": true})), Some("found"));
+        assert_eq!(
+            text_status_flag(&json!({"found": true, "gone": true})),
+            Some("gone")
+        );
     }
 
     #[test]
