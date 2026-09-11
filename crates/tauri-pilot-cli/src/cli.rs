@@ -76,8 +76,15 @@ pub(crate) enum Command {
     Scroll {
         direction: String,
         amount: Option<i32>,
-        #[arg(long)]
-        r#ref: Option<String>,
+        /// Element to scroll: `@ref`, CSS selector, or `x,y`. Defaults to the page.
+        // Signed coords (`-10,20`) look like flags unless hyphen values are allowed.
+        #[arg(
+            long,
+            visible_alias = "ref",
+            value_name = "TARGET",
+            allow_hyphen_values = true
+        )]
+        target: Option<String>,
     },
     /// Drag an element to another element or by offset.
     Drag {
@@ -348,6 +355,7 @@ mod tests {
     fn test_parse_target_coords() {
         assert_eq!(parse_target("100,200"), Target::Coords(100, 200));
         assert_eq!(parse_target("0, 0"), Target::Coords(0, 0));
+        assert_eq!(parse_target("-10,20"), Target::Coords(-10, 20));
     }
 
     #[test]
@@ -937,6 +945,66 @@ mod tests {
             assert_eq!(path, std::path::PathBuf::from("/tmp/snap.json"));
         } else {
             panic!("Expected Snapshot command with save");
+        }
+    }
+
+    #[test]
+    fn test_parse_scroll_target_and_ref_alias() {
+        let via_target =
+            Cli::parse_from(["tauri-pilot", "scroll", "down", "50", "--target", "#log"]);
+        let via_ref = Cli::parse_from(["tauri-pilot", "scroll", "down", "50", "--ref", "#log"]);
+        match (via_target.command, via_ref.command) {
+            (
+                Command::Scroll {
+                    direction: d1,
+                    amount: a1,
+                    target: t1,
+                },
+                Command::Scroll {
+                    direction: d2,
+                    amount: a2,
+                    target: t2,
+                },
+            ) => {
+                assert_eq!(d1, "down");
+                assert_eq!(d2, "down");
+                assert_eq!(a1, Some(50));
+                assert_eq!(a2, Some(50));
+                assert_eq!(t1.as_deref(), Some("#log"));
+                assert_eq!(t2.as_deref(), Some("#log"));
+            }
+            _ => panic!("expected Scroll for --target and --ref"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scroll_defaults_to_page() {
+        let cli = Cli::parse_from(["tauri-pilot", "scroll", "top"]);
+        match cli.command {
+            Command::Scroll {
+                direction,
+                amount,
+                target,
+            } => {
+                assert_eq!(direction, "top");
+                assert_eq!(amount, None);
+                assert_eq!(target, None);
+            }
+            _ => panic!("expected Scroll"),
+        }
+    }
+
+    #[test]
+    fn test_parse_scroll_negative_coords() {
+        let equals = Cli::parse_from(["tauri-pilot", "scroll", "down", "--target=-10,20"]);
+        let spaced = Cli::parse_from(["tauri-pilot", "scroll", "down", "--target", "-10,20"]);
+        for cli in [equals, spaced] {
+            match cli.command {
+                Command::Scroll {
+                    target: Some(t), ..
+                } => assert_eq!(t, "-10,20"),
+                _ => panic!("expected Scroll with negative coords"),
+            }
         }
     }
 }

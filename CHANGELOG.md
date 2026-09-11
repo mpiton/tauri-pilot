@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `scroll --ref` now accepts a CSS selector or `x,y` coordinates, not only a
+  snapshot ref. The bridge used `requireEl`, which looks the value up in the
+  snapshot map, so `scroll down 50 --ref "#log"` raised `Unknown ref: #log`.
+  Scroll now uses `resolveTarget` like click/fill/text, the CLI parses
+  `--target` / `--ref` through `parse_target`, and MCP plus TOML scenario
+  steps follow the same shapes. `--ref` remains an alias of `--target`.
+  Bare snapshot ids (`e12`) still count as refs. [#157]
+
 - `network` no longer records the plugin's own `__callback` IPC. Eval and
   the bridge hello POST to `ipc://localhost/plugin:pilot|__callback` (URL
   encoded). Fetch skipped that only when `URL.pathname` was exactly
@@ -753,3 +761,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#154]: https://github.com/mpiton/tauri-pilot/issues/154
 [#155]: https://github.com/mpiton/tauri-pilot/issues/155
 [#156]: https://github.com/mpiton/tauri-pilot/issues/156
+[#157]: https://github.com/mpiton/tauri-pilot/issues/157

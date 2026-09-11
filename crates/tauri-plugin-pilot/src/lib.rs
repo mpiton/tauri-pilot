@@ -302,6 +302,27 @@ mod tests {
 
     #[cfg(all(any(unix, windows), debug_assertions))]
     #[test]
+    fn bridge_scroll_resolves_selector_and_coords() {
+        // #157: scroll used requireEl(ref) only. It must go through
+        // resolveTarget so CSS selectors and coordinates work, while still
+        // defaulting to window when no target is given.
+        let body = bridge_fn_body(super::BRIDGE_JS, "function scroll(");
+        assert!(
+            body.contains("resolveTarget(options)"),
+            "scroll must resolve targets via resolveTarget"
+        );
+        assert!(
+            !body.contains("requireEl("),
+            "scroll must not look refs up itself; resolveTarget does that"
+        );
+        assert!(
+            body.contains("options.selector") && body.contains("options.x"),
+            "scroll must detect selector and coordinate targets before calling resolveTarget"
+        );
+    }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
     fn bridge_eval_auto_wraps_top_level_await() {
         // #79: top-level `await` in user scripts must compile via the
         // async-IIFE fallback stages instead of crashing with an opaque

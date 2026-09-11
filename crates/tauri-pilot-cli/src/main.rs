@@ -649,13 +649,13 @@ async fn run_dom_command(
         Command::Scroll {
             direction,
             amount,
-            r#ref,
+            target,
         } => {
             client
                 .call(
                     "scroll",
                     with_window(
-                        Some(json!({"direction": direction, "amount": amount, "ref": r#ref})),
+                        Some(build_scroll_params(&direction, amount, target.as_deref())),
                         window,
                     ),
                 )
@@ -1005,6 +1005,45 @@ pub(crate) fn target_params(raw: &str) -> serde_json::Value {
     }
 }
 
+/// Build params for the `scroll` RPC call.
+///
+/// `target` is optional: omit it to scroll the page. When present it is parsed
+/// through [`target_params`] so `@e12`, a CSS selector, and `x,y` all work,
+/// matching click/fill/text (#157).
+pub(crate) fn build_scroll_params(
+    direction: &str,
+    amount: Option<i32>,
+    target: Option<&str>,
+) -> serde_json::Value {
+    let mut params = match target {
+        Some(raw) => target_params(&normalize_scroll_target(raw)),
+        None => json!({}),
+    };
+    params["direction"] = json!(direction);
+    params["amount"] = json!(amount);
+    params
+}
+
+/// Prefix `@` on bare snapshot ids (`e12`) so they stay refs.
+///
+/// MCP used to advertise "with or without @" and the CLI passed `--ref e12`
+/// straight to `requireEl`. Selectors and coordinates are unchanged.
+fn normalize_scroll_target(raw: &str) -> String {
+    let stripped = raw.strip_prefix('@').unwrap_or(raw);
+    if is_snapshot_ref_id(stripped) {
+        format!("@{stripped}")
+    } else {
+        raw.to_owned()
+    }
+}
+
+fn is_snapshot_ref_id(s: &str) -> bool {
+    let Some(digits) = s.strip_prefix('e') else {
+        return false;
+    };
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Build params for the `wait` RPC call.
 ///
 /// Routing precedence:
@@ -1334,8 +1373,9 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
             if let Some(amt) = entry.get("amount").and_then(serde_json::Value::as_i64) {
                 let _ = write!(cmd, " {amt}");
             }
-            if let Some(r) = entry.get("ref").and_then(|r| r.as_str()) {
-                let _ = write!(cmd, " --ref {}", shell_escape_ref_target(r));
+            if let Some(t) = resolve_export_target(Some(entry)) {
+                // Equals form so a signed coord (`-10,20`) is not a new flag.
+                let _ = write!(cmd, " --target={t}");
             }
             cmd
         }
@@ -1952,5 +1992,66 @@ mod tests {
         // rejects immediately instead of hanging on `MutationObserver`.
         let p = build_wait_params(Some("@"), None, false, 1000);
         assert_eq!(p, json!({"gone": false, "timeout": 1000}));
+    }
+
+    #[test]
+    fn test_build_scroll_params_page_when_no_target() {
+        let p = build_scroll_params("down", Some(50), None);
+        assert_eq!(p, json!({"direction": "down", "amount": 50}));
+        assert!(p.get("ref").is_none());
+        assert!(p.get("selector").is_none());
+    }
+
+    #[test]
+    fn test_build_scroll_params_at_prefix_routes_to_ref() {
+        let p = build_scroll_params("up", Some(20), Some("@e12"));
+        assert_eq!(p, json!({"ref": "e12", "direction": "up", "amount": 20}));
+    }
+
+    #[test]
+    fn test_build_scroll_params_bare_snapshot_id_stays_ref() {
+        let p = build_scroll_params("down", Some(50), Some("e12"));
+        assert_eq!(p, json!({"ref": "e12", "direction": "down", "amount": 50}));
+    }
+
+    #[test]
+    fn test_build_scroll_params_css_selector() {
+        let p = build_scroll_params("down", Some(50), Some("#log"));
+        assert_eq!(
+            p,
+            json!({"selector": "#log", "direction": "down", "amount": 50})
+        );
+    }
+
+    #[test]
+    fn test_build_scroll_params_coords() {
+        let p = build_scroll_params("left", None, Some("100,200"));
+        assert_eq!(
+            p,
+            json!({"x": 100, "y": 200, "direction": "left", "amount": null})
+        );
+    }
+
+    #[test]
+    fn test_entry_to_cli_command_scroll_emits_target() {
+        assert_eq!(
+            entry_to_cli_command(
+                "scroll",
+                &json!({"direction": "down", "amount": 50, "ref": "e12"})
+            ),
+            "tauri-pilot scroll 'down' 50 --target='@e12'"
+        );
+        assert_eq!(
+            entry_to_cli_command("scroll", &json!({"direction": "down", "selector": "#log"})),
+            "tauri-pilot scroll 'down' --target='#log'"
+        );
+        assert_eq!(
+            entry_to_cli_command("scroll", &json!({"direction": "up", "x": 100, "y": 200})),
+            "tauri-pilot scroll 'up' --target=100,200"
+        );
+        assert_eq!(
+            entry_to_cli_command("scroll", &json!({"direction": "down", "x": -10, "y": 20})),
+            "tauri-pilot scroll 'down' --target=-10,20"
+        );
     }
 }
