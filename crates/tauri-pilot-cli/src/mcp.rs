@@ -730,7 +730,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "check",
-            description: "Toggle a checkbox or radio element.",
+            description: "Toggle an <input type=checkbox> or <input type=radio>. Errors on any other element.",
             schema: target_schema,
             read_only: false,
             destructive: false,
@@ -778,7 +778,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "fill",
-            description: "Clear and fill an input target with a value.",
+            description: "Clear and fill an input, textarea, select, or contenteditable target. Errors if the target cannot take a value.",
             schema: fill_schema,
             read_only: false,
             destructive: false,
@@ -978,7 +978,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "type",
-            description: "Type text into an element target without clearing it first.",
+            description: "Type text into an input, textarea, or contenteditable target without clearing it first. Errors on <select> and on any target that cannot take a value.",
             schema: type_schema,
             read_only: false,
             destructive: false,

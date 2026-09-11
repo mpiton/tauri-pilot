@@ -540,23 +540,159 @@
     return desc && typeof desc.set === "function" ? desc.set : null;
   }
 
-  function fill(params) {
-    const el = resolveTarget(params);
-    el.focus();
+  function elementTag(el) {
+    return el && el.tagName ? String(el.tagName).toLowerCase() : "";
+  }
+
+  function isValueElement(el) {
+    const tag = elementTag(el);
+    return tag === "input" || tag === "textarea";
+  }
+
+  // Realm-safe: `isContentEditable` is an instance property, not a constructor
+  // check, so a contenteditable node from another window/iframe still matches.
+  // Fall back to the contentEditable IDL string for hosts that only expose that.
+  function isContentEditable(el) {
+    if (!el) return false;
+    if (el.isContentEditable === true) return true;
+    const mode = el.contentEditable != null ? String(el.contentEditable).toLowerCase() : "";
+    return mode === "true" || mode === "plaintext-only";
+  }
+
+  function requireEditable(el, action) {
+    if (isValueElement(el) || isContentEditable(el)) return;
+    if (action === "fill" && elementTag(el) === "select") return;
+    const reported = (elementTag(el) || String(el)).slice(0, 64);
+    if (action === "fill") {
+      throw new Error("fill requires an <input>, <textarea>, <select>, or contenteditable element, got: " + reported);
+    }
+    throw new Error(action + " requires an <input>, <textarea>, or contenteditable element, got: " + reported);
+  }
+
+  function requireCheckable(el) {
+    const tag = elementTag(el);
+    const type = el && el.type != null ? String(el.type).toLowerCase() : "";
+    if (tag === "input" && (type === "checkbox" || type === "radio")) return;
+    const reported = (tag === "input" ? "input type=" + type : tag || String(el)).slice(0, 64);
+    throw new Error('check requires an <input type="checkbox"> or <input type="radio">, got: ' + reported);
+  }
+
+  function ownerDoc(el) {
+    return (el && el.ownerDocument) || document;
+  }
+
+  function tryExecCommand(el, command, value) {
+    try {
+      const doc = ownerDoc(el);
+      return typeof doc.execCommand === "function" && doc.execCommand(command, false, value);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function collapseToEnd(el) {
+    try {
+      const doc = ownerDoc(el);
+      const range = doc.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const view = doc.defaultView || window;
+      const sel = view.getSelection && view.getSelection();
+      if (!sel) return;
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) {}
+  }
+
+  function fillContentEditable(el, value) {
+    try {
+      const doc = ownerDoc(el);
+      const range = doc.createRange();
+      range.selectNodeContents(el);
+      const view = doc.defaultView || window;
+      const sel = view.getSelection && view.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+        if (tryExecCommand(el, "insertText", value)) return true;
+      }
+    } catch (_) {}
+    el.textContent = value;
+    return false;
+  }
+
+  function typeContentEditable(el, text) {
+    collapseToEnd(el);
+    for (const ch of text) {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
+      if (!tryExecCommand(el, "insertText", ch)) {
+        el.textContent = (el.textContent || "") + ch;
+        el.dispatchEvent(new InputEvent("input", { data: ch, inputType: "insertText", bubbles: true }));
+      }
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: ch, bubbles: true }));
+    }
+  }
+
+  function applySelectOption(el, wantedRaw) {
+    // Resolve the target option before mutating anything. Setting
+    // `HTMLSelectElement.value` to a string that matches no option `value`
+    // silently yields `value=""` / `selectedIndex=-1` per the DOM spec, so
+    // "set then trust" reports success on a no-op (#113). Match the option
+    // first — by `value`, then by visible label — and error if none matches so
+    // a reported `ok` always means an option was actually selected.
+    const wanted = String(wantedRaw);
+    const options = Array.from(el.options || []);
+    const matched =
+      options.find((o) => o.value === wanted) ||
+      options.find((o) => (o.text || "").trim() === wanted.trim());
+    if (!matched) {
+      throw new Error("select: no option matches " + JSON.stringify(wantedRaw));
+    }
     const setter = nativeValueSetter(el);
     if (setter) {
-      setter.call(el, params.value);
+      setter.call(el, matched.value);
     } else {
-      el.value = params.value;
+      el.value = matched.value;
     }
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function fill(params) {
+    const el = resolveTarget(params);
+    requireEditable(el, "fill");
+    el.focus();
+    let wroteViaExec = false;
+    if (elementTag(el) === "select") {
+      applySelectOption(el, params.value);
+    } else if (isValueElement(el)) {
+      const setter = nativeValueSetter(el);
+      if (setter) {
+        setter.call(el, params.value);
+      } else {
+        el.value = params.value;
+      }
+    } else {
+      wroteViaExec = fillContentEditable(el, params.value);
+    }
+    // insertText already fires a native `input` event. Dispatching again
+    // would double-notify listeners; the textContent fallback does not.
+    if (!wroteViaExec) {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     return { ok: true };
   }
 
   function typeText(params) {
     const el = resolveTarget(params);
+    if (elementTag(el) === "select") {
+      throw new Error("type cannot target a <select>; use fill or select");
+    }
+    requireEditable(el, "type");
     el.focus();
+    if (!isValueElement(el)) {
+      typeContentEditable(el, params.text);
+      return { ok: true };
+    }
     const setter = nativeValueSetter(el);
     for (const ch of params.text) {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: ch, bubbles: true }));
@@ -589,32 +725,14 @@
       const reported = (tag || String(el)).slice(0, 64);
       throw new Error("select requires a <select> element, got: " + reported);
     }
-    // Resolve the target option before mutating anything. Setting
-    // `HTMLSelectElement.value` to a string that matches no option `value`
-    // silently yields `value=""` / `selectedIndex=-1` per the DOM spec, so
-    // "set then trust" reports success on a no-op (#113). Match the option
-    // first — by `value`, then by visible label — and error if none matches so
-    // a reported `ok` always means an option was actually selected.
-    const wanted = String(params.value);
-    const options = Array.from(el.options || []);
-    const matched =
-      options.find((o) => o.value === wanted) ||
-      options.find((o) => (o.text || "").trim() === wanted.trim());
-    if (!matched) {
-      throw new Error("select: no option matches " + JSON.stringify(params.value));
-    }
-    const setter = nativeValueSetter(el);
-    if (setter) {
-      setter.call(el, matched.value);
-    } else {
-      el.value = matched.value;
-    }
+    applySelectOption(el, params.value);
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
   }
 
   function check(params) {
     const el = resolveTarget(params);
+    requireCheckable(el);
     el.checked = !el.checked;
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };

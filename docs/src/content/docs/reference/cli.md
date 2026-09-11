@@ -350,7 +350,19 @@ tauri-pilot click 100,200
 
 ### `fill`
 
-Clear an input field and type a new value. Uses the native setter to trigger synthetic React events.
+Clear an `<input>`, `<textarea>`, `<select>`, or contenteditable element and
+set a new value. Form controls use the native value setter so React and similar
+frameworks see the change. On `<select>`, the value is matched like `select`
+(option value, then visible label) and fill throws if nothing matches.
+
+Contenteditable hosts (Tiptap, ProseMirror, and the like) are filled by
+selecting the target's contents and calling `insertText` so the editor
+document updates. If `insertText` is unavailable, fill assigns `textContent`
+instead, which does not update those editors. Read the result with `text` /
+`assert text`, not `value`.
+
+Throws if the target cannot take a value (for example a plain `<div>`). A
+reported `ok` means the value was written.
 
 ```bash
 tauri-pilot fill <target> <value>
@@ -361,13 +373,18 @@ tauri-pilot fill <target> <value>
 ```bash
 tauri-pilot fill @e2 "my-feature-branch"
 tauri-pilot fill "#search" "open issues"
+tauri-pilot fill ".ProseMirror" "hello from the editor"
 ```
 
 ---
 
 ### `type`
 
-Type text into a focused element without clearing existing content first.
+Type text into an `<input>`, `<textarea>`, or contenteditable element without
+clearing existing content first. Same target rules as `fill`, except
+`<select>` is rejected — use `fill` or `select`. Contenteditable typing also
+tries `insertText` first and falls back to `textContent`; read the result
+with `text` / `assert text`.
 
 ```bash
 tauri-pilot type <target> <text>
@@ -452,7 +469,8 @@ tauri-pilot select @e5 "closed"
 
 ### `check`
 
-Toggle a checkbox (check if unchecked, uncheck if checked).
+Toggle an `<input type="checkbox">` or `<input type="radio">` (check if
+unchecked, uncheck if checked). Throws on any other element.
 
 ```bash
 tauri-pilot check <target>
