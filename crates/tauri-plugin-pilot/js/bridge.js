@@ -457,8 +457,10 @@
         // `value` is an IDL property whose type varies by element: a string for
         // form controls, but a number for `<li>` (ordinal), `<progress>`, and
         // `<meter>`. Coerce to string so the wire format matches the plugin's
-        // `SnapshotElement.value: Option<String>` contract (#120).
-        if (node.value !== undefined && node.value !== "") entry.value = String(node.value);
+        // `SnapshotElement.value: Option<String>` contract (#120). Multi-select
+        // joins every selected option (#158).
+        const nodeVal = elementValue(node);
+        if (nodeVal !== undefined && nodeVal !== "") entry.value = String(nodeVal);
         if (node.tagName === "INPUT") {
           var inputType = (node.getAttribute("type") || "text").toLowerCase();
           if (inputType === "checkbox" || inputType === "radio") {
@@ -1063,8 +1065,30 @@
     return document.documentElement.innerHTML;
   }
 
+  // Selected option values in tree order. `HTMLSelectElement.value` is only
+  // the first; `forms.dump` already walks `.options` this way (#158).
+  function selectedOptionValues(el) {
+    const selected = [];
+    const options = el && el.options;
+    if (!options) return selected;
+    for (let k = 0; k < options.length; k++) {
+      if (options[k].selected) selected.push(options[k].value);
+    }
+    return selected;
+  }
+
+  // Display value for `value` / `snapshot`. Multi-select joins with `", "`
+  // so the string matches the `forms` CLI (`skills = "rust, js"`). Other
+  // elements keep their IDL `.value` (including numeric `<li>` ordinals).
+  function elementValue(el) {
+    if (el && el.tagName && el.tagName.toLowerCase() === "select" && el.multiple) {
+      return selectedOptionValues(el).join(", ");
+    }
+    return el ? el.value : undefined;
+  }
+
   function value(params) {
-    return resolveTarget(params).value || "";
+    return elementValue(resolveTarget(params)) || "";
   }
 
   function attrs(params) {
@@ -1597,13 +1621,7 @@
         var elType = el.type || null;
         var fieldVal;
         if (tag === "select" && el.multiple) {
-          var selected = [];
-          for (var k = 0; k < el.options.length; k++) {
-            if (el.options[k].selected) {
-              selected.push(el.options[k].value);
-            }
-          }
-          fieldVal = selected;
+          fieldVal = selectedOptionValues(el);
         } else {
           fieldVal = el.value;
         }

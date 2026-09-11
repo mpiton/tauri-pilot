@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `value` and `snapshot` now report every selected option of a
+  `<select multiple>`, joined with `", "` like the `forms` CLI
+  (`skills = "rust, js"`). Both used `HTMLSelectElement.value`, which is
+  only the first selected option, so a multi-select with `rust` and `js`
+  selected looked like `rust`. `forms.dump` still returns the JSON array.
+  [#158]
+
 - `scroll --ref` now accepts a CSS selector or `x,y` coordinates, not only a
   snapshot ref. The bridge used `requireEl`, which looks the value up in the
   snapshot map, so `scroll down 50 --ref "#log"` raised `Unknown ref: #log`.

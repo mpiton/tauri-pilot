@@ -80,7 +80,7 @@ Three target formats, auto-detected:
 | `diff --ref file.snap` | Diff against a saved snapshot |
 | `text <target>` | Get text content |
 | `html [target]` | Get innerHTML (page if no target) |
-| `value <target>` | Get input value |
+| `value <target>` | Get input/select value (multi-select: all selected, joined with `, `) |
 | `attrs <target>` | Get all attributes |
 
 ### Interaction

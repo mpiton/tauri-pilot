@@ -731,6 +731,9 @@ tauri-pilot html
 
 Get the current value of an input, textarea, or select element.
 
+For a `<select multiple>`, every selected option is joined with `", "`
+(the same display `forms` uses). A single-select is unchanged.
+
 ```bash
 tauri-pilot value <target>
 ```
@@ -740,6 +743,9 @@ tauri-pilot value <target>
 ```bash
 $ tauri-pilot value "#search"
 my-feature-branch
+
+$ tauri-pilot value 'select[name=skills]'
+rust, js
 ```
 
 ---
