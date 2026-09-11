@@ -797,8 +797,12 @@
   function scroll(options) {
     const dir = (options && options.direction) || "down";
     const amount = (options && options.amount) || 300;
-    const ref = options && options.ref;
-    const target = ref ? requireEl(ref) : window;
+    // Same target shapes as click/fill/text: snapshot ref, CSS selector, or
+    // coordinates. No target still means the page (`window`), which is why
+    // this cannot call `resolveTarget` unconditionally (#157).
+    const target = (options && (options.ref || options.selector || (options.x != null && options.y != null)))
+      ? resolveTarget(options)
+      : window;
 
     if (dir === "top") {
       if (target === window) {

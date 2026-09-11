@@ -19,8 +19,8 @@ use rmcp::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    build_wait_params, client::Client, export_replay_file, resolve_socket, run_drop_command,
-    run_replay_command, target_params, with_window,
+    build_scroll_params, build_wait_params, client::Client, export_replay_file, resolve_socket,
+    run_drop_command, run_replay_command, target_params, with_window,
 };
 
 #[derive(Debug, Clone)]
@@ -135,8 +135,8 @@ impl PilotMcpServer {
             "ping" => self.call_app_tool("ping", None, window).await,
             "windows" => self.call_app_tool("windows.list", None, None).await,
             "state" => self.call_app_tool("state", None, window).await,
-            "snapshot" => self
-                .call_app_tool(
+            "snapshot" => {
+                self.call_app_tool(
                     "snapshot",
                     Some(json!({
                         "interactive": optional_bool(&args, "interactive")?.unwrap_or(false),
@@ -145,7 +145,8 @@ impl PilotMcpServer {
                     })),
                     window,
                 )
-                .await,
+                .await
+            }
             "diff" => {
                 let mut params = json!({
                     "interactive": optional_bool(&args, "interactive")?.unwrap_or(false),
@@ -183,13 +184,14 @@ impl PilotMcpServer {
             }
             "check" => self.target_call("check", &args, window).await,
             "scroll" => {
+                let target = optional_scroll_target(&args)?;
                 self.call_app_tool(
                     "scroll",
-                    Some(json!({
-                        "direction": optional_string(&args, "direction")?.unwrap_or_else(|| "down".to_owned()),
-                        "amount": optional_i32(&args, "amount")?,
-                        "ref": optional_ref(&args)?,
-                    })),
+                    Some(build_scroll_params(
+                        &optional_string(&args, "direction")?.unwrap_or_else(|| "down".to_owned()),
+                        optional_i32(&args, "amount")?,
+                        target.as_deref(),
+                    )),
                     window,
                 )
                 .await
@@ -227,8 +229,7 @@ impl PilotMcpServer {
             "drop" => self.call_drop_tool(args, window).await,
             "text" => self.target_call("text", &args, window).await,
             "html" => {
-                let params =
-                    optional_string(&args, "target")?.map(|target| target_params(&target));
+                let params = optional_string(&args, "target")?.map(|target| target_params(&target));
                 self.call_app_tool("html", params, window).await
             }
             "value" => self.target_call("value", &args, window).await,
@@ -274,12 +275,8 @@ impl PilotMcpServer {
             "navigate" => {
                 let url = required_string(&args, "url")?;
                 validate_navigate_url(&url)?;
-                self.call_app_tool(
-                    "navigate",
-                    Some(json!({ "url": url })),
-                    window,
-                )
-                .await
+                self.call_app_tool("navigate", Some(json!({ "url": url })), window)
+                    .await
             }
             "url" => self.call_app_tool("url", None, window).await,
             "title" => self.call_app_tool("title", None, window).await,
@@ -301,7 +298,8 @@ impl PilotMcpServer {
                 if optional_bool(&args, "require_mutation")?.unwrap_or(false) {
                     watch_params["requireMutation"] = json!(true);
                 }
-                self.call_app_tool("watch", Some(watch_params), window).await
+                self.call_app_tool("watch", Some(watch_params), window)
+                    .await
             }
             "logs" => self.call_logs_tool(&args, window).await,
             "network" => self.call_network_tool(&args, window).await,
@@ -345,8 +343,8 @@ impl PilotMcpServer {
                 .await
             }
             "forms" => {
-                let params =
-                    optional_string(&args, "selector")?.map(|selector| json!({ "selector": selector }));
+                let params = optional_string(&args, "selector")?
+                    .map(|selector| json!({ "selector": selector }));
                 self.call_app_tool("forms.dump", params, window).await
             }
             "assert_text" => self.assert_text(args, window, false).await,
@@ -898,7 +896,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "scroll",
-            description: "Scroll the page or an element ref.",
+            description: "Scroll the page or an element (ref, CSS selector, or coordinates).",
             schema: scroll_schema,
             read_only: false,
             destructive: false,
@@ -1225,10 +1223,15 @@ fn optional_bool(args: &JsonObject, name: &str) -> Result<Option<bool>, McpError
     }
 }
 
-fn optional_ref(args: &JsonObject) -> Result<Option<String>, McpError> {
-    match optional_string(args, "ref")? {
-        Some(value) => Ok(Some(value.trim_start_matches('@').to_owned())),
-        None => Ok(None),
+fn optional_scroll_target(args: &JsonObject) -> Result<Option<String>, McpError> {
+    let target = optional_string(args, "target")?;
+    let r#ref = optional_string(args, "ref")?;
+    match (target, r#ref) {
+        (Some(_), Some(_)) => Err(invalid_params(
+            "scroll accepts either 'target' or 'ref', not both",
+        )),
+        (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
+        (None, None) => Ok(None),
     }
 }
 
@@ -1405,8 +1408,16 @@ fn scroll_schema() -> Arc<JsonObject> {
             ),
             ("amount", integer_prop("Pixel amount to scroll.")),
             (
+                "target",
+                string_prop(
+                    "Optional element `@ref`, CSS selector, or x,y coordinates. Defaults to the page.",
+                ),
+            ),
+            (
                 "ref",
-                string_prop("Optional element ref, with or without @."),
+                string_prop(
+                    "Alias of target. Snapshot refs accept e12 or @e12; selectors and coordinates also work.",
+                ),
             ),
         ]),
         &[],
@@ -1850,6 +1861,23 @@ mod tests {
                 "scroll direction enum must include {expected}"
             );
         }
+    }
+
+    #[test]
+    fn scroll_schema_accepts_target_and_ref_alias() {
+        let schema = scroll_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("schema has properties");
+        assert!(
+            properties.contains_key("target"),
+            "scroll schema must advertise `target`"
+        );
+        assert!(
+            properties.contains_key("ref"),
+            "scroll schema must keep `ref` as an alias of `target`"
+        );
     }
 
     #[test]

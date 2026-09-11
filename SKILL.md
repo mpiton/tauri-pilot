@@ -93,7 +93,7 @@ Three target formats, auto-detected:
 | `press <key>` | `press Enter` |
 | `select <target> <value>` | `select @e5 "opt1"` |
 | `check <target>` | `check @e6` |
-| `scroll <dir> [amount] [--ref <target>]` | `scroll down 500` |
+| `scroll <dir> [amount] [--target <target>]` | `scroll down 50 --target "#log"` |
 | `drag <source> [target] [--offset X,Y]` | `drag @e5 @e8` |
 | `drop <target> --file <path>` | `drop @e3 --file ./img.png` |
 

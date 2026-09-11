@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client::Client;
-use crate::{build_wait_params, target_params, with_window};
+use crate::{build_scroll_params, build_wait_params, target_params, with_window};
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
 
@@ -269,16 +269,16 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
                 .await
         }
         "scroll" => {
-            let direction = step.direction.as_deref().unwrap_or("down");
+            let target = scroll_step_target(step)?;
             client
                 .call(
                     "scroll",
                     with_window(
-                        Some(json!({
-                            "direction": direction,
-                            "amount": step.amount,
-                            "ref": step.step_ref,
-                        })),
+                        Some(build_scroll_params(
+                            step.direction.as_deref().unwrap_or("down"),
+                            step.amount,
+                            target.as_deref(),
+                        )),
                         window,
                     ),
                 )
@@ -441,6 +441,25 @@ fn require_target(step: &Step) -> Result<&str> {
     step.target
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("step '{}' requires 'target'", step.action))
+}
+
+/// Resolve the optional scroll target from a TOML step.
+///
+/// `target` uses the same `@ref` / CSS / `x,y` syntax as click. `ref = "e1"`
+/// is the established snapshot-ref field (same as `wait`) and is rewritten to
+/// `@e1` so [`build_scroll_params`] routes it as a ref. Setting both is an
+/// error.
+fn scroll_step_target(step: &Step) -> Result<Option<String>> {
+    match (step.target.as_deref(), step.step_ref.as_deref()) {
+        (Some(_), Some(_)) => anyhow::bail!("scroll step sets both `target` and `ref`; pick one"),
+        (Some(target), None) => Ok(Some(target.to_owned())),
+        (None, Some(r)) => Ok(Some(if r.starts_with('@') {
+            r.to_owned()
+        } else {
+            format!("@{r}")
+        })),
+        (None, None) => Ok(None),
+    }
 }
 
 // ── Screenshot on failure ─────────────────────────────────────────────────────
@@ -848,5 +867,50 @@ action = "ping"
         assert!(xml.contains(r#"skipped="1""#));
         assert!(xml.contains(r#"message="oops &amp; done""#));
         assert!(xml.contains("<skipped"));
+    }
+
+    #[test]
+    fn test_scroll_step_target_from_toml_ref_and_selector() {
+        let scenario: Scenario = toml::from_str(
+            r##"
+[[step]]
+action = "scroll"
+direction = "down"
+ref = "e1"
+
+[[step]]
+action = "scroll"
+target = "#log"
+amount = 50
+"##,
+        )
+        .expect("valid toml");
+        assert_eq!(
+            scroll_step_target(&scenario.step[0])
+                .expect("ref step")
+                .as_deref(),
+            Some("@e1")
+        );
+        assert_eq!(
+            scroll_step_target(&scenario.step[1])
+                .expect("target step")
+                .as_deref(),
+            Some("#log")
+        );
+    }
+
+    #[test]
+    fn test_scroll_step_rejects_both_target_and_ref() {
+        let scenario: Scenario = toml::from_str(
+            r##"
+[[step]]
+action = "scroll"
+target = "#log"
+ref = "e1"
+"##,
+        )
+        .expect("valid toml");
+        let err = scroll_step_target(&scenario.step[0]).expect_err("both set");
+        assert!(err.to_string().contains("both `target` and `ref`"));
     }
 }

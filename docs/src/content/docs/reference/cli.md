@@ -504,7 +504,7 @@ tauri-pilot scroll <direction> [amount] [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--ref <ref>` | Element to scroll (defaults to the page) |
+| `--target <target>` | Element to scroll: `@ref`, CSS selector, or `x,y`. Defaults to the page. `--ref` is an alias. |
 
 `top` jumps to `scrollY = 0`; `bottom` jumps to the maximum scroll position (`scrollHeight - innerHeight` for the page, `scrollHeight - clientHeight` for an element). Unknown directions raise an error instead of silently no-op.
 
@@ -512,7 +512,8 @@ tauri-pilot scroll <direction> [amount] [OPTIONS]
 
 ```bash
 tauri-pilot scroll down 500
-tauri-pilot scroll up --ref @e4
+tauri-pilot scroll up --target @e4
+tauri-pilot scroll down 50 --target "#log"
 tauri-pilot scroll top
 tauri-pilot scroll bottom --ref @e4
 ```
