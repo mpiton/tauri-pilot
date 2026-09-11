@@ -14,7 +14,6 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_SRC = readFileSync(join(here, "bridge.js"), "utf8");
-const OriginalURL = globalThis.URL;
 
 const REAL_CONSOLE = {
   log: console.log.bind(console),
@@ -61,20 +60,8 @@ function makeXhrClass() {
   return XMLHttpRequestStub;
 }
 
-// JSC/WebKit treats `ipc:` as a non-special scheme: `new URL(...).pathname`
-// is `//localhost/plugin:...`, not `/plugin:...`. That is the #156 miss.
-function WebKitIpcURL(text, base) {
-  const raw = String(text);
-  if (/^ipc:/i.test(raw)) {
-    this.pathname = raw.replace(/^ipc:/i, "");
-    return;
-  }
-  this.pathname = new OriginalURL(raw, base).pathname;
-}
-
-function loadBridge({ fetchImpl, URLCtor } = {}) {
+function loadBridge({ fetchImpl } = {}) {
   Object.assign(console, REAL_CONSOLE);
-  if (URLCtor) globalThis.URL = URLCtor;
 
   globalThis.location = { href: "https://app.example/" };
   globalThis.window = {
@@ -93,10 +80,6 @@ function loadBridge({ fetchImpl, URLCtor } = {}) {
   return globalThis.window.__PILOT__;
 }
 
-function restoreGlobals() {
-  globalThis.URL = OriginalURL;
-}
-
 function sendXhr(url, { status = 200, errorEvent } = {}) {
   const xhr = new XMLHttpRequest();
   xhr.open("POST", url);
@@ -109,112 +92,103 @@ function sendXhr(url, { status = 200, errorEvent } = {}) {
 }
 
 test("plugin IPC fetch is omitted from networkRequests", async () => {
-  try {
-    const pilot = loadBridge();
-    for (const url of PILOT_IPC_URLS) {
-      await window.fetch(url);
-    }
-    await window.fetch("https://app.example/api");
-    const urls = pilot.networkRequests().map((e) => e.url);
-    assert.deepEqual(urls, ["https://app.example/api"]);
-  } finally {
-    restoreGlobals();
+  const pilot = loadBridge();
+  for (const url of PILOT_IPC_URLS) {
+    await window.fetch(url);
   }
-});
-
-test("plugin IPC fetch is omitted when URL.pathname looks like WebKit ipc:", async () => {
-  try {
-    const pilot = loadBridge({ URLCtor: WebKitIpcURL });
-    const ipc = "ipc://localhost/plugin%3Apilot%7C__callback";
-    await window.fetch(ipc);
-    await window.fetch("https://app.example/api");
-    const urls = pilot.networkRequests().map((e) => e.url);
-    assert.deepEqual(urls, ["https://app.example/api"]);
-  } finally {
-    restoreGlobals();
-  }
+  await window.fetch("https://app.example/api");
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, ["https://app.example/api"]);
 });
 
 test("failed plugin IPC fetch is omitted from failed-only results", async () => {
-  try {
-    const ipc = "ipc://localhost/plugin%3Apilot%7C__callback";
-    const pilot = loadBridge({
-      fetchImpl(input) {
-        if (String(input).includes("plugin")) {
-          return Promise.reject(new Error("denied"));
-        }
-        return Promise.resolve({
-          status: 200,
-          headers: { get() { return "0"; } },
-        });
-      },
-    });
-    await window.fetch(ipc).catch(() => {});
-    assert.deepEqual(pilot.networkRequests(), []);
-    assert.deepEqual(pilot.networkRequests({ failedOnly: true }), []);
-  } finally {
-    restoreGlobals();
-  }
+  const ipc = "ipc://localhost/plugin%3Apilot%7C__callback";
+  const pilot = loadBridge({
+    fetchImpl(input) {
+      if (String(input).includes("plugin")) {
+        return Promise.reject(new Error("denied"));
+      }
+      return Promise.resolve({
+        status: 200,
+        headers: { get() { return "0"; } },
+      });
+    },
+  });
+  await window.fetch(ipc).catch(() => {});
+  assert.deepEqual(pilot.networkRequests(), []);
+  assert.deepEqual(pilot.networkRequests({ failedOnly: true }), []);
 });
 
 test("plugin IPC XHR is omitted from networkRequests", () => {
-  try {
-    const pilot = loadBridge();
-    for (const url of PILOT_IPC_URLS) {
-      sendXhr(url);
-    }
-    sendXhr("https://app.example/api");
-    const urls = pilot.networkRequests().map((e) => e.url);
-    assert.deepEqual(urls, ["https://app.example/api"]);
-  } finally {
-    restoreGlobals();
+  const pilot = loadBridge();
+  for (const url of PILOT_IPC_URLS) {
+    sendXhr(url);
   }
+  sendXhr("https://app.example/api");
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, ["https://app.example/api"]);
 });
 
 test("failed plugin IPC XHR is omitted from failed-only results", () => {
-  try {
-    const pilot = loadBridge();
-    sendXhr("ipc://localhost/plugin%3Apilot%7C__callback", { errorEvent: "error" });
-    sendXhr("https://app.example/api", { status: 500 });
-    const failed = pilot.networkRequests({ failedOnly: true }).map((e) => e.url);
-    assert.deepEqual(failed, ["https://app.example/api"]);
-  } finally {
-    restoreGlobals();
+  const pilot = loadBridge();
+  sendXhr("ipc://localhost/plugin%3Apilot%7C__callback", { errorEvent: "error" });
+  sendXhr("https://app.example/api", { status: 500 });
+  const failed = pilot.networkRequests({ failedOnly: true }).map((e) => e.url);
+  assert.deepEqual(failed, ["https://app.example/api"]);
+});
+
+test("non-callback IPC URLs stay in the network log", async () => {
+  const pilot = loadBridge();
+  const keep = [
+    "ipc://localhost/plugin%3Aevent%7Cemit",
+    "http://ipc.localhost/plugin%3Afoo%7Cbar",
+    "https://app.example/api",
+  ];
+  for (const url of keep) {
+    await window.fetch(url);
   }
+  for (const url of keep) {
+    sendXhr(url);
+  }
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, keep.concat(keep));
+});
+
+test("userinfo, nested, and encoded-relative callback URLs stay in the log", async () => {
+  const pilot = loadBridge();
+  const keep = [
+    "https://ipc.localhost:443@attacker.example/plugin:pilot|__callback",
+    "https://ipc.localhost/nested/plugin:pilot|__callback",
+    "ipc://evil.example/plugin:pilot|__callback",
+    "ipc%3A%2F%2Flocalhost%2Fplugin%3Apilot%7C__callback",
+  ];
+  for (const url of keep) {
+    await window.fetch(url);
+  }
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, keep);
 });
 
 test("an app URL whose query contains the IPC substring is still recorded", async () => {
-  try {
-    const pilot = loadBridge();
-    const app = "https://app.example/search?q=plugin%3Apilot%7C__callback";
-    await window.fetch(app);
-    const urls = pilot.networkRequests().map((e) => e.url);
-    assert.deepEqual(urls, [app]);
-  } finally {
-    restoreGlobals();
-  }
+  const pilot = loadBridge();
+  const app = "https://app.example/search?q=plugin%3Apilot%7C__callback";
+  await window.fetch(app);
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, [app]);
 });
 
 test("an app path that only contains the IPC substring is still recorded", async () => {
-  try {
-    const pilot = loadBridge();
-    const app = "https://app.example/api/plugin%3Apilot%7C__callback";
-    await window.fetch(app);
-    const urls = pilot.networkRequests().map((e) => e.url);
-    assert.deepEqual(urls, [app]);
-  } finally {
-    restoreGlobals();
-  }
+  const pilot = loadBridge();
+  const app = "https://app.example/api/plugin%3Apilot%7C__callback";
+  await window.fetch(app);
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, [app]);
 });
 
 test("an app URL whose path is exactly the IPC command is still recorded", async () => {
-  try {
-    const pilot = loadBridge();
-    const app = "https://app.example/plugin%3Apilot%7C__callback";
-    await window.fetch(app);
-    const urls = pilot.networkRequests().map((e) => e.url);
-    assert.deepEqual(urls, [app]);
-  } finally {
-    restoreGlobals();
-  }
+  const pilot = loadBridge();
+  const app = "https://app.example/plugin%3Apilot%7C__callback";
+  await window.fetch(app);
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, [app]);
 });

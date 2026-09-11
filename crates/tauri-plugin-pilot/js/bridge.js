@@ -137,23 +137,37 @@
   // Unix/macOS and `http(s)://ipc.localhost/<cmd>` on Windows/Android.
   // WebKit treats `ipc:` as a non-special scheme, so URL.pathname is
   // `//localhost/<cmd>` rather than `/<cmd>` and an exact-path check misses
-  // the eval/hello callback (#156).
-  function isPilotIpcUrl(url) {
-    const text = String(url);
+  // the eval/hello callback (#156). Match the raw ipc:// string (do not
+  // decode first, do not use URL()) and parse http(s) with URL so a
+  // userinfo form like `https://ipc.localhost@attacker/...` is not skipped.
+  function isPilotCallbackCommand(cmd) {
     let decoded;
     try {
-      decoded = decodeURIComponent(text);
+      decoded = decodeURIComponent(cmd);
     } catch (_) {
-      decoded = text;
+      decoded = cmd;
     }
-    const isIpc =
-      /^ipc:\/\//i.test(decoded) ||
-      /^https?:\/\/ipc\.localhost(?:[:/]|$)/i.test(decoded);
-    if (!isIpc) return false;
-    const path = decoded.split("#")[0].split("?")[0];
-    const slash = path.lastIndexOf("/");
-    const cmd = slash === -1 ? path : path.slice(slash + 1);
-    return cmd === "plugin:pilot|__callback" || cmd === "plugin:pilot|callback";
+    return decoded === "plugin:pilot|__callback" || decoded === "plugin:pilot|callback";
+  }
+
+  function isPilotIpcUrl(url) {
+    const text = String(url);
+    if (/^ipc:/i.test(text)) {
+      const match = text.match(/^ipc:\/\/localhost\/([^/?#]+)(?:[?#]|$)/i);
+      return !!match && isPilotCallbackCommand(match[1]);
+    }
+    if (/^https?:/i.test(text)) {
+      let parsed;
+      try {
+        parsed = new URL(text);
+      } catch (_) {
+        return false;
+      }
+      if (parsed.hostname !== "ipc.localhost") return false;
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      return segments.length === 1 && isPilotCallbackCommand(segments[0]);
+    }
+    return false;
   }
 
   const _originalFetch = window.fetch.bind(window);
