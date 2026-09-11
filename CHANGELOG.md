@@ -25,10 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fill`, `type`, and `check` no longer report ok on an element that cannot
   take the write. Assigning `.value` or `.checked` on a plain `<div>` created
   an expando and left the visible text unchanged, which is the same silent
-  no-op `select` was hardened against. `fill` and `type` now accept
-  `<input>`, `<textarea>`, `<select>`, and contenteditable hosts (including
-  Tiptap / ProseMirror-style editors, via `insertText`), and throw on
-  anything else. `check` accepts only checkbox and radio inputs. [#154]
+  no-op `select` was hardened against. `fill` accepts `<input>`,
+  `<textarea>`, `<select>`, and contenteditable hosts (including Tiptap /
+  ProseMirror-style editors, via `insertText` with a `textContent`
+  fallback). `fill` on `<select>` matches an option by value then label and
+  throws if none match. `type` accepts `<input>`, `<textarea>`, and
+  contenteditable hosts, and rejects `<select>` (use `fill` or `select`).
+  Both throw on anything else. `check` accepts only checkbox and radio
+  inputs. [#154]
 
 - Without `--window` and without a `main` window, commands now target the
   first window by label, and `windows.list` sorts by label. Both used Tauri's
@@ -730,3 +734,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#149]: https://github.com/mpiton/tauri-pilot/issues/149
 [#152]: https://github.com/mpiton/tauri-pilot/issues/152
 [#153]: https://github.com/mpiton/tauri-pilot/issues/153
+[#154]: https://github.com/mpiton/tauri-pilot/issues/154

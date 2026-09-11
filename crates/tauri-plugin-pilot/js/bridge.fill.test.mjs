@@ -39,12 +39,19 @@ function makeValueEl(tag, value = "") {
   return el;
 }
 
-function makeHost({ tag = "DIV", editable = false, text = "original text" } = {}) {
-  return {
+function makeHost({
+  tag = "DIV",
+  editable = false,
+  text = "original text",
+  isContentEditable,
+  contentEditable,
+  ownerDocument,
+} = {}) {
+  const el = {
     tagName: tag,
     textContent: text,
-    isContentEditable: editable,
-    contentEditable: editable ? "true" : "false",
+    isContentEditable: isContentEditable ?? editable,
+    contentEditable: contentEditable ?? (editable ? "true" : "false"),
     events: [],
     focus() {},
     dispatchEvent(event) {
@@ -52,9 +59,31 @@ function makeHost({ tag = "DIV", editable = false, text = "original text" } = {}
       return true;
     },
   };
+  if (ownerDocument) el.ownerDocument = ownerDocument;
+  return el;
 }
 
-function loadBridge({ queryResult, execCommand } = {}) {
+function makeEditingDocument(execCommand, onSelectNodeContents) {
+  const selection = {
+    removeAllRanges() {},
+    addRange() {},
+  };
+  const view = { getSelection() { return selection; } };
+  return {
+    createRange() {
+      return {
+        selectNodeContents(node) {
+          if (onSelectNodeContents) onSelectNodeContents(node);
+        },
+        collapse() {},
+      };
+    },
+    defaultView: view,
+    execCommand,
+  };
+}
+
+function loadBridge({ queryResult, execCommand, onSelectNodeContents } = {}) {
   Object.assign(console, REAL_CONSOLE);
   class FakeEvent {
     constructor(type, init) {
@@ -64,7 +93,14 @@ function loadBridge({ queryResult, execCommand } = {}) {
   }
   globalThis.KeyboardEvent = class KeyboardEvent extends FakeEvent {};
   globalThis.InputEvent = class InputEvent extends FakeEvent {};
-  globalThis.window = { fetch() {} };
+  const selection = {
+    removeAllRanges() {},
+    addRange() {},
+  };
+  globalThis.window = {
+    fetch() {},
+    getSelection() { return selection; },
+  };
   globalThis.document = {
     querySelector(selector) {
       if (queryResult === undefined) {
@@ -72,6 +108,15 @@ function loadBridge({ queryResult, execCommand } = {}) {
       }
       return queryResult;
     },
+    createRange() {
+      return {
+        selectNodeContents(node) {
+          if (onSelectNodeContents) onSelectNodeContents(node);
+        },
+        collapse() {},
+      };
+    },
+    defaultView: globalThis.window,
   };
   if (execCommand) globalThis.document.execCommand = execCommand;
   function XMLHttpRequestStub() {}
@@ -82,8 +127,8 @@ function loadBridge({ queryResult, execCommand } = {}) {
   return globalThis.window.__PILOT__;
 }
 
-test("fill sets value on input, textarea, and select", () => {
-  for (const tag of ["INPUT", "TEXTAREA", "SELECT"]) {
+test("fill sets value on input and textarea", () => {
+  for (const tag of ["INPUT", "TEXTAREA"]) {
     const el = makeValueEl(tag);
     const pilot = loadBridge({ queryResult: el });
     assert.deepEqual(pilot.fill({ selector: tag.toLowerCase(), value: "x" }), { ok: true });
@@ -111,16 +156,80 @@ test("fill replaces contenteditable text when execCommand is unavailable", () =>
 
 test("fill uses insertText on contenteditable when execCommand works", () => {
   const calls = [];
+  const selected = [];
   const el = makeHost({ editable: true });
   const execCommand = (cmd, _ui, value) => {
     calls.push([cmd, value]);
     if (cmd === "insertText") el.textContent = value;
     return true;
   };
-  const pilot = loadBridge({ queryResult: el, execCommand });
+  const pilot = loadBridge({
+    queryResult: el,
+    execCommand,
+    onSelectNodeContents: (node) => selected.push(node),
+  });
   assert.deepEqual(pilot.fill({ selector: "#editor", value: "hello" }), { ok: true });
-  assert.deepEqual(calls, [["selectAll", undefined], ["insertText", "hello"]]);
+  assert.deepEqual(calls, [["insertText", "hello"]]);
+  assert.deepEqual(selected, [el]);
   assert.equal(el.textContent, "hello");
+});
+
+test("type uses insertText on contenteditable when execCommand works", () => {
+  const calls = [];
+  const el = makeHost({ editable: true, text: "ab" });
+  const execCommand = (cmd, _ui, value) => {
+    calls.push([cmd, value]);
+    if (cmd === "insertText") el.textContent = (el.textContent || "") + value;
+    return true;
+  };
+  const pilot = loadBridge({ queryResult: el, execCommand });
+  assert.deepEqual(pilot.type({ selector: "#editor", text: "cd" }), { ok: true });
+  assert.deepEqual(calls, [["insertText", "c"], ["insertText", "d"]]);
+  assert.equal(el.textContent, "abcd");
+});
+
+test("fill and type accept plaintext-only and IDL-true contenteditable hosts", () => {
+  for (const hostOpts of [
+    { isContentEditable: false, contentEditable: "plaintext-only" },
+    { isContentEditable: false, contentEditable: "true" },
+  ]) {
+    const filled = makeHost({ text: "ab", ...hostOpts });
+    const fillPilot = loadBridge({ queryResult: filled });
+    assert.deepEqual(fillPilot.fill({ selector: "#editor", value: "hello" }), { ok: true });
+    assert.equal(filled.textContent, "hello");
+
+    const typed = makeHost({ text: "ab", ...hostOpts });
+    const typePilot = loadBridge({ queryResult: typed });
+    assert.deepEqual(typePilot.type({ selector: "#editor", text: "c" }), { ok: true });
+    assert.equal(typed.textContent, "abc");
+  }
+});
+
+test("fill and type run insertText on the target ownerDocument", () => {
+  const parentCalls = [];
+  const ownerCalls = [];
+  const ownerDoc = makeEditingDocument((cmd, _ui, value) => {
+    ownerCalls.push([cmd, value]);
+    return true;
+  });
+  const el = makeHost({ editable: true, text: "ab", ownerDocument: ownerDoc });
+  const parentExec = (cmd, _ui, value) => {
+    parentCalls.push([cmd, value]);
+    return true;
+  };
+
+  const fillPilot = loadBridge({ queryResult: el, execCommand: parentExec });
+  assert.deepEqual(fillPilot.fill({ selector: "#editor", value: "hello" }), { ok: true });
+  assert.deepEqual(parentCalls, []);
+  assert.deepEqual(ownerCalls, [["insertText", "hello"]]);
+
+  parentCalls.length = 0;
+  ownerCalls.length = 0;
+  const typed = makeHost({ editable: true, text: "ab", ownerDocument: ownerDoc });
+  const typePilot = loadBridge({ queryResult: typed, execCommand: parentExec });
+  assert.deepEqual(typePilot.type({ selector: "#editor", text: "c" }), { ok: true });
+  assert.deepEqual(parentCalls, []);
+  assert.deepEqual(ownerCalls, [["insertText", "c"]]);
 });
 
 test("type appends on input and contenteditable", () => {

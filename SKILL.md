@@ -97,9 +97,15 @@ Three target formats, auto-detected:
 | `drag <source> [target] [--offset X,Y]` | `drag @e5 @e8` |
 | `drop <target> --file <path>` | `drop @e3 --file ./img.png` |
 
-`fill` / `type` accept `<input>`, `<textarea>`, `<select>`, and contenteditable
-elements, and error on anything else. `check` accepts only checkbox and radio
-inputs. `ok` means the value actually landed.
+`fill` accepts `<input>`, `<textarea>`, `<select>`, and contenteditable
+elements. `type` accepts the same except `<select>` (use `fill` or `select`).
+Both error on anything else. `check` accepts only checkbox and radio inputs.
+For fill and type, ok means the value landed; for check, confirm with
+`assert checked`.
+
+On contenteditable, fill/type try `insertText` first so Tiptap/ProseMirror
+see the write, then fall back to `textContent`. Read the result with `text`
+/ `assert text`, not `value`.
 
 `drag` emits an HTML5 drag sequence *and* a real press → interpolated
 `pointermove`/`mousemove` stream → release, so it drives both native

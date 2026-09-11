@@ -147,3 +147,40 @@ test("select still rejects a non-<select> target", () => {
     /<select>/i,
   );
 });
+
+test("fill on select uses option matching and throws when nothing matches", () => {
+  const el = makeSelect([
+    { value: "user", text: "User" },
+    { value: "admin", text: "Admin" },
+  ]);
+  const pilot = loadBridge({ queryResult: el });
+
+  assert.deepEqual(pilot.fill({ selector: "select[name=role]", value: "admin" }), { ok: true });
+  assert.equal(el.value, "admin");
+  assert.ok(el.events.includes("change"));
+
+  const unmatched = makeSelect([
+    { value: "user", text: "User" },
+    { value: "admin", text: "Admin" },
+  ]);
+  const fillPilot = loadBridge({ queryResult: unmatched });
+  assert.throws(
+    () => fillPilot.fill({ selector: "select[name=role]", value: "zzz" }),
+    /no option/i,
+  );
+  assert.equal(unmatched.selectedIndex, -1);
+});
+
+test("type rejects a select target", () => {
+  const el = makeSelect([
+    { value: "user", text: "User" },
+    { value: "admin", text: "Admin" },
+  ]);
+  const pilot = loadBridge({ queryResult: el });
+
+  assert.throws(
+    () => pilot.type({ selector: "select[name=role]", text: "admin" }),
+    /select/i,
+  );
+  assert.equal(el.selectedIndex, -1);
+});

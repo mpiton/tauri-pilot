@@ -978,7 +978,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "type",
-            description: "Type text into an input, textarea, select, or contenteditable target without clearing it first. Errors if the target cannot take a value.",
+            description: "Type text into an input, textarea, or contenteditable target without clearing it first. Errors on <select> and on any target that cannot take a value.",
             schema: type_schema,
             read_only: false,
             destructive: false,

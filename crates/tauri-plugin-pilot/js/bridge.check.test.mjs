@@ -61,6 +61,8 @@ test("check toggles checkbox and radio inputs", () => {
     assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
     assert.equal(el.checked, true);
     assert.ok(el.events.includes("change"));
+    assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
+    assert.equal(el.checked, false);
   }
 });
 

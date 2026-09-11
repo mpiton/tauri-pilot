@@ -352,8 +352,14 @@ tauri-pilot click 100,200
 
 Clear an `<input>`, `<textarea>`, `<select>`, or contenteditable element and
 set a new value. Form controls use the native value setter so React and similar
-frameworks see the change. Contenteditable hosts (Tiptap, ProseMirror, and the
-like) are filled via `insertText` so the editor document updates.
+frameworks see the change. On `<select>`, the value is matched like `select`
+(option value, then visible label) and fill throws if nothing matches.
+
+Contenteditable hosts (Tiptap, ProseMirror, and the like) are filled by
+selecting the target's contents and calling `insertText` so the editor
+document updates. If `insertText` is unavailable, fill assigns `textContent`
+instead, which does not update those editors. Read the result with `text` /
+`assert text`, not `value`.
 
 Throws if the target cannot take a value (for example a plain `<div>`). A
 reported `ok` means the value was written.
@@ -374,8 +380,11 @@ tauri-pilot fill ".ProseMirror" "hello from the editor"
 
 ### `type`
 
-Type text into an `<input>`, `<textarea>`, `<select>`, or contenteditable
-element without clearing existing content first. Same target rules as `fill`.
+Type text into an `<input>`, `<textarea>`, or contenteditable element without
+clearing existing content first. Same target rules as `fill`, except
+`<select>` is rejected — use `fill` or `select`. Contenteditable typing also
+tries `insertText` first and falls back to `textContent`; read the result
+with `text` / `assert text`.
 
 ```bash
 tauri-pilot type <target> <text>

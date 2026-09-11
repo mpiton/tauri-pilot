@@ -152,6 +152,22 @@ fn sanitize_identifier(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Bound each function body by the start of the next `function ` declaration
+    // (or end-of-string), so the slice is immune to brace indentation changes
+    // and to nested blocks closing with the same brace pattern.
+    // ASCII needles → `find()` returns offsets that are valid UTF-8 char boundaries.
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    fn bridge_fn_body<'a>(js: &'a str, fn_decl: &str) -> &'a str {
+        let start = js
+            .find(fn_decl)
+            .unwrap_or_else(|| panic!("{fn_decl} missing"));
+        let after = start + fn_decl.len();
+        let end = js[after..]
+            .find("\n  function ")
+            .map_or(js.len(), |off| after + off);
+        &js[start..end]
+    }
+
     #[cfg(all(any(unix, windows), debug_assertions))]
     #[test]
     fn bridge_js_contains_html_to_image_and_pilot() {
@@ -382,24 +398,9 @@ mod tests {
             "fill/typeText must not use the `HTMLInputElement.prototype || HTMLTextAreaElement.prototype` short-circuit (#85)"
         );
 
-        // Bound each function body by the start of the next `function ` declaration
-        // (or end-of-string), so the slice is immune to brace indentation changes
-        // and to nested blocks closing with the same brace pattern.
-        // ASCII needles → `find()` returns offsets that are valid UTF-8 char boundaries.
-        let body_of = |fn_decl: &str| -> &str {
-            let start = js
-                .find(fn_decl)
-                .unwrap_or_else(|| panic!("{fn_decl} missing"));
-            let after = start + fn_decl.len();
-            let end = js[after..]
-                .find("\n  function ")
-                .map_or(js.len(), |off| after + off);
-            &js[start..end]
-        };
-
-        let fill_body = body_of("function fill(params)");
-        let type_body = body_of("function typeText(params)");
-        let select_body = body_of("function select(params)");
+        let fill_body = bridge_fn_body(js, "function fill(params)");
+        let type_body = bridge_fn_body(js, "function typeText(params)");
+        let select_body = bridge_fn_body(js, "function select(params)");
 
         assert!(
             fill_body.contains("nativeValueSetter("),
@@ -410,8 +411,12 @@ mod tests {
             "typeText must call nativeValueSetter (#85)"
         );
         assert!(
-            select_body.contains("nativeValueSetter("),
-            "select must call nativeValueSetter (#85) so a future textarea-style brand-check bug cannot reappear in any setter handler"
+            select_body.contains("applySelectOption("),
+            "select must apply a matched option (#85)"
+        );
+        assert!(
+            bridge_fn_body(js, "function applySelectOption(").contains("nativeValueSetter("),
+            "applySelectOption must call nativeValueSetter (#85) so a future textarea-style brand-check bug cannot reappear in any setter handler"
         );
 
         // The pre-refactor `select` relied on the WebIDL brand check to reject
@@ -453,22 +458,11 @@ mod tests {
         // after nativeValueSetter: a reported ok must mean the action landed.
         let js = super::BRIDGE_JS;
 
-        let body_of = |fn_decl: &str| -> &str {
-            let start = js
-                .find(fn_decl)
-                .unwrap_or_else(|| panic!("{fn_decl} missing"));
-            let after = start + fn_decl.len();
-            let end = js[after..]
-                .find("\n  function ")
-                .map_or(js.len(), |off| after + off);
-            &js[start..end]
-        };
-
-        let fill_body = body_of("function fill(params)");
-        let type_body = body_of("function typeText(params)");
-        let check_body = body_of("function check(params)");
-        let editable_body = body_of("function requireEditable(");
-        let checkable_body = body_of("function requireCheckable(");
+        let fill_body = bridge_fn_body(js, "function fill(params)");
+        let type_body = bridge_fn_body(js, "function typeText(params)");
+        let check_body = bridge_fn_body(js, "function check(params)");
+        let editable_body = bridge_fn_body(js, "function requireEditable(");
+        let checkable_body = bridge_fn_body(js, "function requireCheckable(");
 
         assert!(
             fill_body.contains("requireEditable(el, \"fill\")"),
@@ -497,12 +491,28 @@ mod tests {
             "fill/type/check guards must be realm-safe — no instanceof (#154)"
         );
         assert!(
-            body_of("function fillContentEditable(").contains("insertText"),
+            bridge_fn_body(js, "function fillContentEditable(").contains("insertText"),
             "fill must edit contenteditable via insertText so rich-text editors see the write (#154)"
         );
         assert!(
-            body_of("function isContentEditable(").contains("plaintext-only"),
+            !bridge_fn_body(js, "function fillContentEditable(").contains("selectAll"),
+            "fill must not selectAll the editing host; that replaces the whole editor (#154)"
+        );
+        assert!(
+            bridge_fn_body(js, "function typeContentEditable(").contains("insertText"),
+            "type must edit contenteditable via insertText so rich-text editors see the write (#154)"
+        );
+        assert!(
+            bridge_fn_body(js, "function isContentEditable(").contains("plaintext-only"),
             "contenteditable detection must accept plaintext-only hosts (#154)"
+        );
+        assert!(
+            type_body.contains("type cannot target a <select>"),
+            "type must reject <select> instead of writing a raw value (#154)"
+        );
+        assert!(
+            fill_body.contains("applySelectOption("),
+            "fill must select an option rather than writing a raw value (#154)"
         );
     }
 
