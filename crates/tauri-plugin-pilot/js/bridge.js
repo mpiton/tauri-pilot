@@ -164,8 +164,8 @@
         return false;
       }
       if (parsed.hostname !== "ipc.localhost") return false;
-      const segments = parsed.pathname.split("/").filter(Boolean);
-      return segments.length === 1 && isPilotCallbackCommand(segments[0]);
+      const match = parsed.pathname.match(/^\/([^/]+)$/);
+      return !!match && isPilotCallbackCommand(match[1]);
     }
     return false;
   }

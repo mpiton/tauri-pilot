@@ -169,6 +169,23 @@ test("userinfo, nested, and encoded-relative callback URLs stay in the log", asy
   assert.deepEqual(urls, keep);
 });
 
+test("double-slash and trailing-slash callback URLs stay in the network log", async () => {
+  const pilot = loadBridge();
+  const keep = [
+    "https://ipc.localhost//plugin:pilot|__callback",
+    "https://ipc.localhost/plugin:pilot|__callback/",
+    "http://ipc.localhost/plugin%3Apilot%7C__callback/",
+  ];
+  for (const url of keep) {
+    await window.fetch(url);
+  }
+  for (const url of keep) {
+    sendXhr(url);
+  }
+  const urls = pilot.networkRequests().map((e) => e.url);
+  assert.deepEqual(urls, keep.concat(keep));
+});
+
 test("an app URL whose query contains the IPC substring is still recorded", async () => {
   const pilot = loadBridge();
   const app = "https://app.example/search?q=plugin%3Apilot%7C__callback";
