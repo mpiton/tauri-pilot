@@ -122,6 +122,20 @@ test("snapshot coerces an author-set <li value> to a string, 0 included", () => 
   assert.equal(named(elements, "second").value, "2");
 });
 
+test("snapshot reads <li value> as written, not the reflected long (#162)", () => {
+  // `.value` reads 0 when the attribute is empty or not an integer.
+  const blank = makeEl("li", { text: "blank", value: 0, attrs: { value: "" } });
+  const lang = makeEl("li", { text: "french", value: 0, attrs: { value: "fr" } });
+  const list = makeEl("ul", { children: [blank, lang] });
+  const body = makeEl("body", { children: [list] });
+  const pilot = loadBridge(body);
+
+  const { elements } = pilot.snapshot();
+
+  assert.equal("value" in named(elements, "blank"), false);
+  assert.equal(named(elements, "french").value, "fr");
+});
+
 test("snapshot preserves a genuine string value unchanged", () => {
   const input = makeEl("input", { value: "hello", attrs: { type: "text" } });
   const body = makeEl("body", { children: [input] });

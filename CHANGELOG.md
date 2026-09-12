@@ -28,11 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `snapshot` no longer prints `value="0"` on every `<li>`. The bridge read
   `HTMLLIElement.value`, which reflects the `value` attribute and returns `0`
-  when it is absent, in an `<ol>` too. An `<li>` now carries a value only
-  when it has a `value` attribute (`<li value="3">` still shows
-  `value="3"`). `diff --ref` against a file saved with `snapshot --save`
-  before this fix reports every plain `<li>` as a `value` change until the
-  file is saved again. [#162]
+  when the attribute is absent or does not parse as an integer, in an `<ol>`
+  too. An `<li>` now shows its `value` attribute as written, and no value
+  when the attribute is absent or empty (`<li value="3">` still shows
+  `value="3"`). `value` returns the same string, so `<li value="3">` gives
+  `"3"` instead of the number `3`, which `assert value` rejected with
+  `expected string response from server`. `diff --ref` against a file saved
+  with `snapshot --save` before this fix reports a `value` change on each
+  affected `<li>` until the file is saved again. [#162]
 
 - `record stop` with no recording in progress now fails with
   `No recording in progress` and exits 1 without writing the output file. It

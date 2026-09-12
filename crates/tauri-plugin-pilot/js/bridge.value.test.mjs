@@ -180,3 +180,16 @@ test("value of a multi-select with one option has no separator", () => {
   const pilot = loadBridge({ queryResult: el });
   assert.equal(pilot.value({ selector: "select[name=skills]" }), "js");
 });
+
+// `HTMLLIElement.value` is a `long`: 3 for `value="3"`, 0 when absent (#162).
+function makeLi(_attrs, value) {
+  const el = { tagName: "LI", nodeType: 1, children: [], textContent: "", value, _attrs };
+  return Object.assign(el, attrs(el));
+}
+
+test("value of an <li> is its value attribute as a string (#162)", () => {
+  const liValue = (el) => loadBridge({ queryResult: el }).value({ selector: "li" });
+  assert.equal(liValue(makeLi({ value: "3" }, 3)), "3");
+  assert.equal(liValue(makeLi({ value: "0" }, 0)), "0");
+  assert.equal(liValue(makeLi({}, 0)), "");
+});
