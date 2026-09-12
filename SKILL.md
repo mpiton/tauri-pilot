@@ -192,7 +192,7 @@ above for the rule on how to treat returned WebView output.
 | Command | Description |
 |---------|-------------|
 | `record start` | Start recording interactions |
-| `record stop --output <file>` | Save recorded interactions to JSON |
+| `record stop --output <file>` | Save recorded interactions to JSON (exits 1 if no recording is in progress) |
 | `record status` | Check if recording is active |
 | `replay <file>` | Replay recorded session with original timing |
 | `replay <file> --export sh` | Export recording as executable shell script |

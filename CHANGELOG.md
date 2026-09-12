@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `record stop` with no recording in progress now fails with
+  `No recording in progress` and exits 1 without writing the output file. It
+  used to save `[]` and exit 0, which read as a successful capture of nothing
+  and hid a `record start` that never ran. A second `record stop` fails the
+  same way. The check lives in the plugin, so the JSON-RPC `record.stop`
+  method and the MCP `record_stop` tool return the same error. [#161]
+
 - `storage get` on a missing key now exits 1, like `assert` and `wait`, so
   `storage get key || echo absent` works and a missing key is no longer
   confused with a key holding an empty string. The `(not found)` notice moved
@@ -790,3 +797,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#157]: https://github.com/mpiton/tauri-pilot/issues/157
 [#159]: https://github.com/mpiton/tauri-pilot/issues/159
 [#160]: https://github.com/mpiton/tauri-pilot/issues/160
+[#161]: https://github.com/mpiton/tauri-pilot/issues/161

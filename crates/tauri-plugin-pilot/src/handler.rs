@@ -2,7 +2,7 @@ use crate::diff;
 use crate::eval::{EvalEngine, EvalError, HELLO_ID, origin_key};
 #[cfg(feature = "press")]
 use crate::key;
-use crate::protocol::RpcError;
+use crate::protocol::{RPC_INVALID_PARAMS, RpcError};
 use crate::recorder::{RecordEntry, Recorder};
 use crate::screenshot;
 use crate::webview::{TargetWindow, Webviews};
@@ -328,7 +328,11 @@ pub(crate) async fn dispatch(
             Ok(serde_json::json!({"status": "recording"}))
         }
         "record.stop" => {
-            let entries = recorder.stop();
+            let entries = recorder.stop().ok_or_else(|| RpcError {
+                code: RPC_INVALID_PARAMS,
+                message: "No recording in progress. Run `record start` first".to_owned(),
+                data: None,
+            })?;
             let count = entries.len();
             Ok(serde_json::json!({"entries": entries, "count": count}))
         }
@@ -1563,6 +1567,27 @@ mod tests {
         assert!(!recorder.is_active());
     }
 
+    /// Issue #161: stopping without a recording must fail instead of handing
+    /// the CLI an empty entry list to save as a successful capture.
+    #[tokio::test]
+    async fn test_dispatch_record_stop_without_start_errors() {
+        let err = dispatch(
+            "record.stop",
+            None,
+            &EvalEngine::new(),
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("record.stop without record.start must fail");
+        assert_eq!(err.code, RPC_INVALID_PARAMS);
+        assert!(
+            err.message.contains("No recording in progress"),
+            "{}",
+            err.message
+        );
+    }
+
     #[tokio::test]
     async fn test_dispatch_record_status() {
         let engine = EvalEngine::new();
@@ -1597,7 +1622,7 @@ mod tests {
         .await
         .expect("dispatch succeeds");
         assert_eq!(result["status"], "ok");
-        let entries = recorder.stop();
+        let entries = recorder.stop().expect("recording active");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].action, "navigate");
     }
