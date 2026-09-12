@@ -458,7 +458,7 @@
         // form controls, but a number for `<li>` (ordinal), `<progress>`, and
         // `<meter>`. Coerce to string so the wire format matches the plugin's
         // `SnapshotElement.value: Option<String>` contract (#120). Multi-select
-        // joins every selected option (#158).
+        // joins every selected option (#158); a plain `<li>` has none (#162).
         const nodeVal = elementValue(node);
         if (nodeVal !== undefined && nodeVal !== "") entry.value = String(nodeVal);
         if (node.tagName === "INPUT") {
@@ -1078,13 +1078,16 @@
   }
 
   // Display value for `value` / `snapshot`. Multi-select joins with `", "`
-  // so the string matches the `forms` CLI (`skills = "rust, js"`). Other
-  // elements keep their IDL `.value` (including numeric `<li>` ordinals).
+  // so the string matches the `forms` CLI (`skills = "rust, js"`). An `<li>`
+  // has a value only with a `value` attribute: `HTMLLIElement.value` reflects
+  // it and reads `0` when it is absent, even in an `<ol>` (#162). Other
+  // elements keep their IDL `.value`.
   function elementValue(el) {
-    if (el && el.tagName && el.tagName.toLowerCase() === "select" && el.multiple) {
-      return selectedOptionValues(el).join(", ");
-    }
-    return el ? el.value : undefined;
+    if (!el) return undefined;
+    const tag = String(el.tagName || "").toLowerCase();
+    if (tag === "select" && el.multiple) return selectedOptionValues(el).join(", ");
+    if (tag === "li" && !el.hasAttribute("value")) return undefined;
+    return el.value;
   }
 
   function value(params) {

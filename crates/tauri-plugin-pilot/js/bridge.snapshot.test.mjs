@@ -1,12 +1,15 @@
-// Dependency-free behavioural tests for the bridge `snapshot` (#120, #155).
+// Dependency-free behavioural tests for the bridge `snapshot` (#120, #155, #162).
 //
 // bridge.js is an IIFE that attaches its API to `window.__PILOT__`. We load the
 // *real* file into a minimal global mock so these tests exercise the shipping
 // code, not a re-implementation. The mock reproduces the DOM quirk behind #120:
-// `HTMLLIElement.value` is an IDL `long` (a number, the item's ordinal, default
-// `0`), so every `<li>` makes the bridge capture a JSON integer while the plugin
-// types `SnapshotElement.value` as `Option<String>` — `diff` then aborts with
+// `HTMLLIElement.value` is an IDL `long` (a number, default `0`), so every
+// `<li>` makes the bridge capture a JSON integer while the plugin types
+// `SnapshotElement.value` as `Option<String>` — `diff` then aborts with
 // `invalid type: integer 0, expected a string`.
+//
+// #162: that `0` is the default of the reflected `value` attribute, not the
+// item's ordinal, so the string fix printed `value="0"` on every plain `<li>`.
 //
 // #155: walk() only emits a node when getRole() is non-null, and ROLE_MAP has
 // no DIV entry. Interactive divs (draggable, contenteditable, click handlers)
@@ -88,11 +91,13 @@ function loadBridge(body) {
   return globalThis.window.__PILOT__;
 }
 
-test("snapshot never emits a numeric value for <li> items (#120)", () => {
-  // Every <li> outside an <ol> reports `.value === 0` (a number) per the DOM spec.
+test("snapshot omits value for an <li> without a value attribute (#120, #162)", () => {
+  // `HTMLLIElement.value` reflects the `value` attribute and reads `0` (a
+  // number) when it is absent, in a <ul> and in an <ol> alike.
   const li = (text) => makeEl("li", { text, value: 0 });
-  const list = makeEl("ul", { children: [li("a"), li("b"), li("c"), li("d")] });
-  const body = makeEl("body", { children: [list] });
+  const ul = makeEl("ul", { children: [li("a"), li("b")] });
+  const ol = makeEl("ol", { children: [li("c"), li("d")] });
+  const body = makeEl("body", { children: [ul, ol] });
   const pilot = loadBridge(body);
 
   const { elements } = pilot.snapshot();
@@ -100,27 +105,21 @@ test("snapshot never emits a numeric value for <li> items (#120)", () => {
 
   assert.equal(items.length, 4, "all four <li> should be captured");
   for (const item of items) {
-    assert.notEqual(
-      typeof item.value,
-      "number",
-      "value must serialise as a string, never a JSON number",
-    );
-    if (item.value !== undefined) {
-      assert.equal(typeof item.value, "string");
-    }
+    assert.equal("value" in item, false, `${item.name} must carry no value key`);
   }
 });
 
-test("snapshot coerces a numeric ordinal (<ol> <li value>) to a string", () => {
-  const li = makeEl("li", { text: "second", value: 2 });
-  const list = makeEl("ol", { children: [li] });
+test("snapshot coerces an author-set <li value> to a string, 0 included", () => {
+  const zero = makeEl("li", { text: "zeroth", value: 0, attrs: { value: "0" } });
+  const two = makeEl("li", { text: "second", value: 2, attrs: { value: "2" } });
+  const list = makeEl("ol", { children: [zero, two] });
   const body = makeEl("body", { children: [list] });
   const pilot = loadBridge(body);
 
   const { elements } = pilot.snapshot();
-  const item = elements.find((e) => e.role === "listitem");
 
-  assert.equal(item.value, "2");
+  assert.equal(named(elements, "zeroth").value, "0");
+  assert.equal(named(elements, "second").value, "2");
 });
 
 test("snapshot preserves a genuine string value unchanged", () => {
