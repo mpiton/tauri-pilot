@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ipc --args` with malformed JSON now fails with
+  `--args must be a JSON object, got: <value>`, followed by serde's parse
+  error under `Caused by:`. The error used to be the serde message alone
+  (`expected ident at line 1 column 2`), which named neither the flag nor
+  the expected format. [#163]
+
 - `snapshot` no longer prints `value="0"` on every `<li>`. The bridge read
   `HTMLLIElement.value`, which reflects the `value` attribute and returns `0`
   when the attribute is absent or does not parse as an integer, in an `<ol>`
@@ -810,3 +816,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#160]: https://github.com/mpiton/tauri-pilot/issues/160
 [#161]: https://github.com/mpiton/tauri-pilot/issues/161
 [#162]: https://github.com/mpiton/tauri-pilot/issues/162
+[#163]: https://github.com/mpiton/tauri-pilot/issues/163

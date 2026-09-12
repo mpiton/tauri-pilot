@@ -832,7 +832,12 @@ async fn run_ipc_command(
     args: Option<&str>,
     window: Option<&str>,
 ) -> Result<serde_json::Value> {
-    let parsed_args: Option<serde_json::Value> = args.map(serde_json::from_str).transpose()?;
+    let parsed_args: Option<serde_json::Value> = args
+        .map(|raw| {
+            serde_json::from_str(raw)
+                .with_context(|| format!("--args must be a JSON object, got: {raw}"))
+        })
+        .transpose()?;
     client
         .call(
             "ipc",
