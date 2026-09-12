@@ -404,9 +404,7 @@ async fn run_command(
             selector,
             depth,
         } => run_diff_command(client, ref_path, interactive, selector, depth, window).await,
-        Command::Ipc { command, args } => {
-            run_ipc_command(client, &command, args.as_deref(), window).await
-        }
+        Command::Ipc { command, args } => run_ipc_command(client, &command, args, window).await,
         Command::Screenshot { path, selector } => {
             client
                 .call(
@@ -829,22 +827,13 @@ async fn run_assert_command(
 async fn run_ipc_command(
     client: &mut Client,
     command: &str,
-    args: Option<&str>,
+    args: Option<serde_json::Value>,
     window: Option<&str>,
 ) -> Result<serde_json::Value> {
-    let parsed_args: Option<serde_json::Value> = args
-        .map(|raw| {
-            serde_json::from_str(raw)
-                .with_context(|| format!("--args must be a JSON object, got: {raw}"))
-        })
-        .transpose()?;
     client
         .call(
             "ipc",
-            with_window(
-                Some(json!({"command": command, "args": parsed_args})),
-                window,
-            ),
+            with_window(Some(json!({"command": command, "args": args})), window),
         )
         .await
 }
