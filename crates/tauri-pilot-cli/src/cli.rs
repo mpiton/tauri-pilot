@@ -119,8 +119,9 @@ pub(crate) enum Command {
     /// Invoke a Tauri IPC command.
     Ipc {
         command: String,
-        #[arg(long)]
-        args: Option<String>,
+        /// JSON object of arguments passed to the command, e.g. '{"name":"World"}'.
+        #[arg(long, value_parser = parse_ipc_args)]
+        args: Option<serde_json::Value>,
     },
     /// Capture a full-page screenshot (PNG).
     Screenshot {
@@ -327,6 +328,21 @@ pub(crate) fn parse_target(s: &str) -> Target {
     }
 
     Target::Selector(s.to_owned())
+}
+
+/// Parses `ipc --args` into a JSON object before the CLI connects to the app.
+///
+/// Tauri commands read their arguments from an object keyed by parameter
+/// name, so arrays, scalars and `null` are rejected along with malformed JSON.
+///
+/// # Errors
+///
+/// Returns the reason clap prints after `invalid value '<raw>' for '--args <ARGS>':`
+/// when `raw` is not a JSON object.
+fn parse_ipc_args(raw: &str) -> Result<serde_json::Value, String> {
+    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(raw)
+        .map(serde_json::Value::Object)
+        .map_err(|e| format!("must be a JSON object, e.g. '{{\"name\":\"World\"}}' ({e})"))
 }
 
 #[cfg(test)]
@@ -1005,6 +1021,52 @@ mod tests {
                 } => assert_eq!(t, "-10,20"),
                 _ => panic!("expected Scroll with negative coords"),
             }
+        }
+    }
+
+    #[test]
+    fn test_parse_ipc_args_object() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "ipc",
+            "greet",
+            "--args",
+            r#"{"name":"World"}"#,
+        ]);
+        if let Command::Ipc { command, args } = cli.command {
+            assert_eq!(command, "greet");
+            assert_eq!(args, Some(serde_json::json!({"name": "World"})));
+        } else {
+            panic!("Expected Ipc command");
+        }
+    }
+
+    /// Regression test for #163: the error names `--args`, the value, the format
+    /// and serde's reason, and exits 2.
+    #[test]
+    fn test_parse_ipc_args_rejects_non_object() {
+        for raw in ["not-json", "", "[1,2]", "42", "\"x\"", "true", "null"] {
+            let Err(err) = Cli::try_parse_from(["tauri-pilot", "ipc", "greet", "--args", raw])
+            else {
+                panic!("--args {raw:?} must be rejected");
+            };
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{raw:?}"
+            );
+            assert_eq!(err.exit_code(), 2, "{raw:?}");
+            // Built from serde_json so a reworded serde message can't break the test.
+            let reason = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(raw)
+                .expect_err("not a JSON object")
+                .to_string();
+            let msg = err.to_string();
+            assert!(
+                msg.contains(&format!("invalid value '{raw}' for '--args <ARGS>'"))
+                    && msg.contains("must be a JSON object")
+                    && msg.contains(&format!("({reason})")),
+                "--args {raw:?}:\n{msg}"
+            );
         }
     }
 }

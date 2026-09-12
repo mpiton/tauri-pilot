@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ipc --args` is now checked while the command line is parsed, before the
+  CLI connects to the app, and must be a JSON object. Malformed JSON, arrays,
+  scalars and `null` exit 2 with
+  `invalid value 'not-json' for '--args <ARGS>': must be a JSON object, e.g. '{"name":"World"}' (expected ident at line 1 column 2)`.
+  The CLI used to connect first, so with no app running the bad value was
+  never reported, only `No tauri-pilot socket found`. With an app running it
+  exited 1 with serde's message alone (`expected ident at line 1 column 2`),
+  and valid JSON that was not an object went to the command unchanged.
+  `ipc --help` now describes `--args`. [#163]
+
 - `snapshot` no longer prints `value="0"` on every `<li>`. The bridge read
   `HTMLLIElement.value`, which reflects the `value` attribute and returns `0`
   when the attribute is absent or does not parse as an integer, in an `<ol>`
@@ -810,3 +820,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#160]: https://github.com/mpiton/tauri-pilot/issues/160
 [#161]: https://github.com/mpiton/tauri-pilot/issues/161
 [#162]: https://github.com/mpiton/tauri-pilot/issues/162
+[#163]: https://github.com/mpiton/tauri-pilot/issues/163
