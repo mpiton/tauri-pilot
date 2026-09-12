@@ -86,20 +86,75 @@
     info: console.info.bind(console),
   };
 
+  function pushLog(level, args, source) {
+    const entry = {
+      id: ++_logIdCounter,
+      timestamp: Date.now(),
+      level: level,
+      args: args.map(serializeArg),
+      source: source || null,
+    };
+    _logs.push(entry);
+    if (_logs.length > MAX_LOGS) _logs.shift();
+    return entry;
+  }
+
   ['log', 'warn', 'error', 'info'].forEach(level => {
     console[level] = function(...args) {
-      const entry = {
-        id: ++_logIdCounter,
-        timestamp: Date.now(),
-        level: level,
-        args: args.map(serializeArg),
-        source: extractSource(),
-      };
-      _logs.push(entry);
-      if (_logs.length > MAX_LOGS) _logs.shift();
+      // extractSource() must be called from this frame: it skips a fixed
+      // number of stack frames to reach the caller.
+      pushLog(level, args, extractSource());
       _originalConsole[level].apply(console, args);
     };
   });
+
+  function describeReason(reason) {
+    if (reason instanceof Error) {
+      // The stack goes in `source`; keep the message readable in `args`.
+      return reason.name + ': ' + reason.message;
+    }
+    if (typeof reason === 'string') return reason;
+    try {
+      return JSON.stringify(reason);
+    } catch (_) {
+      return String(reason);
+    }
+  }
+
+  function stackSource(error) {
+    if (!error || typeof error.stack !== 'string') return null;
+    const lines = error.stack.split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line && line.trim() && !line.includes('__PILOT__')) return line.trim();
+    }
+    return null;
+  }
+
+  // Uncaught errors and unhandled rejections never pass through console.* --
+  // the browser prints those itself. Without these listeners the documented
+  // `logs --level error` workflow cannot see the failures it exists to find.
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('error', event => {
+      // Only script errors carry a message. Failed resource loads (<img>,
+      // <script> 404) raise a bare Event that does not bubble to window, but
+      // guard anyway rather than logging an empty entry.
+      if (!event || typeof event.message !== 'string') return;
+      const where = event.filename
+        ? event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0)
+        : null;
+      pushLog('error', [event.message], stackSource(event.error) || where);
+    });
+
+    window.addEventListener('unhandledrejection', event => {
+      const reason = event && event.reason;
+      pushLog(
+        'error',
+        ['Unhandled rejection: ' + describeReason(reason)],
+        stackSource(reason)
+      );
+    });
+  }
 
   function consoleLogs(options) {
     let result = _logs.slice();
