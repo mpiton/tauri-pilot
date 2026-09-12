@@ -127,10 +127,10 @@ Before connecting:
 Disabling the desktop `press` backend on Android is recommended. Replace the shared plugin dependency with target-specific entries so desktop builds keep it enabled:
 
 ```toml
-[target.'cfg(target_os = "android")'.dependencies]
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", default-features = false }
 
-[target.'cfg(not(target_os = "android"))'.dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
 ```
 
@@ -179,3 +179,72 @@ rm -f "$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock"
 ```
 
 Use a private directory rather than a bare `/tmp` socket, since ADB creates the host socket with its own permissions.
+
+## iOS Simulator
+
+The computer running the CLI must be a Mac, since building for iOS requires
+Xcode. A Simulator shares the Mac's filesystem, so the plugin's usual socket
+file is already reachable from the CLI and no forwarding is needed.
+
+Before connecting:
+
+- Complete [Tauri's iOS prerequisites](https://v2.tauri.app/start/prerequisites/#ios),
+  including Xcode and the `aarch64-apple-ios-sim` Rust target
+  (`x86_64-apple-ios` on an Intel Mac).
+- Run `cargo tauri ios init` once for the app.
+- Register the plugin in the mobile `run()` entry point in `src-tauri/src/lib.rs`,
+  with the debug guard and `pilot:default` permission shown above. A capability
+  that restricts `platforms` must include `iOS`.
+
+Disabling the desktop `press` backend on iOS is recommended. Replace the shared
+plugin dependency — or the combined pair from the Android section above — with these
+target-specific entries, so desktop builds keep it enabled:
+
+```toml
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", default-features = false }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
+```
+
+Cargo unions features across dependency entries, so use this single combined
+pair rather than one pair per platform. A leftover `not(target_os = "android")`
+or a naive `not(target_os = "ios")` entry matches the other mobile OS and
+re-enables `press` there.
+
+`press` needs an OS keyboard backend that iOS does not provide, and
+`screenshot_native` is macOS-only. Use `fill` or `type` for text input, and the
+regular `screenshot`, which captures the webview. Window operations are limited
+to the mobile app's single window.
+
+Start a debug build in a Simulator and use the CLI exactly as you would for a
+desktop app:
+
+```sh
+cargo tauri ios dev
+tauri-pilot ping
+tauri-pilot snapshot
+```
+
+A desktop build and every Simulator running the same app all resolve to the
+same default socket path. Whichever starts first owns it; the others log a
+warning, start without a pilot server, and the CLI then drives that first
+instance instead. Quit the extra ones, or give a Simulator its own socket
+directory. The app must already be installed on it (one `cargo tauri ios dev`
+run against that Simulator does this):
+
+```sh
+mkdir -m 700 /tmp/pilot-my-simulator
+SIMCTL_CHILD_XDG_RUNTIME_DIR=/tmp/pilot-my-simulator \
+  xcrun simctl launch --terminate-running-process SIMULATOR_UDID YOUR_BUNDLE_IDENTIFIER
+tauri-pilot --socket /tmp/pilot-my-simulator/tauri-pilot-YOUR_BUNDLE_IDENTIFIER.sock ping
+```
+
+Keep that directory short, owned by you, and mode 0700 — the plugin ignores a
+non-private `XDG_RUNTIME_DIR` and falls back to `/tmp`, and a long path (for
+example, deep inside a Simulator's data container) can exceed the length limit
+on Unix socket addresses.
+
+Physical iOS devices are not supported yet: an app sandbox on a device hides
+its socket file from the Mac, so the CLI has no path to open.

@@ -70,6 +70,13 @@ jobs:
           cargo check -p tauri-plugin-pilot --target aarch64-linux-android --no-default-features
           cargo clippy -p tauri-plugin-pilot --target aarch64-linux-android --no-default-features -- -D warnings
 
+      - name: Check iOS plugin
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-ios-sim
+          cargo check -p tauri-plugin-pilot --target aarch64-apple-ios-sim --no-default-features
+          cargo clippy -p tauri-plugin-pilot --target aarch64-apple-ios-sim --no-default-features -- -D warnings
+
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 

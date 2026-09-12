@@ -227,12 +227,15 @@ Use global flags before `mcp` to pin a specific app socket or window:
 
 - **Linux** (WebKitGTK), **macOS** (WebKit), or **Windows** (WebView2)
 - **Android** via [ADB from Linux or macOS](https://mpiton.github.io/tauri-pilot/guides/plugin-setup/#android-via-adb)
+- **iOS Simulator** [from a Mac](https://mpiton.github.io/tauri-pilot/guides/plugin-setup/#ios-simulator)
 - **Tauri v2** (v1 not supported)
 - **Rust 1.95.0+** (edition 2024)
 
 ## Known limitations
 
 - **Android from Windows hosts** — the Windows CLI uses named pipes and cannot connect through the Unix socket forwarding used by this Android setup.
+
+- **Physical iOS devices** — an app sandbox on a device hides its socket file from the Mac, so the CLI has no path to open. Simulator only for now.
 
 - **`press` and global shortcuts on X11** — synthetic key events from `press` (via `enigo`'s `XTestFakeKeyEvent` backend) frequently fail to trigger handlers registered with `tauri-plugin-global-shortcut`.
 
