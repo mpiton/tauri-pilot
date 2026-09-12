@@ -141,8 +141,7 @@ async fn main() -> Result<()> {
     }
 
     format_result(output_kind, &result, args.json)?;
-    // Only `storage get` answers with `found`; a missing key exits 1 (#160).
-    if matches!(output_kind, OutputKind::Storage) && result["found"] == false {
+    if matches!(output_kind, OutputKind::StorageGet) && result["found"] == false {
         std::process::exit(1);
     }
     Ok(())
@@ -156,6 +155,7 @@ enum OutputKind {
     Network,
     Watch,
     Storage,
+    StorageGet,
     Forms,
     Windows,
     Record,
@@ -171,6 +171,10 @@ impl From<&Command> for OutputKind {
             Command::Logs { .. } => OutputKind::Logs,
             Command::Network { .. } => OutputKind::Network,
             Command::Watch { .. } => OutputKind::Watch,
+            Command::Storage(StorageArgs {
+                action: StorageAction::Get { .. },
+                ..
+            }) => OutputKind::StorageGet,
             Command::Storage(..) => OutputKind::Storage,
             Command::Forms(..) => OutputKind::Forms,
             Command::Windows => OutputKind::Windows,
@@ -208,12 +212,11 @@ fn format_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) 
                 output::format_text(result);
             } else if result.get("entries").is_some() {
                 output::format_storage(result);
-            } else if result.get("found").is_some() {
-                output::format_storage_value(result);
             } else {
                 output::format_text(result);
             }
         }
+        OutputKind::StorageGet => output::format_storage_value(result),
         OutputKind::Forms => output::format_forms(result),
         OutputKind::Windows => output::format_windows(result),
         OutputKind::Record => {

@@ -1200,10 +1200,17 @@ tauri-pilot storage <subcommand> [OPTIONS]
 $ tauri-pilot storage get "auth_token"
 eyJhbGciOiJIUzI1NiJ9...
 
-# A missing key prints "(not found)" on stderr and exits 1
+# A missing key prints "(not found)" on stderr and exits 1.
+# Connection and RPC errors exit 1 too, with "Error: ..." on stderr.
 $ tauri-pilot storage get "missing" || echo absent
 (not found)
 absent
+
+# With --json a missing key prints {"found": false} and still exits 1
+$ tauri-pilot storage get "missing" --json
+{
+  "found": false
+}
 
 # Write a key
 $ tauri-pilot storage set "theme" "dark"
