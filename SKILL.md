@@ -145,7 +145,7 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `ass
 
 | Command | Description |
 |---------|-------------|
-| `storage get <key>` | Read from localStorage |
+| `storage get <key>` | Read from localStorage (exits 1 if the key is missing) |
 | `storage set <key> <value>` | Write to localStorage |
 | `storage list` | Dump all key-value pairs |
 | `storage clear` | Clear all storage |

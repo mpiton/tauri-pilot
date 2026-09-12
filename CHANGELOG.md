@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `storage get` on a missing key now exits 1, like `assert` and `wait`, so
+  `storage get key || echo absent` works and a missing key is no longer
+  confused with a key holding an empty string. The `(not found)` notice moved
+  to stderr, leaving stdout for the value. `--json` still prints
+  `{"found": false}` and exits 1 too. The JSON-RPC and MCP responses are
+  unchanged. [#160]
+
 - `wait --gone` now returns `{ gone: true }` (`--json`, MCP, JSON-RPC;
   CLI text: `✓ gone`) and times out with
   `Timeout waiting for <selector> to disappear`. Success used to
@@ -782,3 +789,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#156]: https://github.com/mpiton/tauri-pilot/issues/156
 [#157]: https://github.com/mpiton/tauri-pilot/issues/157
 [#159]: https://github.com/mpiton/tauri-pilot/issues/159
+[#160]: https://github.com/mpiton/tauri-pilot/issues/160
