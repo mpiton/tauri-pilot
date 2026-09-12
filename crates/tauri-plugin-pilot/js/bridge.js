@@ -86,20 +86,116 @@
     info: console.info.bind(console),
   };
 
-  ['log', 'warn', 'error', 'info'].forEach(level => {
-    console[level] = function(...args) {
-      const entry = {
-        id: ++_logIdCounter,
-        timestamp: Date.now(),
-        level: level,
-        args: args.map(serializeArg),
-        source: extractSource(),
-      };
-      _logs.push(entry);
-      if (_logs.length > MAX_LOGS) _logs.shift();
-      _originalConsole[level].apply(console, args);
+  function pushLog(level, args, source) {
+    const entry = {
+      id: ++_logIdCounter,
+      timestamp: Date.now(),
+      level: level,
+      args: args.map(serializeArg),
+      source: source || null,
     };
+    _logs.push(entry);
+    if (_logs.length > MAX_LOGS) _logs.shift();
+    return entry;
+  }
+
+  // Capture has to survive page code that replaces console.* later. A plain
+  // `console[level] = wrapper` is dropped the moment anything assigns over it
+  // without chaining, which extension-heavy apps do routinely -- and then
+  // `logs` stays empty for the rest of the session with no way to tell.
+  //
+  // Installing an accessor instead keeps the wrapper permanently in front and
+  // treats an assignment as "call this next". Assignments stack, so wrappers
+  // that chain to the console.* they captured still reach the ones installed
+  // before them: each re-entry walks one step further down the chain, and the
+  // bottom is the real console. That also makes the common "save it and call
+  // it back" shape terminate instead of looping forever.
+  ['log', 'warn', 'error', 'info'].forEach(level => {
+    const chain = [_originalConsole[level]];
+    let cursor = null;
+
+    const wrapper = function(...args) {
+      const outermost = cursor === null;
+      if (outermost) {
+        // extractSource() must be called from this frame: it skips a fixed
+        // number of stack frames to reach the caller.
+        pushLog(level, args, extractSource());
+        cursor = chain.length;
+      }
+      cursor -= 1;
+      const next = cursor >= 0 ? chain[cursor] : _originalConsole[level];
+      try {
+        return next.apply(console, args);
+      } finally {
+        cursor = outermost ? null : cursor + 1;
+      }
+    };
+
+    try {
+      Object.defineProperty(console, level, {
+        configurable: true,
+        enumerable: true,
+        get() { return wrapper; },
+        // Ignore non-functions, and ignore writing the wrapper back over
+        // itself -- a save-then-restore round trip should change nothing.
+        set(next) {
+          if (typeof next === 'function' && next !== wrapper) chain.push(next);
+        },
+      });
+    } catch (_) {
+      // Frozen or otherwise unconfigurable console: fall back to the plain
+      // assignment, which is still better than no capture at all.
+      console[level] = wrapper;
+    }
   });
+
+  function describeReason(reason) {
+    if (reason instanceof Error) {
+      // The stack goes in `source`; keep the message readable in `args`.
+      return reason.name + ': ' + reason.message;
+    }
+    if (typeof reason === 'string') return reason;
+    try {
+      return JSON.stringify(reason);
+    } catch (_) {
+      return String(reason);
+    }
+  }
+
+  function stackSource(error) {
+    if (!error || typeof error.stack !== 'string') return null;
+    const lines = error.stack.split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line && line.trim() && !line.includes('__PILOT__')) return line.trim();
+    }
+    return null;
+  }
+
+  // Uncaught errors and unhandled rejections never pass through console.* --
+  // the browser prints those itself. Without these listeners the documented
+  // `logs --level error` workflow cannot see the failures it exists to find.
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('error', event => {
+      // Only script errors carry a message. Failed resource loads (<img>,
+      // <script> 404) raise a bare Event that does not bubble to window, but
+      // guard anyway rather than logging an empty entry.
+      if (!event || typeof event.message !== 'string') return;
+      const where = event.filename
+        ? event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0)
+        : null;
+      pushLog('error', [event.message], stackSource(event.error) || where);
+    });
+
+    window.addEventListener('unhandledrejection', event => {
+      const reason = event && event.reason;
+      pushLog(
+        'error',
+        ['Unhandled rejection: ' + describeReason(reason)],
+        stackSource(reason)
+      );
+    });
+  }
 
   function consoleLogs(options) {
     let result = _logs.slice();
