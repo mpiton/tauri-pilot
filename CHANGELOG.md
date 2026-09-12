@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `wait --gone` now returns `{ gone: true }` (`--json`, MCP, JSON-RPC;
+  CLI text: `✓ gone`) and times out with
+  `Timeout waiting for <selector> to disappear`. Success used to
+  return `{ found: true }` (CLI: `✓ found`) and the timeout said
+  `Timeout waiting for <selector>`, both of which describe the
+  opposite of waiting for an element to disappear. Callers that
+  parsed `found` on the gone path must switch to `gone`. [#159]
+
 - `value` and `snapshot` now report every selected option of a
   `<select multiple>`, joined with `", "` like the `forms` CLI
   (`skills = "rust, js"`). Both used `HTMLSelectElement.value`, which is
@@ -773,3 +781,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#155]: https://github.com/mpiton/tauri-pilot/issues/155
 [#156]: https://github.com/mpiton/tauri-pilot/issues/156
 [#157]: https://github.com/mpiton/tauri-pilot/issues/157
+[#159]: https://github.com/mpiton/tauri-pilot/issues/159
