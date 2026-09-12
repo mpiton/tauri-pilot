@@ -83,6 +83,15 @@ test("wait for an existing element still reports found", async () => {
   });
 });
 
+test("wait reports found after the element is inserted", async () => {
+  let el = null;
+  const { pilot, fireMutation } = loadBridge(() => el);
+  const pending = pilot.wait({ selector: ".loaded", timeout: 1000 });
+  el = { tagName: "DIV" };
+  fireMutation();
+  assert.deepEqual(await pending, { found: true });
+});
+
 test("wait times out without a disappear suffix when the element never appears", async () => {
   const { pilot } = loadBridge(null);
   await assert.rejects(
