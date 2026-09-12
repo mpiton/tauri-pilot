@@ -1041,7 +1041,8 @@ mod tests {
         }
     }
 
-    /// Regression test for #163: the error names `--args`, the value and the format.
+    /// Regression test for #163: the error names `--args`, the value, the format
+    /// and serde's reason, and exits 2.
     #[test]
     fn test_parse_ipc_args_rejects_non_object() {
         for raw in ["not-json", "", "[1,2]", "42", "\"x\"", "true", "null"] {
@@ -1054,10 +1055,16 @@ mod tests {
                 clap::error::ErrorKind::ValueValidation,
                 "{raw:?}"
             );
+            assert_eq!(err.exit_code(), 2, "{raw:?}");
+            // Built from serde_json so a reworded serde message can't break the test.
+            let reason = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(raw)
+                .expect_err("not a JSON object")
+                .to_string();
             let msg = err.to_string();
             assert!(
                 msg.contains(&format!("invalid value '{raw}' for '--args <ARGS>'"))
-                    && msg.contains("must be a JSON object"),
+                    && msg.contains("must be a JSON object")
+                    && msg.contains(&format!("({reason})")),
                 "--args {raw:?}:\n{msg}"
             );
         }
