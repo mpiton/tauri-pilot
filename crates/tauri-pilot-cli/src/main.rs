@@ -141,6 +141,10 @@ async fn main() -> Result<()> {
     }
 
     format_result(output_kind, &result, args.json)?;
+    // Only `storage get` answers with `found`; a missing key exits 1 (#160).
+    if matches!(output_kind, OutputKind::Storage) && result["found"] == false {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

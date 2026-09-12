@@ -1200,6 +1200,11 @@ tauri-pilot storage <subcommand> [OPTIONS]
 $ tauri-pilot storage get "auth_token"
 eyJhbGciOiJIUzI1NiJ9...
 
+# A missing key prints "(not found)" on stderr and exits 1
+$ tauri-pilot storage get "missing" || echo absent
+(not found)
+absent
+
 # Write a key
 $ tauri-pilot storage set "theme" "dark"
 ✓ ok

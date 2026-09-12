@@ -232,19 +232,17 @@ pub(crate) fn format_network(value: &serde_json::Value) -> String {
 }
 
 /// Format a single storage value (from `storage get`).
+///
+/// A missing key prints `(not found)` on stderr so stdout only ever carries
+/// the stored value.
 pub(crate) fn format_storage_value(value: &serde_json::Value) {
-    let found = value
-        .get("found")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    if !found {
-        println!("{}", crate::style::dim("(not found)"));
-        return;
-    }
-    if let Some(val) = value.get("value").and_then(serde_json::Value::as_str) {
-        println!("{}", strip_ansi(val));
-    } else {
-        println!("{}", crate::style::dim("(not found)"));
+    use owo_colors::{OwoColorize, Stream::Stderr};
+    match value.get("value").and_then(serde_json::Value::as_str) {
+        Some(val) if value["found"] == true => println!("{}", strip_ansi(val)),
+        _ => eprintln!(
+            "{}",
+            "(not found)".if_supports_color(Stderr, |t| t.dimmed())
+        ),
     }
 }
 
