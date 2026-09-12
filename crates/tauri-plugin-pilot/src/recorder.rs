@@ -45,11 +45,18 @@ impl Recorder {
     }
 
     /// Deactivate recording and return all collected entries.
-    pub fn stop(&self) -> Vec<RecordEntry> {
+    ///
+    /// Returns `None` when no recording is in progress, so a caller cannot
+    /// mistake "nothing to stop" for "stopped with nothing recorded". The check
+    /// and the take share one lock, so two concurrent stops cannot both win.
+    pub fn stop(&self) -> Option<Vec<RecordEntry>> {
         let mut s = self.state.lock().expect("recorder lock poisoned");
+        if !s.active {
+            return None;
+        }
         s.active = false;
         s.start_time = None;
-        std::mem::take(&mut s.entries)
+        Some(std::mem::take(&mut s.entries))
     }
 
     pub fn is_active(&self) -> bool {
@@ -149,9 +156,23 @@ mod tests {
         let rec = Recorder::new();
         rec.start();
         rec.record("click", Some(&json!({"ref": "e1"})));
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert_eq!(entries.len(), 1);
         assert!(!rec.is_active());
+    }
+
+    #[test]
+    fn test_stop_without_start_returns_none() {
+        assert!(Recorder::new().stop().is_none());
+    }
+
+    #[test]
+    fn test_second_stop_returns_none() {
+        let rec = Recorder::new();
+        rec.start();
+        rec.record("click", Some(&json!({"ref": "e1"})));
+        assert!(rec.stop().is_some());
+        assert!(rec.stop().is_none());
     }
 
     #[test]
@@ -159,7 +180,7 @@ mod tests {
         let rec = Recorder::new();
         rec.start();
         rec.record("click", Some(&json!({"ref": "e1"})));
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert_eq!(entries[0].action, "click");
         assert_eq!(entries[0].params.get("ref").expect("ref recorded"), "e1");
     }
@@ -170,7 +191,7 @@ mod tests {
         rec.record("click", Some(&json!({"ref": "e1"})));
         // No entries since recorder was never started
         rec.start();
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert!(entries.is_empty());
     }
 
@@ -182,7 +203,7 @@ mod tests {
             "fill",
             Some(&json!({"ref": "e1", "value": "hello", "window": "main"})),
         );
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert_eq!(entries.len(), 1);
         assert!(!entries[0].params.contains_key("window"));
         assert_eq!(
@@ -197,7 +218,7 @@ mod tests {
         rec.start();
         std::thread::sleep(std::time::Duration::from_millis(10));
         rec.record("click", Some(&json!({"ref": "e1"})));
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert!(
             entries[0].timestamp >= 10,
             "timestamp should be at least 10ms"
@@ -218,7 +239,7 @@ mod tests {
             },
         };
         rec.add_entry(entry);
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].action, "navigate");
         assert_eq!(entries[0].timestamp, 100);
@@ -254,7 +275,7 @@ mod tests {
         };
         rec.add_entry(entry);
         rec.start();
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert!(entries.is_empty());
     }
 
@@ -265,7 +286,7 @@ mod tests {
         rec.record("snapshot", None);
         rec.record("ping", None);
         rec.record("eval", None);
-        let entries = rec.stop();
+        let entries = rec.stop().expect("recording active");
         assert!(entries.is_empty());
     }
 }

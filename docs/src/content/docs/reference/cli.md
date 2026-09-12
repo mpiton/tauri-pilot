@@ -1312,7 +1312,9 @@ tauri-pilot record start
 
 #### `record stop`
 
-Stop recording and save captured interactions to a JSON file.
+Stop recording and save captured interactions to a JSON file. Without a
+recording in progress it fails with `No recording in progress`, exits 1, and
+writes no file.
 
 ```bash
 tauri-pilot record stop --output test.json

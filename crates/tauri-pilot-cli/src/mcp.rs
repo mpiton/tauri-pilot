@@ -864,7 +864,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "record_stop",
-            description: "Stop recording and return recorded entries.",
+            description: "Stop recording and return recorded entries. Errors if no recording is in progress.",
             schema: empty_schema,
             read_only: false,
             destructive: false,
