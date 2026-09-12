@@ -162,6 +162,20 @@ mod tests {
     }
 
     #[test]
+    fn test_stop_without_start_returns_none() {
+        assert!(Recorder::new().stop().is_none());
+    }
+
+    #[test]
+    fn test_second_stop_returns_none() {
+        let rec = Recorder::new();
+        rec.start();
+        rec.record("click", Some(&json!({"ref": "e1"})));
+        assert!(rec.stop().is_some());
+        assert!(rec.stop().is_none());
+    }
+
+    #[test]
     fn test_record_adds_entry_when_active() {
         let rec = Recorder::new();
         rec.start();

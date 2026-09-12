@@ -1588,6 +1588,23 @@ mod tests {
         );
     }
 
+    /// Issue #161: a second stop fails the same way instead of saving `[]`.
+    #[tokio::test]
+    async fn test_dispatch_second_record_stop_errors() {
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::default();
+        let recorder = Recorder::new();
+        for method in ["record.start", "record.stop"] {
+            dispatch(method, None, &engine, &webviews, &recorder)
+                .await
+                .expect("dispatch succeeds");
+        }
+        let err = dispatch("record.stop", None, &engine, &webviews, &recorder)
+            .await
+            .expect_err("second record.stop must fail");
+        assert_eq!(err.code, RPC_INVALID_PARAMS);
+    }
+
     #[tokio::test]
     async fn test_dispatch_record_status() {
         let engine = EvalEngine::new();
