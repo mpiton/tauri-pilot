@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `snapshot` no longer prints `value="0"` on every `<li>`. The bridge read
+  `HTMLLIElement.value`, which reflects the `value` attribute and returns `0`
+  when the attribute is absent or does not parse as an integer, in an `<ol>`
+  too. An `<li>` now shows its `value` attribute as written, and no value
+  when the attribute is absent or empty (`<li value="3">` still shows
+  `value="3"`). `value` returns the same string, so `<li value="3">` gives
+  `"3"` instead of the number `3`, which `assert value` rejected with
+  `expected string response from server`. `diff --ref` against a file saved
+  with `snapshot --save` before this fix reports a `value` change on each
+  affected `<li>` until the file is saved again. [#162]
+
 - `record stop` with no recording in progress now fails with
   `No recording in progress` and exits 1 without writing the output file. It
   used to save `[]` and exit 0, which read as a successful capture of nothing
@@ -798,3 +809,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#159]: https://github.com/mpiton/tauri-pilot/issues/159
 [#160]: https://github.com/mpiton/tauri-pilot/issues/160
 [#161]: https://github.com/mpiton/tauri-pilot/issues/161
+[#162]: https://github.com/mpiton/tauri-pilot/issues/162

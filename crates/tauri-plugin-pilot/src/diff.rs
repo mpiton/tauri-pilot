@@ -167,8 +167,9 @@ mod tests {
 
     #[test]
     fn test_snapshot_element_deserializes_string_value() {
-        // Regression for #120: the bridge emits `value` as a string ("0" for a
-        // bare <li>), and the reference-snapshot parse in `diff` must accept it.
+        // Regression for #120: the bridge emits `value` as a string, and the
+        // reference-snapshot parse in `diff` must accept it. Reference files
+        // saved before #162 still carry "0" on every bare <li>.
         let json =
             r#"{"ref":"e31","role":"listitem","depth":3,"name":"single hyphen value","value":"0"}"#;
         let el: SnapshotElement =
