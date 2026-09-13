@@ -114,6 +114,11 @@
   // like a fresh one, and it goes around the loop again -- recording the same
   // line forever.
   const _consoleChains = Object.create(null);
+  // Recognising Pilot's own functions off a property would take the page's
+  // word for it: the marker is writable, so a replacement could claim to be
+  // one and get itself dropped or filed under another level. Identity in a
+  // map the page cannot reach is not forgeable.
+  const _consoleViews = new WeakMap();
 
   ['log', 'warn', 'error', 'info'].forEach(level => {
     const chain = [_originalConsole[level]];
@@ -136,8 +141,7 @@
         if (depth === chain.length) pushLog(level, args, extractSource());
         return chain[depth - 1].apply(console, args);
       };
-      // Lets the setter recognise Pilot's own functions being assigned back.
-      view.__PILOT_CONSOLE__ = level;
+      _consoleViews.set(view, level);
       views[depth] = view;
       return view;
     }
@@ -149,31 +153,39 @@
         get() { return viewAt(chain.length); },
         set(next) {
           if (typeof next !== 'function') return;
-          // Reading a property off page code can throw; a console assignment
-          // is not worth taking the page down for.
-          let pilotLevel;
-          try { pilotLevel = next.__PILOT_CONSOLE__; } catch (_) { pilotLevel = undefined; }
+          const pilotLevel = _consoleViews.get(next);
           // A save-then-restore round trip should change nothing.
           if (pilotLevel === level) return;
           if (typeof pilotLevel === 'string') {
             // `console.log = console.warn`. Stacking the other level's view
             // would file one call under two levels, and dropping to that
             // level's real function would skip whatever the page has
-            // installed on it. Enter the other chain below its own capture:
-            // its replacements still run, and only this level records.
+            // installed on it. Take the other chain's tail as it stands now,
+            // which is what the view being assigned resolves to: its
+            // replacements still run, and only this level records.
+            //
+            // Reading that tail lazily instead would let two levels aliased
+            // to each other chase one another's growing tails until the
+            // stack gives out. An entry already in a chain never changes, so
+            // referencing one can never close a loop.
             const other = _consoleChains[pilotLevel];
-            chain.push(function(...args) {
-              return other[other.length - 1].apply(console, args);
-            });
+            chain.push(other[other.length - 1]);
             return;
           }
           chain.push(next);
         },
       });
     } catch (_) {
-      // Frozen or otherwise unconfigurable console: fall back to the plain
-      // assignment, which is still better than no capture at all.
-      console[level] = viewAt(1);
+      // Unconfigurable console: fall back to the plain assignment, which is
+      // still better than no capture at all.
+      try {
+        console[level] = viewAt(1);
+      } catch (_) {
+        // Frozen console, and the file is strict, so the assignment throws
+        // too. Losing capture on one level is bad; letting it abort the IIFE
+        // would leave no window.__PILOT__ at all and take the whole plugin
+        // down with it.
+      }
     }
   });
 

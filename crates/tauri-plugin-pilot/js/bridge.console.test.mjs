@@ -224,3 +224,71 @@ test("console.log keeps a stable identity", () => {
   assert.notEqual(console.log, before, "a new replacement is a new entry point");
   assert.equal(console.log, console.log);
 });
+
+test("two levels aliased to each other do not recurse", () => {
+  const pilot = loadBridge();
+  const seen = [];
+  // Each alias used to push a thunk that read the other chain's tail when it
+  // ran, so once both pointed at each other a single call bounced between
+  // them until the stack gave out -- taking down the page, not just the log.
+  console.log = console.warn;
+  console.warn = console.log;
+
+  assert.doesNotThrow(() => console.log("boom"));
+  assert.deepEqual(messages(pilot), ["boom"], "still recorded exactly once");
+
+  // And the same the other way round.
+  const pilot2 = loadBridge();
+  console.warn = console.log;
+  console.log = console.warn;
+  assert.doesNotThrow(() => console.warn("other way"));
+  assert.equal(pilot2.consoleLogs({ level: "warn" }).length, 1);
+  assert.equal(seen.length, 0);
+});
+
+test("a frozen console does not stop the bridge from loading", () => {
+  resetConsole();
+  globalThis.location = { href: "https://app.example/" };
+  globalThis.XMLHttpRequest = function () {};
+  globalThis.XMLHttpRequest.prototype.open = function () {};
+  globalThis.XMLHttpRequest.prototype.send = function () {};
+  globalThis.XMLHttpRequest.prototype.addEventListener = function () {};
+  globalThis.XMLHttpRequest.prototype.removeEventListener = function () {};
+  globalThis.document = { querySelector() { return null; } };
+  globalThis.window = {
+    fetch() { return Promise.resolve({ status: 200, headers: { get() { return "0"; } } }); },
+    location: globalThis.location,
+    addEventListener() {},
+  };
+
+  // Freezing the real console cannot be undone, so stand a frozen one in its
+  // place for the load. defineProperty throws on it, and so does the plain
+  // assignment behind it, because bridge.js is strict. That aborted the IIFE
+  // before window.__PILOT__ was installed: losing console capture is bad,
+  // losing the bridge takes every other pilot command with it.
+  const realConsole = globalThis.console;
+  globalThis.console = Object.freeze({ ...REAL_CONSOLE });
+  try {
+    assert.doesNotThrow(() => (0, eval)(BRIDGE_SRC));
+  } finally {
+    globalThis.console = realConsole;
+  }
+
+  assert.ok(globalThis.window.__PILOT__, "the rest of the bridge must still install");
+});
+
+test("a replacement that fakes the Pilot marker is still chained", () => {
+  const pilot = loadBridge();
+  const seen = [];
+  // The marker used to be a writable property on the view, so page code could
+  // wear it: claiming this level got the assignment ignored, and claiming
+  // another routed the call into that level's chain.
+  const impostor = (...args) => { seen.push(args[0]); };
+  impostor.__PILOT_CONSOLE__ = "log";
+  console.log = impostor;
+
+  console.log("mine");
+
+  assert.deepEqual(seen, ["mine"], "the page's function must not be dropped");
+  assert.deepEqual(messages(pilot), ["mine"]);
+});
