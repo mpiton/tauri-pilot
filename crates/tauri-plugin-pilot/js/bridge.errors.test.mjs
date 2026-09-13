@@ -13,6 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -130,4 +131,77 @@ test("console entries still record the calling site", () => {
 
   const [entry] = pilot.consoleLogs({});
   assert.match(entry.source, /bridge\.errors\.test\.mjs/);
+});
+
+test("an error event with an Error prefers the stack over filename:lineno", () => {
+  const { pilot, win } = loadBridge();
+  const error = new Error("boom");
+  error.stack = "Error: boom\n    at handler (https://app.example/widget.js:12:5)";
+  win.dispatch("error", {
+    message: "Uncaught Error: boom",
+    filename: "https://app.example/main.js",
+    lineno: 42,
+    colno: 7,
+    error,
+  });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.match(entry.source, /widget\.js:12:5/);
+  assert.doesNotMatch(entry.source, /main\.js/, "the stack frame beats the event location");
+});
+
+test("a rejection with a cross-realm Error keeps its name and message", () => {
+  const { pilot, win } = loadBridge();
+  // An Error from an iframe fails `instanceof Error`, and an Error has no
+  // enumerable own properties, so JSON.stringify would render it as "{}".
+  const foreign = runInNewContext('new TypeError("from another realm")');
+  assert.equal(foreign instanceof Error, false, "precondition: really cross-realm");
+
+  win.dispatch("unhandledrejection", { reason: foreign });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.args[0], "Unhandled rejection: TypeError: from another realm");
+});
+
+test("a rejection reason JSON cannot represent is still legible", () => {
+  // JSON.stringify answers undefined for these, and "null" for NaN/Infinity,
+  // which would record the useless "Unhandled rejection: undefined".
+  const cases = [
+    [undefined, "undefined"],
+    [function named() {}, "function named"],
+    [Symbol("tag"), "Symbol(tag)"],
+    [NaN, "NaN"],
+    [Infinity, "Infinity"],
+    [null, "null"],
+  ];
+
+  for (const [reason, expected] of cases) {
+    const { pilot, win } = loadBridge();
+    win.dispatch("unhandledrejection", { reason });
+
+    const [entry] = pilot.consoleLogs({ level: "error" });
+    assert.ok(
+      entry.args[0].startsWith("Unhandled rejection: " + expected),
+      `reason ${String(expected)} recorded as ${entry.args[0]}`
+    );
+  }
+});
+
+test("a rejection with a circular object does not throw", () => {
+  const { pilot, win } = loadBridge();
+  const circular = {};
+  circular.self = circular;
+
+  assert.doesNotThrow(() => win.dispatch("unhandledrejection", { reason: circular }));
+  assert.equal(pilot.consoleLogs({ level: "error" }).length, 1);
+});
+
+test("a rejection with a null-prototype object does not throw", () => {
+  const { pilot, win } = loadBridge();
+  // String() throws on this, so the fallback needs its own guard.
+  const bare = Object.create(null);
+  bare.self = bare;
+
+  assert.doesNotThrow(() => win.dispatch("unhandledrejection", { reason: bare }));
+  assert.equal(pilot.consoleLogs({ level: "error" }).length, 1);
 });

@@ -108,16 +108,38 @@
     };
   });
 
+  function safeString(value) {
+    try {
+      return String(value);
+    } catch (_) {
+      // No toString: a null-prototype object, or one that throws.
+      return Object.prototype.toString.call(value);
+    }
+  }
+
+  function isError(value) {
+    // instanceof is realm-bound, so an Error thrown from an iframe fails it.
+    // The brand check catches those, and Error subclasses keep the same tag.
+    return value instanceof Error
+      || Object.prototype.toString.call(value) === '[object Error]';
+  }
+
   function describeReason(reason) {
-    if (reason instanceof Error) {
+    // Errors carry nothing enumerable, so JSON.stringify would render even a
+    // perfectly readable one as "{}".
+    if (isError(reason)) {
       // The stack goes in `source`; keep the message readable in `args`.
       return reason.name + ': ' + reason.message;
     }
     if (typeof reason === 'string') return reason;
+    // JSON.stringify answers undefined for a symbol, function or undefined,
+    // and "null" for NaN and Infinity. String() keeps all of those legible.
+    if (reason === null || typeof reason !== 'object') return safeString(reason);
     try {
-      return JSON.stringify(reason);
+      const json = JSON.stringify(reason);
+      return typeof json === 'string' ? json : safeString(reason);
     } catch (_) {
-      return String(reason);
+      return safeString(reason);
     }
   }
 
