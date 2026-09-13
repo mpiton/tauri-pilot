@@ -227,7 +227,6 @@ test("console.log keeps a stable identity", () => {
 
 test("two levels aliased to each other do not recurse", () => {
   const pilot = loadBridge();
-  const seen = [];
   // Each alias used to push a thunk that read the other chain's tail when it
   // ran, so once both pointed at each other a single call bounced between
   // them until the stack gave out -- taking down the page, not just the log.
@@ -243,7 +242,6 @@ test("two levels aliased to each other do not recurse", () => {
   console.log = console.warn;
   assert.doesNotThrow(() => console.warn("other way"));
   assert.equal(pilot2.consoleLogs({ level: "warn" }).length, 1);
-  assert.equal(seen.length, 0);
 });
 
 test("a frozen console does not stop the bridge from loading", () => {
