@@ -205,3 +205,62 @@ test("a rejection with a null-prototype object does not throw", () => {
   assert.doesNotThrow(() => win.dispatch("unhandledrejection", { reason: bare }));
   assert.equal(pilot.consoleLogs({ level: "error" }).length, 1);
 });
+
+test("a rejection with a revoked proxy is still recorded", () => {
+  const { pilot, win } = loadBridge();
+  // A revoked proxy refuses every operation, including the prototype walk
+  // behind `instanceof` and the IsArray check inside
+  // Object.prototype.toString. Throwing here would lose the one record that
+  // the rejection ever happened.
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+
+  assert.doesNotThrow(() =>
+    win.dispatch("unhandledrejection", { reason: revocable.proxy })
+  );
+  assert.equal(pilot.consoleLogs({ level: "error" }).length, 1);
+});
+
+test("a rejection whose Symbol.toStringTag getter throws is still recorded", () => {
+  const { pilot, win } = loadBridge();
+  const hostile = Object.defineProperty({}, Symbol.toStringTag, {
+    get() {
+      throw new Error("tag getter");
+    },
+  });
+
+  assert.doesNotThrow(() =>
+    win.dispatch("unhandledrejection", { reason: hostile })
+  );
+  assert.equal(pilot.consoleLogs({ level: "error" }).length, 1);
+});
+
+test("a rejection whose stack getter throws keeps its message", () => {
+  const { pilot, win } = loadBridge();
+  const error = new Error("boom");
+  Object.defineProperty(error, "stack", {
+    get() {
+      throw new Error("stack getter");
+    },
+  });
+
+  assert.doesNotThrow(() => win.dispatch("unhandledrejection", { reason: error }));
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.args[0], "Unhandled rejection: Error: boom");
+  assert.equal(entry.source, null, "no stack is better than no entry");
+});
+
+test("an object that only spoofs the Error tag keeps its own fields", () => {
+  const { pilot, win } = loadBridge();
+  // Symbol.toStringTag is writable, so the brand check is not proof of an
+  // Error. Formatting this one as `name: message` would record
+  // "undefined: undefined" and drop everything it actually carried.
+  const reason = { [Symbol.toStringTag]: "Error", code: 42, detail: "real info" };
+
+  win.dispatch("unhandledrejection", { reason });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.match(entry.args[0], /"code":42/);
+  assert.match(entry.args[0], /"detail":"real info"/);
+});

@@ -108,28 +108,63 @@
     };
   });
 
+  function safeTag(value) {
+    try {
+      return Object.prototype.toString.call(value);
+    } catch (_) {
+      // A revoked proxy refuses the internal IsArray check, and a
+      // Symbol.toStringTag accessor is free to throw.
+      return '[unprintable]';
+    }
+  }
+
   function safeString(value) {
     try {
       return String(value);
     } catch (_) {
       // No toString: a null-prototype object, or one that throws.
-      return Object.prototype.toString.call(value);
+      return safeTag(value);
+    }
+  }
+
+  function safeRead(value, key) {
+    // Every read on the way to a log entry has to survive a hostile reason:
+    // a revoked proxy rejects them all, and an accessor may throw. Describing
+    // the reason badly beats losing the only record that it happened.
+    try {
+      return value[key];
+    } catch (_) {
+      return undefined;
     }
   }
 
   function isError(value) {
     // instanceof is realm-bound, so an Error thrown from an iframe fails it.
     // The brand check catches those, and Error subclasses keep the same tag.
-    return value instanceof Error
-      || Object.prototype.toString.call(value) === '[object Error]';
+    try {
+      if (value instanceof Error) return true;
+    } catch (_) {
+      // instanceof walks the prototype chain, which a revoked proxy refuses.
+    }
+    return safeTag(value) === '[object Error]';
   }
 
   function describeReason(reason) {
     // Errors carry nothing enumerable, so JSON.stringify would render even a
     // perfectly readable one as "{}".
     if (isError(reason)) {
-      // The stack goes in `source`; keep the message readable in `args`.
-      return reason.name + ': ' + reason.message;
+      const name = safeRead(reason, 'name');
+      const message = safeRead(reason, 'message');
+      // Symbol.toStringTag is writable, so the brand check alone would promote
+      // any object wearing the tag to "undefined: undefined" and throw away
+      // what it actually carried. Take the shortcut only when the fields exist.
+      if (typeof name === 'string' || typeof message === 'string') {
+        const label = typeof name === 'string' ? name : 'Error';
+        // The stack goes in `source`; keep the message readable in `args`.
+        return typeof message === 'string' && message
+          ? label + ': ' + message
+          : label;
+      }
     }
     if (typeof reason === 'string') return reason;
     // JSON.stringify answers undefined for a symbol, function or undefined,
@@ -144,8 +179,11 @@
   }
 
   function stackSource(error) {
-    if (!error || typeof error.stack !== 'string') return null;
-    const lines = error.stack.split('\n');
+    // Same hostile-reason problem: reading .stack must not throw.
+    if (!error) return null;
+    const stack = safeRead(error, 'stack');
+    if (typeof stack !== 'string') return null;
+    const lines = stack.split('\n');
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (line && line.trim() && !line.includes('__PILOT__')) return line.trim();
