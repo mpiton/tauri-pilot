@@ -157,13 +157,15 @@
       const message = safeRead(reason, 'message');
       // Symbol.toStringTag is writable, so the brand check alone would promote
       // any object wearing the tag to "undefined: undefined" and throw away
-      // what it actually carried. Take the shortcut only when the fields exist.
-      if (typeof name === 'string' || typeof message === 'string') {
-        const label = typeof name === 'string' ? name : 'Error';
+      // what it actually carried. Take the shortcut only when the fields exist
+      // -- but existing is the test, not being a string: a subclass is free to
+      // put a number or an object in `message`, and dropping it would lose the
+      // only description of the failure there is.
+      if (name !== undefined || message !== undefined) {
+        const label = name === undefined ? 'Error' : safeString(name);
         // The stack goes in `source`; keep the message readable in `args`.
-        return typeof message === 'string' && message
-          ? label + ': ' + message
-          : label;
+        const text = message === undefined ? '' : safeString(message);
+        return text ? label + ': ' + text : label;
       }
     }
     if (typeof reason === 'string') return reason;

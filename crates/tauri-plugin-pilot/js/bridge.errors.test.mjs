@@ -296,3 +296,25 @@ test("an object that only spoofs the Error tag keeps its own fields", () => {
   assert.match(entry.args[0], /"code":42/);
   assert.match(entry.args[0], /"detail":"real info"/);
 });
+
+test("an Error whose name or message is not a string keeps them", () => {
+  // An Error subclass may put anything in these. Requiring a string dropped
+  // the field silently, which for a non-string `message` threw away the only
+  // description of the failure the reason carried.
+  const cases = [
+    [{ name: "HttpError", message: 404 }, "HttpError: 404"],
+    [{ name: 7, message: "boom" }, "7: boom"],
+    [{ message: { code: "E_NET" } }, "Error: [object Object]"],
+  ];
+
+  for (const [fields, expected] of cases) {
+    const { pilot, win } = loadBridge();
+    // No own `name` in the last case, so it reads "Error" off the prototype.
+    const reason = Object.assign(new Error(), fields);
+
+    win.dispatch("unhandledrejection", { reason });
+
+    const [entry] = pilot.consoleLogs({ level: "error" });
+    assert.equal(entry.args[0], "Unhandled rejection: " + expected);
+  }
+});
