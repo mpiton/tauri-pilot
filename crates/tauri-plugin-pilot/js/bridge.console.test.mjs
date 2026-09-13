@@ -12,7 +12,7 @@
 //
 // Run: node --test crates/tauri-plugin-pilot/js/bridge.console.test.mjs
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -30,8 +30,41 @@ const REAL_CONSOLE = {
 
 // The bridge wraps fetch/XHR on load, so the mock has to carry both even
 // though these tests only care about console.
+// Object.assign would flow through the previous bridge's setter (pushing onto
+// its chain) while its getter kept answering with that bridge's view, so every
+// test after the first booted on top of the last one's wrapper. The accessor is
+// configurable, so redefining it gives each test a genuinely native console.
+function resetConsole() {
+  for (const level of Object.keys(REAL_CONSOLE)) {
+    Object.defineProperty(console, level, {
+      value: REAL_CONSOLE[level],
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+}
+
+const SAVED_GLOBALS = {
+  window: globalThis.window,
+  location: globalThis.location,
+  document: globalThis.document,
+  XMLHttpRequest: globalThis.XMLHttpRequest,
+};
+
+// These tests mutate shared process globals. Node's per-file isolation hides
+// that today, but an in-process runner would leak a stale window and a console
+// still wearing a bridge view.
+after(() => {
+  resetConsole();
+  for (const [key, value] of Object.entries(SAVED_GLOBALS)) {
+    if (value === undefined) delete globalThis[key];
+    else globalThis[key] = value;
+  }
+});
+
 function loadBridge() {
-  Object.assign(console, REAL_CONSOLE);
+  resetConsole();
   globalThis.location = { href: "https://app.example/" };
   globalThis.XMLHttpRequest = function () {};
   globalThis.XMLHttpRequest.prototype.open = function () {};
@@ -137,4 +170,57 @@ test("each level keeps its own downstream", () => {
   assert.deepEqual(warns, ["to warn"], "replacing warn must not divert log");
   assert.deepEqual(messages(pilot), ["to log"]);
   assert.deepEqual(pilot.consoleLogs({ level: "warn" }).map((e) => e.args[0]), ["to warn"]);
+});
+
+test("a replacement that defers to its saved console.log records once", async () => {
+  const pilot = loadBridge();
+  // The saved reference is called from a timer, long after the original call
+  // returned. A shared re-entry counter has unwound by then, so the deferred
+  // call looks like a fresh one and goes around the chain again -- recording
+  // the same line over and over until something stops it.
+  const saved = console.log;
+  let invocations = 0;
+  console.log = (...args) => {
+    invocations += 1;
+    if (invocations < 50) setTimeout(() => saved(...args), 0);
+  };
+
+  console.log("deferred");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(invocations, 1, "the replacement must not be re-entered");
+  assert.deepEqual(messages(pilot), ["deferred"]);
+});
+
+test("assigning another level's console does not record the call twice", () => {
+  const pilot = loadBridge();
+  const warned = [];
+  console.warn = (...args) => { warned.push(args[0]); };
+  // Page code redirecting one level at another. console.warn reads back as
+  // Pilot's own view, so stacking it would file one call under both levels.
+  console.log = console.warn;
+
+  console.log("redirected");
+
+  assert.deepEqual(messages(pilot), ["redirected"], "recorded once, as log");
+  assert.deepEqual(
+    pilot.consoleLogs({ level: "warn" }),
+    [],
+    "and not a second time as warn"
+  );
+  assert.deepEqual(
+    warned,
+    ["redirected"],
+    "the redirect still runs whatever the page installed on warn"
+  );
+});
+
+test("console.log keeps a stable identity", () => {
+  loadBridge();
+  assert.equal(console.log, console.log, "page code may compare the reference");
+
+  const before = console.log;
+  console.log = (...args) => before(...args);
+  assert.notEqual(console.log, before, "a new replacement is a new entry point");
+  assert.equal(console.log, console.log);
 });

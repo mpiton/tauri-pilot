@@ -100,48 +100,80 @@
   // without chaining, which extension-heavy apps do routinely -- and then
   // `logs` stays empty for the rest of the session with no way to tell.
   //
-  // Installing an accessor instead keeps the wrapper permanently in front and
-  // treats an assignment as "call this next". Assignments stack, so wrappers
-  // that chain to the console.* they captured still reach the ones installed
-  // before them: each re-entry walks one step further down the chain, and the
-  // bottom is the real console. That also makes the common "save it and call
-  // it back" shape terminate instead of looping forever.
+  // Installing an accessor instead keeps capture permanently in front and
+  // reads an assignment as "call this next", so replacements stack. Reading
+  // console[level] hands back an entry point for the chain as it stands right
+  // then; a replacement that saved an earlier reference keeps the one it
+  // saved, so calling it continues down the chain from where that replacement
+  // sits instead of re-entering at the top.
+  //
+  // That is what makes the ordinary "save it and call it back" shape
+  // terminate, and it has to hold when the call back happens from a timer or
+  // a promise, long after the original call returned. A single shared
+  // re-entry counter cannot: by then it has unwound, the deferred call looks
+  // like a fresh one, and it goes around the loop again -- recording the same
+  // line forever.
+  const _consoleChains = Object.create(null);
+
   ['log', 'warn', 'error', 'info'].forEach(level => {
     const chain = [_originalConsole[level]];
-    let cursor = null;
+    _consoleChains[level] = chain;
+    const views = [];
 
-    const wrapper = function(...args) {
-      const outermost = cursor === null;
-      if (outermost) {
+    // One view per chain depth, created once, so identity stays stable:
+    // `console.log === console.log` still holds, and a saved reference keeps
+    // pointing at the same function.
+    function viewAt(depth) {
+      if (views[depth]) return views[depth];
+      const view = function(...args) {
+        // Only the reference the page reaches for right now is an entry
+        // point. A view saved before further replacements were installed is a
+        // continuation of a call that was already recorded, so recording here
+        // would duplicate it.
+        //
         // extractSource() must be called from this frame: it skips the two
-        // location-bearing frames that are always ours (itself and this wrapper).
-        pushLog(level, args, extractSource());
-        cursor = chain.length;
-      }
-      cursor -= 1;
-      const next = cursor >= 0 ? chain[cursor] : _originalConsole[level];
-      try {
-        return next.apply(console, args);
-      } finally {
-        cursor = outermost ? null : cursor + 1;
-      }
-    };
+        // location-bearing frames that are always ours (itself and this view).
+        if (depth === chain.length) pushLog(level, args, extractSource());
+        return chain[depth - 1].apply(console, args);
+      };
+      // Lets the setter recognise Pilot's own functions being assigned back.
+      view.__PILOT_CONSOLE__ = level;
+      views[depth] = view;
+      return view;
+    }
 
     try {
       Object.defineProperty(console, level, {
         configurable: true,
         enumerable: true,
-        get() { return wrapper; },
-        // Ignore non-functions, and ignore writing the wrapper back over
-        // itself -- a save-then-restore round trip should change nothing.
+        get() { return viewAt(chain.length); },
         set(next) {
-          if (typeof next === 'function' && next !== wrapper) chain.push(next);
+          if (typeof next !== 'function') return;
+          // Reading a property off page code can throw; a console assignment
+          // is not worth taking the page down for.
+          let pilotLevel;
+          try { pilotLevel = next.__PILOT_CONSOLE__; } catch (_) { pilotLevel = undefined; }
+          // A save-then-restore round trip should change nothing.
+          if (pilotLevel === level) return;
+          if (typeof pilotLevel === 'string') {
+            // `console.log = console.warn`. Stacking the other level's view
+            // would file one call under two levels, and dropping to that
+            // level's real function would skip whatever the page has
+            // installed on it. Enter the other chain below its own capture:
+            // its replacements still run, and only this level records.
+            const other = _consoleChains[pilotLevel];
+            chain.push(function(...args) {
+              return other[other.length - 1].apply(console, args);
+            });
+            return;
+          }
+          chain.push(next);
         },
       });
     } catch (_) {
       // Frozen or otherwise unconfigurable console: fall back to the plain
       // assignment, which is still better than no capture at all.
-      console[level] = wrapper;
+      console[level] = viewAt(1);
     }
   });
 
