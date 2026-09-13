@@ -11,7 +11,7 @@
 //
 // Run: node --test crates/tauri-plugin-pilot/js/bridge.errors.test.mjs
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
@@ -28,10 +28,42 @@ const REAL_CONSOLE = {
   info: console.info.bind(console),
 };
 
+// Object.assign would flow through a previous bridge's console setter rather
+// than restore a native console, so each load would sit on top of the last
+// one. The accessor is configurable, so redefining it gives a clean start.
+function resetConsole() {
+  for (const level of Object.keys(REAL_CONSOLE)) {
+    Object.defineProperty(console, level, {
+      value: REAL_CONSOLE[level],
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
+}
+
+const SAVED_GLOBALS = {
+  window: globalThis.window,
+  location: globalThis.location,
+  document: globalThis.document,
+  XMLHttpRequest: globalThis.XMLHttpRequest,
+};
+
+// These tests mutate shared process globals. Node's per-file isolation hides
+// that today, but an in-process runner would leak a stale window and a console
+// still wearing a bridge view.
+after(() => {
+  resetConsole();
+  for (const [key, value] of Object.entries(SAVED_GLOBALS)) {
+    if (value === undefined) delete globalThis[key];
+    else globalThis[key] = value;
+  }
+});
+
 // The bridge wraps fetch/XHR on load, so the mock has to carry both even
 // though these tests only care about the error listeners.
 function baseGlobals() {
-  Object.assign(console, REAL_CONSOLE);
+  resetConsole();
   globalThis.location = { href: "https://app.example/" };
   globalThis.XMLHttpRequest = function () {};
   globalThis.XMLHttpRequest.prototype.open = function () {};
