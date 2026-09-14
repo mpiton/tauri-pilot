@@ -6,14 +6,13 @@ use crate::recorder::Recorder;
 use crate::webview::Webviews;
 
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::AsRawFd;
 use std::os::unix::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UnixListener;
 
 /// RAII guard that removes the socket file on drop (normal shutdown or panic).
-/// Stores the inode at bind time so it only unlinks its own socket, not one
-/// created by an overlapping instance.
+/// Stores the socket file's inode at bind time so it only unlinks its own
+/// socket, not one created by an overlapping instance.
 pub struct SocketGuard {
     path: std::path::PathBuf,
     inode: u64,
@@ -28,20 +27,6 @@ impl Drop for SocketGuard {
         {
             let _ = std::fs::remove_file(&self.path);
             tracing::info!(path = %self.path.display(), "socket removed");
-        }
-    }
-}
-
-/// Get inode from a raw file descriptor via `fstat`.
-/// This is race-free: it queries the kernel FD, not the filesystem path.
-fn inode_from_raw_fd(fd: std::os::unix::io::RawFd) -> u64 {
-    // SAFETY: fstat only reads from a valid fd and writes to our stack buffer.
-    unsafe {
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        if libc::fstat(fd, stat.as_mut_ptr()) == 0 {
-            stat.assume_init().st_ino
-        } else {
-            0
         }
     }
 }
@@ -154,6 +139,8 @@ fn bind_abstract(address: &SocketAddr) -> Result<std::os::unix::net::UnixListene
 fn bind_pathname(
     socket_path: &std::path::Path,
 ) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
+    use std::os::unix::fs::MetadataExt;
+
     // SAFETY: umask is always safe to call; we restore the old mask immediately.
     let old_mask = unsafe { libc::umask(0o177) };
     let first_bind = std::os::unix::net::UnixListener::bind(socket_path);
@@ -198,7 +185,9 @@ fn bind_pathname(
     listener.set_nonblocking(true)?;
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), path = %socket_path.display(), "tauri-pilot socket listening");
-    let inode = inode_from_raw_fd(listener.as_raw_fd());
+    // Read the inode from the path: `fstat` on the listener fd reports its
+    // sockfs inode, which never matches the socket file (#165).
+    let inode = std::fs::metadata(socket_path)?.ino();
 
     Ok((
         listener,
@@ -345,6 +334,7 @@ mod tests {
     #[test]
     fn abstract_listener_is_nonblocking_without_file_guard() {
         use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::io::AsRawFd;
 
         let name = format!("tauri-pilot-abstract-test-{}", std::process::id());
         let address = SocketAddr::from_abstract_name(name).expect("abstract address");
@@ -513,5 +503,29 @@ mod tests {
         );
         drop(listener);
         drop(guard);
+    }
+
+    #[test]
+    fn socket_guard_unlinks_only_its_own_socket() {
+        // #165: the guard compared the path's inode with the listener fd's
+        // sockfs inode. The two never match, so it never removed the socket.
+        let socket = unique_socket_path();
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+
+        let (listener, guard) = bind(&address).expect("bind test socket");
+        drop(listener);
+        drop(guard);
+        let own_left = socket.exists();
+        let _ = std::fs::remove_file(&socket);
+        assert!(!own_left, "guard must unlink the socket it bound");
+
+        // Another instance re-bound the path: that socket is not ours to remove.
+        let (_listener, guard) = bind(&address).expect("bind test socket");
+        std::fs::remove_file(&socket).expect("unlink bound socket");
+        let _other = std::os::unix::net::UnixListener::bind(&socket).expect("rebind socket path");
+        drop(guard);
+        let other_kept = socket.exists();
+        let _ = std::fs::remove_file(&socket);
+        assert!(other_kept, "guard must not unlink a socket it did not bind");
     }
 }
