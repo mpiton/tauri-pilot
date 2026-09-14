@@ -33,7 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/tmp/tauri-pilot-test-*.sock` behind, and CLI auto-detection, which takes
   the newest `tauri-pilot-*.sock` in `/tmp` when `$XDG_RUNTIME_DIR` has none,
   could pick one of those dead sockets instead of a running app's. The guard
-  now reads the inode from the socket path right after bind. [#165]
+  now reads the inode from the socket path right after bind. It only drops
+  when the server task ends, though, so quitting an app still leaves its
+  socket until the next bind at that path removes it as stale ([#194]).
+  [#165]
 
 - Release builds no longer print dead-code warnings from
   `tauri-plugin-pilot`. The warnings showed in this workspace and in apps
@@ -841,3 +844,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#163]: https://github.com/mpiton/tauri-pilot/issues/163
 [#164]: https://github.com/mpiton/tauri-pilot/issues/164
 [#165]: https://github.com/mpiton/tauri-pilot/issues/165
+[#194]: https://github.com/mpiton/tauri-pilot/issues/194

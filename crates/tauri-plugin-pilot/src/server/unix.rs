@@ -10,12 +10,35 @@ use std::os::unix::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UnixListener;
 
-/// RAII guard that removes the socket file on drop (normal shutdown or panic).
+/// RAII guard that removes the socket file on drop.
+///
+/// The guard drops when the server task ends, is aborted, or panics. Quitting
+/// the app never drops it: the task lives on Tauri's static runtime, which is
+/// never shut down, so the file stays until the next bind at the same path
+/// removes it as stale (#194).
+///
 /// Stores the socket file's inode at bind time so it only unlinks its own
 /// socket, not one created by an overlapping instance.
 pub struct SocketGuard {
     path: std::path::PathBuf,
     inode: u64,
+}
+
+impl SocketGuard {
+    /// Records the inode of the socket file just bound at `path`.
+    ///
+    /// Reads it from the path, as `Drop` does: `fstat` on the listener fd
+    /// reports its sockfs inode, which never matches the socket file (#165).
+    ///
+    /// # Errors
+    /// Returns an error if `path` cannot be stat'ed.
+    fn new(path: &std::path::Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Ok(Self {
+            path: path.to_path_buf(),
+            inode: std::fs::metadata(path)?.ino(),
+        })
+    }
 }
 
 impl Drop for SocketGuard {
@@ -139,8 +162,6 @@ fn bind_abstract(address: &SocketAddr) -> Result<std::os::unix::net::UnixListene
 fn bind_pathname(
     socket_path: &std::path::Path,
 ) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
-    use std::os::unix::fs::MetadataExt;
-
     // SAFETY: umask is always safe to call; we restore the old mask immediately.
     let old_mask = unsafe { libc::umask(0o177) };
     let first_bind = std::os::unix::net::UnixListener::bind(socket_path);
@@ -177,6 +198,9 @@ fn bind_pathname(
         }
         Err(e) => return Err(Error::Io(e)),
     };
+    // Taken before any later setup step can fail: an error there drops the
+    // guard, and the file with it, while the listener is still open.
+    let guard = SocketGuard::new(socket_path)?;
 
     // Restrict socket to owner-only access (defense-in-depth alongside XDG_RUNTIME_DIR).
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
@@ -185,24 +209,14 @@ fn bind_pathname(
     listener.set_nonblocking(true)?;
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), path = %socket_path.display(), "tauri-pilot socket listening");
-    // Read the inode from the path: `fstat` on the listener fd reports its
-    // sockfs inode, which never matches the socket file (#165).
-    let inode = std::fs::metadata(socket_path)?.ino();
-
-    Ok((
-        listener,
-        SocketGuard {
-            path: socket_path.to_path_buf(),
-            inode,
-        },
-    ))
+    Ok((listener, guard))
 }
 
 /// Run the accept loop on a pre-bound std listener. Converts to tokio internally.
-/// The `_guard` is held for its `Drop` cleanup.
+/// The guard is held for its `Drop` cleanup, which runs before the listener closes.
 pub async fn run(
     listener: std::os::unix::net::UnixListener,
-    _guard: Option<SocketGuard>,
+    guard: Option<SocketGuard>,
     engine: EvalEngine,
     webviews: Arc<dyn Webviews>,
     recorder: Recorder,
@@ -214,13 +228,17 @@ pub async fn run(
             return;
         }
     };
-    if let Err(e) = accept_loop(listener, engine, webviews, recorder).await {
+    // Declared after `listener` so it drops first. While the listener is open,
+    // a starting instance sees the socket as live and leaves it alone, so it
+    // cannot swap in its own between the guard's inode check and its unlink.
+    let _guard = guard;
+    if let Err(e) = accept_loop(&listener, engine, webviews, recorder).await {
         tracing::error!("socket server error: {e}");
     }
 }
 
 async fn accept_loop(
-    listener: UnixListener,
+    listener: &UnixListener,
     engine: EvalEngine,
     webviews: Arc<dyn Webviews>,
     recorder: Recorder,
@@ -520,6 +538,9 @@ mod tests {
         assert!(!own_left, "guard must unlink the socket it bound");
 
         // Another instance re-bound the path: that socket is not ours to remove.
+        // `_listener` must outlive the rebind: it pins the unlinked socket's
+        // inode. Closed early, ext4 hands that inode to the new socket and the
+        // guard deletes it.
         let (_listener, guard) = bind(&address).expect("bind test socket");
         std::fs::remove_file(&socket).expect("unlink bound socket");
         let _other = std::os::unix::net::UnixListener::bind(&socket).expect("rebind socket path");
