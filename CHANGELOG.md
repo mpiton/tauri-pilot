@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Release builds no longer print dead-code warnings from
+  `tauri-plugin-pilot`. The warnings showed in this workspace and in apps
+  that use the plugin as a path dependency; Cargo hides warnings from git
+  and crates.io dependencies. `init` only starts the server in debug builds,
+  but the modules behind it still compiled in release, where nothing called
+  them. Those modules now use the same cfg as `init`, so release builds
+  leave them out. CI lints the plugin with debug assertions off to keep it
+  that way. [#164]
+
 - `ipc --args` is now checked while the command line is parsed, before the
   CLI connects to the app, and must be a JSON object. Malformed JSON, arrays,
   scalars and `null` exit 2 with
@@ -821,3 +830,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#161]: https://github.com/mpiton/tauri-pilot/issues/161
 [#162]: https://github.com/mpiton/tauri-pilot/issues/162
 [#163]: https://github.com/mpiton/tauri-pilot/issues/163
+[#164]: https://github.com/mpiton/tauri-pilot/issues/164

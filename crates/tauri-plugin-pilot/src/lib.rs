@@ -1,31 +1,30 @@
 pub mod diff;
 mod error;
-#[cfg(any(unix, windows))]
+// The modules below only serve the server `init` starts, so they share its
+// cfg. Compiled anywhere else, release builds included, nothing uses them and
+// every item warns as dead code (#164). Their tests go with them:
+// `cargo test --release` skips them unless you add
+// `--config profile.release.debug-assertions=true`.
+#[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod eval;
-#[cfg(any(unix, windows))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 mod handler;
-#[cfg(feature = "press")]
+#[cfg(all(feature = "press", any(unix, windows), debug_assertions))]
 pub(crate) mod key;
+#[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod protocol;
+#[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod recorder;
 // Native screenshot capture for the `screenshot_native` JSON-RPC method.
 // macOS-only today; non-macOS callers receive `PERMISSION_DENIED`.
+#[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod screenshot;
-#[cfg(any(unix, windows))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod server;
-#[cfg(any(unix, windows))]
+#[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod webview;
 
 pub use error::Error;
-
-#[cfg(any(unix, windows))]
-use eval::EvalEngine;
-#[cfg(any(unix, windows))]
-use recorder::Recorder;
-#[cfg(any(unix, windows))]
-use std::sync::Arc;
-#[cfg(any(unix, windows))]
-use tauri::Manager;
 
 #[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) const BRIDGE_JS: &str = concat!(
@@ -52,11 +51,16 @@ pub(crate) const BRIDGE_JS: &str = concat!(
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     #[cfg(not(all(any(unix, windows), debug_assertions)))]
     {
-        return tauri::plugin::Builder::new("pilot").build();
+        tauri::plugin::Builder::new("pilot").build()
     }
 
     #[cfg(all(any(unix, windows), debug_assertions))]
     {
+        use crate::eval::EvalEngine;
+        use crate::recorder::Recorder;
+        use std::sync::Arc;
+        use tauri::Manager;
+
         tauri::plugin::Builder::new("pilot")
             .js_init_script(BRIDGE_JS.to_owned())
             .on_webview_ready(|webview| {
@@ -564,7 +568,7 @@ mod tests {
 
         let app = app.expect("second instance must start without a pilot server (#152)");
         assert!(
-            app.try_state::<super::EvalEngine>().is_some(),
+            app.try_state::<super::eval::EvalEngine>().is_some(),
             "plugin setup must still run for the second instance"
         );
     }
