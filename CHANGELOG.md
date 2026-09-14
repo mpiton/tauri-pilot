@@ -26,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Unix socket guard now deletes the socket file when dropped. It
+  compared the file's inode with the one `fstat` returns for the listener,
+  which belongs to the kernel's socket object rather than the file, so they
+  never matched and the file stayed. Each `cargo test` run left a
+  `/tmp/tauri-pilot-test-*.sock` behind, and CLI auto-detection, which takes
+  the newest `tauri-pilot-*.sock` in `/tmp` when `$XDG_RUNTIME_DIR` has none,
+  could pick one of those dead sockets instead of a running app's. The guard
+  now reads the inode from the socket path right after bind. It only drops
+  when the server task ends, though, so quitting an app still leaves its
+  socket until the next bind at that path removes it as stale ([#194]).
+  [#165]
+
 - Release builds no longer print dead-code warnings from
   `tauri-plugin-pilot`. The warnings showed in this workspace and in apps
   that use the plugin as a path dependency; Cargo hides warnings from git
@@ -831,3 +843,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#162]: https://github.com/mpiton/tauri-pilot/issues/162
 [#163]: https://github.com/mpiton/tauri-pilot/issues/163
 [#164]: https://github.com/mpiton/tauri-pilot/issues/164
+[#165]: https://github.com/mpiton/tauri-pilot/issues/165
+[#194]: https://github.com/mpiton/tauri-pilot/issues/194

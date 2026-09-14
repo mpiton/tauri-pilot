@@ -6,17 +6,39 @@ use crate::recorder::Recorder;
 use crate::webview::Webviews;
 
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::AsRawFd;
 use std::os::unix::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UnixListener;
 
-/// RAII guard that removes the socket file on drop (normal shutdown or panic).
-/// Stores the inode at bind time so it only unlinks its own socket, not one
-/// created by an overlapping instance.
+/// RAII guard that removes the socket file on drop.
+///
+/// The guard drops when the server task ends, is aborted, or panics. Quitting
+/// the app never drops it: the task lives on Tauri's static runtime, which is
+/// never shut down, so the file stays until the next bind at the same path
+/// removes it as stale (#194).
+///
+/// Stores the socket file's inode at bind time so it only unlinks its own
+/// socket, not one created by an overlapping instance.
 pub struct SocketGuard {
     path: std::path::PathBuf,
     inode: u64,
+}
+
+impl SocketGuard {
+    /// Records the inode of the socket file just bound at `path`.
+    ///
+    /// Reads it from the path, as `Drop` does: `fstat` on the listener fd
+    /// reports its sockfs inode, which never matches the socket file (#165).
+    ///
+    /// # Errors
+    /// Returns an error if `path` cannot be stat'ed.
+    fn new(path: &std::path::Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+        Ok(Self {
+            path: path.to_path_buf(),
+            inode: std::fs::metadata(path)?.ino(),
+        })
+    }
 }
 
 impl Drop for SocketGuard {
@@ -28,20 +50,6 @@ impl Drop for SocketGuard {
         {
             let _ = std::fs::remove_file(&self.path);
             tracing::info!(path = %self.path.display(), "socket removed");
-        }
-    }
-}
-
-/// Get inode from a raw file descriptor via `fstat`.
-/// This is race-free: it queries the kernel FD, not the filesystem path.
-fn inode_from_raw_fd(fd: std::os::unix::io::RawFd) -> u64 {
-    // SAFETY: fstat only reads from a valid fd and writes to our stack buffer.
-    unsafe {
-        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
-        if libc::fstat(fd, stat.as_mut_ptr()) == 0 {
-            stat.assume_init().st_ino
-        } else {
-            0
         }
     }
 }
@@ -190,6 +198,9 @@ fn bind_pathname(
         }
         Err(e) => return Err(Error::Io(e)),
     };
+    // Taken before any later setup step can fail: an error there drops the
+    // guard, and the file with it, while the listener is still open.
+    let guard = SocketGuard::new(socket_path)?;
 
     // Restrict socket to owner-only access (defense-in-depth alongside XDG_RUNTIME_DIR).
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
@@ -198,22 +209,14 @@ fn bind_pathname(
     listener.set_nonblocking(true)?;
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), path = %socket_path.display(), "tauri-pilot socket listening");
-    let inode = inode_from_raw_fd(listener.as_raw_fd());
-
-    Ok((
-        listener,
-        SocketGuard {
-            path: socket_path.to_path_buf(),
-            inode,
-        },
-    ))
+    Ok((listener, guard))
 }
 
 /// Run the accept loop on a pre-bound std listener. Converts to tokio internally.
-/// The `_guard` is held for its `Drop` cleanup.
+/// The guard is held for its `Drop` cleanup, which runs before the listener closes.
 pub async fn run(
     listener: std::os::unix::net::UnixListener,
-    _guard: Option<SocketGuard>,
+    guard: Option<SocketGuard>,
     engine: EvalEngine,
     webviews: Arc<dyn Webviews>,
     recorder: Recorder,
@@ -225,13 +228,17 @@ pub async fn run(
             return;
         }
     };
-    if let Err(e) = accept_loop(listener, engine, webviews, recorder).await {
+    // Declared after `listener` so it drops first. While the listener is open,
+    // a starting instance sees the socket as live and leaves it alone, so it
+    // cannot swap in its own between the guard's inode check and its unlink.
+    let _guard = guard;
+    if let Err(e) = accept_loop(&listener, engine, webviews, recorder).await {
         tracing::error!("socket server error: {e}");
     }
 }
 
 async fn accept_loop(
-    listener: UnixListener,
+    listener: &UnixListener,
     engine: EvalEngine,
     webviews: Arc<dyn Webviews>,
     recorder: Recorder,
@@ -345,6 +352,7 @@ mod tests {
     #[test]
     fn abstract_listener_is_nonblocking_without_file_guard() {
         use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::io::AsRawFd;
 
         let name = format!("tauri-pilot-abstract-test-{}", std::process::id());
         let address = SocketAddr::from_abstract_name(name).expect("abstract address");
@@ -513,5 +521,32 @@ mod tests {
         );
         drop(listener);
         drop(guard);
+    }
+
+    #[test]
+    fn socket_guard_unlinks_only_its_own_socket() {
+        // #165: the guard compared the path's inode with the listener fd's
+        // sockfs inode. The two never match, so it never removed the socket.
+        let socket = unique_socket_path();
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+
+        let (listener, guard) = bind(&address).expect("bind test socket");
+        drop(listener);
+        drop(guard);
+        let own_left = socket.exists();
+        let _ = std::fs::remove_file(&socket);
+        assert!(!own_left, "guard must unlink the socket it bound");
+
+        // Another instance re-bound the path: that socket is not ours to remove.
+        // `_listener` must outlive the rebind: it pins the unlinked socket's
+        // inode. Closed early, ext4 hands that inode to the new socket and the
+        // guard deletes it.
+        let (_listener, guard) = bind(&address).expect("bind test socket");
+        std::fs::remove_file(&socket).expect("unlink bound socket");
+        let _other = std::os::unix::net::UnixListener::bind(&socket).expect("rebind socket path");
+        drop(guard);
+        let other_kept = socket.exists();
+        let _ = std::fs::remove_file(&socket);
+        assert!(other_kept, "guard must not unlink a socket it did not bind");
     }
 }
