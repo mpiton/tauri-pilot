@@ -4,15 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 ///
 /// Centralised here so every handler and test references the same constants
 /// rather than scattering `-32602`/`-32603` literals across modules.
-#[cfg_attr(
-    not(any(unix, windows)),
-    allow(dead_code, reason = "only referenced by the macOS/IPC handlers")
-)]
 pub(crate) const RPC_INVALID_PARAMS: i32 = -32602;
-#[cfg_attr(
-    not(any(unix, windows)),
-    allow(dead_code, reason = "only referenced by the macOS/IPC handlers")
-)]
 pub(crate) const RPC_INTERNAL_ERROR: i32 = -32603;
 
 /// Deserialize params, normalizing `null` to `None`.

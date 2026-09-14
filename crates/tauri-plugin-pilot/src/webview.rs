@@ -3,9 +3,7 @@
 //! Handlers reach webviews only through [`Webviews`]: [`TauriWebviews`] in the
 //! app, and `fake::FakeWebviews` in handler tests.
 
-#[cfg(debug_assertions)]
-use tauri::Manager;
-use tauri::Url;
+use tauri::{Manager, Url};
 
 /// Metadata of one window, as `windows.list` reports it.
 #[derive(Debug, serde::Serialize)]
@@ -59,10 +57,8 @@ pub(crate) trait TargetWindow: Send {
 ///
 /// Windows are resolved on each call, so every request can target a
 /// different window.
-#[cfg(debug_assertions)]
 pub(crate) struct TauriWebviews<R: tauri::Runtime>(pub(crate) tauri::AppHandle<R>);
 
-#[cfg(debug_assertions)]
 impl<R: tauri::Runtime> TauriWebviews<R> {
     /// Every webview window, in label order.
     ///
@@ -72,7 +68,6 @@ impl<R: tauri::Runtime> TauriWebviews<R> {
     }
 }
 
-#[cfg(debug_assertions)]
 impl<R: tauri::Runtime> Webviews for TauriWebviews<R> {
     fn target(&self, label: Option<&str>) -> Result<Box<dyn TargetWindow + '_>, String> {
         let window = match label {
@@ -115,7 +110,6 @@ pub(crate) fn current_url<R: tauri::Runtime>(webview: &tauri::WebviewWindow<R>) 
 
 // The bodies call the inherent `WebviewWindow` methods, which take precedence
 // over these trait methods of the same name.
-#[cfg(debug_assertions)]
 impl<R: tauri::Runtime> TargetWindow for tauri::WebviewWindow<R> {
     fn url(&self) -> Option<Url> {
         current_url(self)
@@ -230,7 +224,7 @@ pub(crate) mod fake {
     }
 }
 
-#[cfg(all(test, debug_assertions))]
+#[cfg(test)]
 mod tests {
     use super::{TauriWebviews, Webviews};
     use tauri::{WebviewUrl, WebviewWindowBuilder};
