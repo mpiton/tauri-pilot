@@ -2,7 +2,9 @@ pub mod diff;
 mod error;
 // The modules below only serve the server `init` starts, so they share its
 // cfg. Compiled anywhere else, release builds included, nothing uses them and
-// every item warns as dead code (#164).
+// every item warns as dead code (#164). Their tests go with them:
+// `cargo test --release` skips them unless you add
+// `--config profile.release.debug-assertions=true`.
 #[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod eval;
 #[cfg(all(any(unix, windows), debug_assertions))]
