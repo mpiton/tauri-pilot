@@ -132,9 +132,9 @@ pub(crate) mod fake {
 
     /// In-memory [`Webviews`] for handler tests.
     ///
-    /// Without a label, `target` picks the first window. Every evaluated
-    /// script is recorded, then the responder runs: that is where a test
-    /// plays the bridge and resolves the engine.
+    /// Without a label, `target` picks `main`, then the first window by label.
+    /// Every evaluated script is recorded, then the responder runs: that is
+    /// where a test plays the bridge and resolves the engine.
     #[derive(Default)]
     pub(crate) struct FakeWebviews {
         windows: Vec<(String, Option<Url>)>,
@@ -174,7 +174,13 @@ pub(crate) mod fake {
                     .ok_or_else(|| format!("Window '{label}' not found"))?,
                 None => self
                     .windows
-                    .first()
+                    .iter()
+                    .find(|(name, _)| name == "main")
+                    .or_else(|| {
+                        self.windows
+                            .iter()
+                            .min_by(|left, right| left.0.cmp(&right.0))
+                    })
                     .ok_or_else(|| "No webview available".to_owned())?,
             };
             Ok(Box::new(FakeTarget {
@@ -184,8 +190,10 @@ pub(crate) mod fake {
         }
 
         fn list(&self) -> Vec<WindowInfo> {
-            self.windows
-                .iter()
+            let mut windows = self.windows.iter().collect::<Vec<_>>();
+            windows.sort_by(|left, right| left.0.cmp(&right.0));
+            windows
+                .into_iter()
                 .map(|(label, url)| WindowInfo {
                     label: label.clone(),
                     url: url.as_ref().map(Url::to_string).unwrap_or_default(),
@@ -220,6 +228,67 @@ pub(crate) mod fake {
         #[cfg(feature = "press")]
         fn focus(&self) -> Result<(), String> {
             Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{FakeWebviews, Url, Webviews};
+
+        fn with_windows(labels: &[&str]) -> FakeWebviews {
+            FakeWebviews {
+                windows: labels
+                    .iter()
+                    .map(|label| {
+                        let url =
+                            Url::parse(&format!("https://{label}.test/")).expect("valid test URL");
+                        ((*label).to_owned(), Some(url))
+                    })
+                    .collect(),
+                ..FakeWebviews::default()
+            }
+        }
+
+        #[test]
+        fn target_without_label_prefers_main() {
+            let webviews = with_windows(&["settings", "main", "alpha"]);
+
+            assert_eq!(
+                webviews
+                    .target(None)
+                    .expect("main window")
+                    .url()
+                    .and_then(|url| url.host_str().map(str::to_owned)),
+                Some("main.test".to_owned())
+            );
+        }
+
+        #[test]
+        fn target_without_main_uses_first_window_by_label() {
+            let webviews = with_windows(&["zeta", "alpha"]);
+
+            assert_eq!(
+                webviews
+                    .target(None)
+                    .expect("first window")
+                    .url()
+                    .and_then(|url| url.host_str().map(str::to_owned)),
+                Some("alpha.test".to_owned())
+            );
+        }
+
+        #[test]
+        fn list_sorts_windows_by_label() {
+            let webviews = with_windows(&["settings", "main", "alpha"]);
+
+            assert_eq!(
+                webviews
+                    .list()
+                    .into_iter()
+                    .map(|window| window.label)
+                    .collect::<Vec<_>>(),
+                ["alpha", "main", "settings"]
+            );
         }
     }
 }
