@@ -16,7 +16,7 @@ pub(crate) struct WindowInfo {
 
 /// The webview windows of the host app.
 pub(crate) trait Webviews: Send + Sync {
-    /// Resolve the target window: `label`, else `main`, else the first window.
+    /// Resolve the target window: `label`, else `main`, else the first by label.
     ///
     /// # Errors
     ///
@@ -137,7 +137,7 @@ pub(crate) mod fake {
     /// where a test plays the bridge and resolves the engine.
     #[derive(Default)]
     pub(crate) struct FakeWebviews {
-        windows: Vec<(String, Option<Url>)>,
+        windows: std::collections::BTreeMap<String, Option<Url>>,
         scripts: Mutex<Vec<String>>,
         responder: Option<Box<dyn Fn() + Send + Sync>>,
     }
@@ -145,9 +145,22 @@ pub(crate) mod fake {
     impl FakeWebviews {
         /// One window labeled `label`, showing `url`.
         pub(crate) fn window(label: &str, url: Option<&str>) -> Self {
-            let url = url.map(|url| Url::parse(url).expect("valid test URL"));
+            Self::windows(&[(label, url)])
+        }
+
+        /// Several windows labeled by name, each showing its optional URL.
+        pub(crate) fn windows(windows: &[(&str, Option<&str>)]) -> Self {
+            let windows = windows
+                .iter()
+                .map(|(label, url)| {
+                    (
+                        (*label).to_owned(),
+                        url.map(|url| Url::parse(url).expect("valid test URL")),
+                    )
+                })
+                .collect();
             Self {
-                windows: vec![(label.to_owned(), url)],
+                windows,
                 ..Self::default()
             }
         }
@@ -166,21 +179,15 @@ pub(crate) mod fake {
 
     impl Webviews for FakeWebviews {
         fn target(&self, label: Option<&str>) -> Result<Box<dyn TargetWindow + '_>, String> {
-            let (_, url) = match label {
+            let url = match label {
                 Some(label) => self
                     .windows
-                    .iter()
-                    .find(|(name, _)| name == label)
+                    .get(label)
                     .ok_or_else(|| format!("Window '{label}' not found"))?,
                 None => self
                     .windows
-                    .iter()
-                    .find(|(name, _)| name == "main")
-                    .or_else(|| {
-                        self.windows
-                            .iter()
-                            .min_by(|left, right| left.0.cmp(&right.0))
-                    })
+                    .get("main")
+                    .or_else(|| self.windows.values().next())
                     .ok_or_else(|| "No webview available".to_owned())?,
             };
             Ok(Box::new(FakeTarget {
@@ -190,10 +197,8 @@ pub(crate) mod fake {
         }
 
         fn list(&self) -> Vec<WindowInfo> {
-            let mut windows = self.windows.iter().collect::<Vec<_>>();
-            windows.sort_by(|left, right| left.0.cmp(&right.0));
-            windows
-                .into_iter()
+            self.windows
+                .iter()
                 .map(|(label, url)| WindowInfo {
                     label: label.clone(),
                     url: url.as_ref().map(Url::to_string).unwrap_or_default(),
@@ -275,6 +280,44 @@ pub(crate) mod fake {
                     .and_then(|url| url.host_str().map(str::to_owned)),
                 Some("alpha.test".to_owned())
             );
+        }
+
+        #[test]
+        fn target_uses_the_requested_label() {
+            let webviews = with_windows(&["main", "settings"]);
+
+            assert_eq!(
+                webviews
+                    .target(Some("settings"))
+                    .expect("requested window")
+                    .url()
+                    .and_then(|url| url.host_str().map(str::to_owned)),
+                Some("settings.test".to_owned())
+            );
+        }
+
+        #[test]
+        fn target_with_unknown_label_does_not_fall_back() {
+            let webviews = with_windows(&["main"]);
+            let result = webviews.target(Some("settings"));
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("an unknown label must not choose another window"),
+            };
+
+            assert_eq!(error, "Window 'settings' not found");
+        }
+
+        #[test]
+        fn target_without_windows_errors() {
+            let webviews = FakeWebviews::default();
+            let result = webviews.target(None);
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("a missing window should return an error"),
+            };
+
+            assert_eq!(error, "No webview available");
         }
 
         #[test]

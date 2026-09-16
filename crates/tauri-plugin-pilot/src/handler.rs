@@ -1445,6 +1445,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dispatch_windows_list_sorts_multiple_windows() {
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::windows(&[
+            ("settings", Some("https://settings.test/")),
+            ("alpha", Some("https://alpha.test/")),
+        ]);
+        let result = dispatch("windows.list", None, &engine, &webviews, &Recorder::new()).await;
+        let val = result.expect("dispatch succeeds");
+        let windows = val
+            .get("windows")
+            .expect("windows key present")
+            .as_array()
+            .expect("windows is array");
+        let labels = windows
+            .iter()
+            .map(|window| {
+                window
+                    .get("label")
+                    .expect("label key present")
+                    .as_str()
+                    .expect("label is a string")
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels, ["alpha", "settings"]);
+    }
+
+    #[tokio::test]
     async fn test_dispatch_window_param_extracted_from_params() {
         let engine = EvalEngine::new();
         // The "window" key must be stripped before being forwarded to the bridge.
