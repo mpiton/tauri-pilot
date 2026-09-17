@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- MCP `pilot.run` executes a TOML scenario from a `path` or inline `content`
+  and returns per-step results plus the CLI summary line. `fail_fast`
+  overrides the scenario file; JUnit XML is not written because the
+  structured result is the report. [#167]
+
 - Android device and emulator support via ADB from Linux or macOS. Each plugin
   instance uses an abstract socket named `tauri-pilot-{identifier}-{random}.sock`,
   forwarded with `adb forward localfilesystem:... localabstract:...`. Connections

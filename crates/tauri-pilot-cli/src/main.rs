@@ -1441,19 +1441,7 @@ async fn run_scenario_command(
     };
 
     let fail_fast_override = if no_fail_fast { Some(false) } else { None };
-    let global_ms = loaded.scenario.global_timeout_ms;
-    let report = match global_ms {
-        Some(ms) => {
-            let t = std::time::Duration::from_millis(ms);
-            tokio::time::timeout(
-                t,
-                scenario::run_scenario(&mut client, &loaded, window, fail_fast_override),
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!("scenario exceeded global timeout of {ms}ms"))??
-        }
-        None => scenario::run_scenario(&mut client, &loaded, window, fail_fast_override).await?,
-    };
+    let report = scenario::run_scenario(&mut client, &loaded, window, fail_fast_override).await?;
 
     scenario::print_report(&report);
 

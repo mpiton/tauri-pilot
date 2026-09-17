@@ -20,7 +20,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     build_scroll_params, build_wait_params, client::Client, export_replay_file, resolve_socket,
-    run_drop_command, run_replay_command, target_params, with_window,
+    run_drop_command, run_replay_command, scenario, target_params, with_window,
 };
 
 #[derive(Debug, Clone)]
@@ -359,6 +359,7 @@ impl PilotMcpServer {
             "record_stop" => self.call_app_tool("record.stop", None, window).await,
             "record_status" => self.call_app_tool("record.status", None, window).await,
             "replay" => self.call_replay_tool(args, window).await,
+            "run" => self.call_run_tool(args, window).await,
             _ => Err(McpError::new(
                 ErrorCode::METHOD_NOT_FOUND,
                 format!("unknown tool: {name}"),
@@ -456,6 +457,45 @@ impl PilotMcpServer {
         Ok(
             match run_replay_command(&mut client, &path, None, window.as_deref()).await {
                 Ok(result) => tool_success(result),
+                Err(err) => tool_error(err),
+            },
+        )
+    }
+
+    async fn call_run_tool(
+        &self,
+        args: JsonObject,
+        window: Option<String>,
+    ) -> Result<CallToolResult, McpError> {
+        let path = optional_string(&args, "path")?;
+        let content = optional_string(&args, "content")?;
+        let fail_fast = optional_bool(&args, "fail_fast")?;
+        let scenario = match (path, content) {
+            (Some(_), Some(_)) => {
+                return Err(invalid_params(
+                    "run accepts either 'path' or 'content', not both",
+                ));
+            }
+            (None, None) => {
+                return Err(invalid_params("run requires either 'path' or 'content'"));
+            }
+            (Some(path), None) => match scenario::load_scenario(Path::new(&path)) {
+                Ok(scenario) => scenario,
+                Err(err) => return Ok(tool_error(err)),
+            },
+            (None, Some(content)) => match scenario::parse_scenario(&content) {
+                Ok(scenario) => scenario,
+                Err(err) => return Ok(tool_error(err)),
+            },
+        };
+        let mut client = match self.connect_client().await {
+            Ok(client) => client,
+            Err(err) => return Ok(tool_error(err)),
+        };
+        Ok(
+            match scenario::run_scenario(&mut client, &scenario, window.as_deref(), fail_fast).await
+            {
+                Ok(report) => tool_success(scenario::report_to_json(&report)),
                 Err(err) => tool_error(err),
             },
         )
@@ -874,6 +914,14 @@ fn tool_specs() -> Vec<ToolSpec> {
             name: "replay",
             description: "Replay or export a recorded tauri-pilot session file.",
             schema: replay_schema,
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+        },
+        ToolSpec {
+            name: "run",
+            description: "Execute a declarative TOML scenario and return per-step results plus a summary.",
+            schema: run_schema,
             read_only: false,
             destructive: false,
             idempotent: false,
@@ -1663,6 +1711,25 @@ fn replay_schema() -> Arc<JsonObject> {
     )
 }
 
+fn run_schema() -> Arc<JsonObject> {
+    object_schema(
+        props([
+            ("path", string_prop("Path to a scenario TOML file.")),
+            (
+                "content",
+                string_prop("Inline scenario TOML. Mutually exclusive with path."),
+            ),
+            (
+                "fail_fast",
+                bool_prop(
+                    "Override the scenario file fail_fast setting. When omitted, the TOML value is used (default true).",
+                ),
+            ),
+        ]),
+        &[],
+    )
+}
+
 fn object_schema(mut properties: Map<String, Value>, required: &[&str]) -> Arc<JsonObject> {
     properties.insert(
         "window".to_owned(),
@@ -1767,6 +1834,7 @@ mod tests {
             "record_status",
             "record_stop",
             "replay",
+            "run",
             "screenshot",
             "screenshot_native",
             "scroll",
@@ -1832,6 +1900,31 @@ mod tests {
             .expect("schema has properties");
         assert!(properties.contains_key("target"));
         assert!(properties.contains_key("window"));
+    }
+
+    #[test]
+    fn run_schema_properties_include_path_content_fail_fast_and_window() {
+        let schema = run_schema();
+        let properties = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("schema has properties");
+        for key in ["path", "content", "fail_fast", "window"] {
+            assert!(
+                properties.contains_key(key),
+                "run schema must advertise `{key}`"
+            );
+        }
+        match schema.get("required") {
+            None => {}
+            Some(Value::Array(required)) => {
+                assert!(
+                    required.is_empty(),
+                    "run schema must not require any fields, got {required:?}"
+                );
+            }
+            other => panic!("unexpected required field: {other:?}"),
+        }
     }
 
     #[test]
@@ -1937,6 +2030,65 @@ mod tests {
             "unexpected error: {}",
             err.message
         );
+    }
+
+    #[tokio::test]
+    async fn run_rejects_path_and_content_together() {
+        let mut args = Map::new();
+        args.insert("path".to_owned(), json!("scenario.toml"));
+        args.insert("content".to_owned(), json!("[scenario]\nname = \"x\""));
+        let err = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect_err("both set");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("not both"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn run_rejects_missing_path_and_content() {
+        let err = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", Map::new())
+            .await
+            .expect_err("neither set");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("requires either"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn run_invalid_toml_content_is_tool_error() {
+        let mut args = Map::new();
+        args.insert("content".to_owned(), json!("[[[not toml"));
+        let result = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call returns");
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn run_missing_file_is_tool_error() {
+        let path = std::env::temp_dir().join(format!(
+            "tauri-pilot-missing-scenario-{}-{}.toml",
+            std::process::id(),
+            "run-missing"
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut args = Map::new();
+        args.insert("path".to_owned(), json!(path.display().to_string()));
+        let result = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call returns");
+        assert_eq!(result.is_error, Some(true));
     }
 
     #[test]
@@ -2322,6 +2474,202 @@ mod tests {
 
         server.await.expect("mock server task");
         let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_executes_inline_click_scenario() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-test-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "click");
+            let mut response =
+                serde_json::to_vec(&Response::success(request.id, json!({"ok": true})))
+                    .expect("serialize response");
+            response.push(b'\n');
+            writer.write_all(&response).await.expect("write response");
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert(
+            "content".to_owned(),
+            json!(
+                r##"
+[scenario]
+name = "mcp-run"
+[[step]]
+name = "click submit"
+action = "click"
+target = "#btn"
+"##
+            ),
+        );
+        let result = pilot
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call succeeds");
+        assert_eq!(result.is_error, Some(false));
+        let report = result
+            .structured_content
+            .as_ref()
+            .and_then(|content| content.get("result"))
+            .expect("structured result");
+        assert_eq!(report["ok"], true);
+        assert_eq!(report["name"], "mcp-run");
+        assert_eq!(report["steps"].as_array().map(Vec::len), Some(1));
+        assert_eq!(report["steps"][0]["status"], "passed");
+        let summary = report["summary"].as_str().expect("summary");
+        assert!(
+            summary.contains("1 passed"),
+            "unexpected summary: {summary}"
+        );
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_fail_fast_skips_remaining_steps() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-failfast-{}.sock",
+            std::process::id()
+        ));
+        let methods = spawn_failing_click_server(&socket);
+        let report = call_run_two_clicks(&socket, None).await;
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["steps"][0]["status"], "failed");
+        assert_eq!(report["steps"][1]["status"], "skipped");
+        let recorded = methods.lock().expect("methods lock");
+        assert_eq!(
+            recorded.iter().filter(|method| *method == "click").count(),
+            1
+        );
+        let _ = std::fs::remove_dir("tauri-pilot-failures");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_fail_fast_false_runs_remaining_steps() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-nofailfast-{}.sock",
+            std::process::id()
+        ));
+        let methods = spawn_failing_click_server(&socket);
+        let report = call_run_two_clicks(&socket, Some(false)).await;
+        assert_eq!(report["ok"], false);
+        assert_eq!(report["passed"], 1);
+        assert_eq!(report["failed"], 1);
+        assert_eq!(report["skipped"], 0);
+        assert_eq!(report["steps"][0]["status"], "failed");
+        assert_eq!(report["steps"][1]["status"], "passed");
+        let recorded = methods.lock().expect("methods lock");
+        assert_eq!(
+            recorded.iter().filter(|method| *method == "click").count(),
+            2
+        );
+        let _ = std::fs::remove_dir("tauri-pilot-failures");
+    }
+
+    #[cfg(unix)]
+    async fn call_run_two_clicks(socket: &Path, fail_fast: Option<bool>) -> Value {
+        let pilot = PilotMcpServer::new(Some(socket.to_path_buf()), None);
+        let mut args = Map::new();
+        args.insert(
+            "content".to_owned(),
+            json!(
+                r##"
+[scenario]
+name = "mcp-run-fail-fast"
+[[step]]
+name = "first"
+action = "click"
+target = "#btn"
+[[step]]
+name = "second"
+action = "click"
+target = "#btn"
+"##
+            ),
+        );
+        if let Some(fail_fast) = fail_fast {
+            args.insert("fail_fast".to_owned(), json!(fail_fast));
+        }
+        let result = pilot
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call succeeds");
+        assert_eq!(result.is_error, Some(false));
+        let _ = std::fs::remove_file(socket);
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|content| content.get("result"))
+            .cloned()
+            .expect("structured result")
+    }
+
+    #[cfg(unix)]
+    fn spawn_failing_click_server(socket: &Path) -> Arc<std::sync::Mutex<Vec<String>>> {
+        let _ = std::fs::remove_file(socket);
+        let listener = UnixListener::bind(socket).expect("bind mock socket");
+        let methods = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&methods);
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            let mut click_count = 0_u8;
+            while reader.read_line(&mut line).await.expect("read line") > 0 {
+                let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+                recorded
+                    .lock()
+                    .expect("methods lock")
+                    .push(request.method.clone());
+                let resp = match request.method.as_str() {
+                    "click" => {
+                        click_count += 1;
+                        if click_count == 1 {
+                            Response::error(
+                                serde_json::Value::Number(request.id.into()),
+                                -32_000,
+                                "click failed",
+                            )
+                        } else {
+                            Response::success(request.id, json!({"ok": true}))
+                        }
+                    }
+                    "screenshot" => Response::error(
+                        serde_json::Value::Number(request.id.into()),
+                        -32_000,
+                        "screenshot failed",
+                    ),
+                    _ => Response::error(
+                        serde_json::Value::Number(request.id.into()),
+                        -32_601,
+                        "Method not found",
+                    ),
+                };
+                let mut bytes = serde_json::to_vec(&resp).expect("serialize response");
+                bytes.push(b'\n');
+                writer.write_all(&bytes).await.expect("write bytes");
+                writer.flush().await.expect("flush");
+                line.clear();
+            }
+        });
+        methods
     }
 
     #[cfg(unix)]
