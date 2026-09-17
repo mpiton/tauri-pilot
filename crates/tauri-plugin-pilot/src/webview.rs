@@ -128,18 +128,37 @@ impl<R: tauri::Runtime> TargetWindow for tauri::WebviewWindow<R> {
 #[cfg(test)]
 pub(crate) mod fake {
     use super::{TargetWindow, Url, Webviews, WindowInfo};
-    use std::sync::Mutex;
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    type FakeResponder = Arc<dyn Fn() + Send + Sync>;
 
     /// In-memory [`Webviews`] for handler tests.
     ///
     /// Without a label, `target` picks `main`, then the first window by label.
     /// Every evaluated script is recorded, then the responder runs: that is
     /// where a test plays the bridge and resolves the engine.
+    /// `url()` is live: [`Self::set_url`] is visible to a `target` already
+    /// held across an await, matching a real webview that navigated.
+    ///
+    /// [`Clone`] shares windows and scripts, but starts with an empty
+    /// responder. Sharing the responder would cycle when `on_eval` captures
+    /// a clone of `self`.
     #[derive(Default)]
     pub(crate) struct FakeWebviews {
-        windows: std::collections::BTreeMap<String, Option<Url>>,
-        scripts: Mutex<Vec<String>>,
-        responder: Option<Box<dyn Fn() + Send + Sync>>,
+        windows: Arc<Mutex<BTreeMap<String, Option<Url>>>>,
+        scripts: Arc<Mutex<Vec<String>>>,
+        responder: Arc<Mutex<Option<FakeResponder>>>,
+    }
+
+    impl Clone for FakeWebviews {
+        fn clone(&self) -> Self {
+            Self {
+                windows: Arc::clone(&self.windows),
+                scripts: Arc::clone(&self.scripts),
+                responder: Arc::new(Mutex::new(None)),
+            }
+        }
     }
 
     impl FakeWebviews {
@@ -160,15 +179,23 @@ pub(crate) mod fake {
                 })
                 .collect();
             Self {
-                windows,
+                windows: Arc::new(Mutex::new(windows)),
                 ..Self::default()
             }
         }
 
         /// Run `responder` after each eval.
-        pub(crate) fn on_eval(mut self, responder: impl Fn() + Send + Sync + 'static) -> Self {
-            self.responder = Some(Box::new(responder));
+        pub(crate) fn on_eval(self, responder: impl Fn() + Send + Sync + 'static) -> Self {
+            *self.responder.lock().expect("responder mutex") = Some(Arc::new(responder));
             self
+        }
+
+        /// Point `label` at `url`. Visible to a live [`TargetWindow::url`].
+        pub(crate) fn set_url(&self, label: &str, url: Option<&str>) {
+            self.windows.lock().expect("windows mutex").insert(
+                label.to_owned(),
+                url.map(|url| Url::parse(url).expect("valid test URL")),
+            );
         }
 
         /// Scripts evaluated so far, oldest first.
@@ -179,25 +206,29 @@ pub(crate) mod fake {
 
     impl Webviews for FakeWebviews {
         fn target(&self, label: Option<&str>) -> Result<Box<dyn TargetWindow + '_>, String> {
-            let url = match label {
-                Some(label) => self
-                    .windows
-                    .get(label)
+            let windows = self.windows.lock().expect("windows mutex");
+            let label = match label {
+                Some(label) => windows
+                    .contains_key(label)
+                    .then(|| label.to_owned())
                     .ok_or_else(|| format!("Window '{label}' not found"))?,
-                None => self
-                    .windows
-                    .get("main")
-                    .or_else(|| self.windows.values().next())
+                None => windows
+                    .contains_key("main")
+                    .then(|| "main".to_owned())
+                    .or_else(|| windows.keys().next().cloned())
                     .ok_or_else(|| "No webview available".to_owned())?,
             };
+            drop(windows);
             Ok(Box::new(FakeTarget {
                 webviews: self,
-                url: url.clone(),
+                label,
             }))
         }
 
         fn list(&self) -> Vec<WindowInfo> {
             self.windows
+                .lock()
+                .expect("windows mutex")
                 .iter()
                 .map(|(label, url)| WindowInfo {
                     label: label.clone(),
@@ -210,12 +241,18 @@ pub(crate) mod fake {
 
     struct FakeTarget<'a> {
         webviews: &'a FakeWebviews,
-        url: Option<Url>,
+        label: String,
     }
 
     impl TargetWindow for FakeTarget<'_> {
         fn url(&self) -> Option<Url> {
-            self.url.clone()
+            self.webviews
+                .windows
+                .lock()
+                .expect("windows mutex")
+                .get(&self.label)
+                .cloned()
+                .flatten()
         }
 
         fn eval(&self, script: &str) -> Result<(), String> {
@@ -224,7 +261,13 @@ pub(crate) mod fake {
                 .lock()
                 .expect("scripts mutex")
                 .push(script.to_owned());
-            if let Some(respond) = &self.webviews.responder {
+            let respond = self
+                .webviews
+                .responder
+                .lock()
+                .expect("responder mutex")
+                .clone();
+            if let Some(respond) = respond {
                 respond();
             }
             Ok(())
@@ -238,18 +281,19 @@ pub(crate) mod fake {
 
     #[cfg(test)]
     mod tests {
-        use super::{FakeWebviews, Url, Webviews};
+        use super::{Arc, FakeWebviews, Mutex, Url, Webviews};
 
         fn with_windows(labels: &[&str]) -> FakeWebviews {
+            let windows = labels
+                .iter()
+                .map(|label| {
+                    let url =
+                        Url::parse(&format!("https://{label}.test/")).expect("valid test URL");
+                    ((*label).to_owned(), Some(url))
+                })
+                .collect();
             FakeWebviews {
-                windows: labels
-                    .iter()
-                    .map(|label| {
-                        let url =
-                            Url::parse(&format!("https://{label}.test/")).expect("valid test URL");
-                        ((*label).to_owned(), Some(url))
-                    })
-                    .collect(),
+                windows: Arc::new(Mutex::new(windows)),
                 ..FakeWebviews::default()
             }
         }
@@ -300,9 +344,8 @@ pub(crate) mod fake {
         fn target_with_unknown_label_does_not_fall_back() {
             let webviews = with_windows(&["main"]);
             let result = webviews.target(Some("settings"));
-            let error = match result {
-                Err(error) => error,
-                Ok(_) => panic!("an unknown label must not choose another window"),
+            let Err(error) = result else {
+                panic!("an unknown label must not choose another window")
             };
 
             assert_eq!(error, "Window 'settings' not found");
@@ -312,12 +355,54 @@ pub(crate) mod fake {
         fn target_without_windows_errors() {
             let webviews = FakeWebviews::default();
             let result = webviews.target(None);
-            let error = match result {
-                Err(error) => error,
-                Ok(_) => panic!("a missing window should return an error"),
+            let Err(error) = result else {
+                panic!("a missing window should return an error")
             };
 
             assert_eq!(error, "No webview available");
+        }
+
+        #[test]
+        fn url_is_live_after_set_url() {
+            let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+            let target = webviews.target(None).expect("main window");
+            webviews.set_url("main", Some("https://other.test/"));
+            assert_eq!(
+                target.url().map(|url| url.to_string()),
+                Some("https://other.test/".to_owned())
+            );
+        }
+
+        #[test]
+        fn clone_shares_windows_not_responder() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            let hits = Arc::new(AtomicUsize::new(0));
+            let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+            let pages = webviews.clone();
+            let hits_eval = Arc::clone(&hits);
+            let webviews = webviews.on_eval(move || {
+                hits_eval.fetch_add(1, Ordering::SeqCst);
+                let _ = pages.target(None);
+            });
+            webviews
+                .target(None)
+                .expect("main window")
+                .eval("1")
+                .expect("eval");
+            assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+            let later = webviews.clone();
+            later
+                .target(None)
+                .expect("main window")
+                .eval("2")
+                .expect("eval");
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                1,
+                "clone must start with an empty responder"
+            );
         }
 
         #[test]

@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bridge commands no longer run on a page that replaced the one they
+  checked. The wrapper compares the checked origin before the command.
+  If the URL already moved after eval, or a later timeout sees a
+  different origin, the RPC names the pin and the new page instead of
+  returning a generic eval timeout. `navigate` is not pinned; it
+  assigns the absolute destination resolved from the checked page. [#173]
+
 - Pathname socket bind no longer sets the process umask. `umask(0o177)`
   around `UnixListener::bind` is per-process, so another thread that created
   a directory in that window got mode `0o600` (no execute bit) and then
@@ -864,4 +871,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#166]: https://github.com/mpiton/tauri-pilot/issues/166
 [#167]: https://github.com/mpiton/tauri-pilot/issues/167
 [#172]: https://github.com/mpiton/tauri-pilot/issues/172
+[#173]: https://github.com/mpiton/tauri-pilot/issues/173
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194

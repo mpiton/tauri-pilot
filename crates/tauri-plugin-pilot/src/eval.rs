@@ -61,6 +61,33 @@ fn origin_keys(url: &Url) -> Vec<String> {
     }
 }
 
+/// JS predicate that is true when `location` is not the origin of `url`.
+///
+/// Injects scheme, hostname, and [`Url::port`] (empty when the port is the
+/// scheme default, matching `location.port`) or the hostless href. Filling
+/// an empty `location.port` with the checked port would let `https://host/`
+/// pass a pin for `https://host:8443`.
+/// `location.origin` is `"null"` for `file:` and custom schemes, so the
+/// comparison uses `location`'s fields instead.
+fn origin_mismatch_js(url: &Url) -> String {
+    let json = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned());
+    if let Some(host) = url.host_str().filter(|host| !host.is_empty()) {
+        let protocol = json(&format!("{}:", url.scheme()));
+        let host = json(host);
+        let port = url.port().map(|port| port.to_string()).unwrap_or_default();
+        let port = json(&port);
+        format!(
+            "location.protocol!=={protocol}||location.hostname!=={host}||location.port!=={port}"
+        )
+    } else {
+        let href = match url.as_str().split_once('#') {
+            Some((without_fragment, _)) => without_fragment,
+            None => url.as_str(),
+        };
+        format!("location.href.split('#')[0]!=={}", json(href))
+    }
+}
+
 /// Error types for eval operations.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum EvalError {
@@ -211,15 +238,27 @@ impl EvalEngine {
     /// not drop the `result` field — otherwise a void expression (e.g.,
     /// `element.click()`) would cause the handler to log a bogus "neither
     /// result nor error" warning (#48).
+    ///
+    /// When `origin` is `Some`, the wrapper compares `location` to that URL's
+    /// scheme, host and port (or hostless href) and returns without running
+    /// the command if they differ (#173). A foreign page cannot call
+    /// `__callback`, so a mismatch is silent there.
     #[must_use]
-    pub fn wrap_script(id: u64, script: &str) -> String {
-        format!(
-            "(async()=>{{try{{let __r=await({script});\
+    pub fn wrap_script(id: u64, script: &str, origin: Option<&Url>) -> String {
+        let run = format!(
+            "try{{let __r=await({script});\
              await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
              {{id:{id},result:__r===undefined?'null':JSON.stringify(__r)}});\
              }}catch(__e){{await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
-             {{id:{id},error:(__e&&__e.message)||String(__e)}});}}}})();"
-        )
+             {{id:{id},error:(__e&&__e.message)||String(__e)}});}}"
+        );
+        match origin {
+            Some(origin) => format!(
+                "(async()=>{{if({})return;{run}}})();",
+                origin_mismatch_js(origin)
+            ),
+            None => format!("(async()=>{{{run}}})();"),
+        }
     }
 
     /// Wait for a pending eval result with timeout.
@@ -329,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_wrap_script_contains_id_and_code() {
-        let script = EvalEngine::wrap_script(42, "document.title");
+        let script = EvalEngine::wrap_script(42, "document.title", None);
         assert!(script.contains("42"));
         assert!(script.contains("document.title"));
         assert!(script.contains("await("));
@@ -341,7 +380,7 @@ mod tests {
     // through `__callback`, avoiding native eval result callbacks entirely.
     #[test]
     fn test_wrap_script_uses_ipc_callback_delivery() {
-        let script = EvalEngine::wrap_script(7, "document.title");
+        let script = EvalEngine::wrap_script(7, "document.title", None);
         assert!(
             script.contains("__TAURI_INTERNALS__.invoke('plugin:pilot|__callback'"),
             "wrapped script must send eval results through __callback IPC; got: {script}"
@@ -360,11 +399,92 @@ mod tests {
         // to log "callback received with neither result nor error". The wrapper
         // converts undefined → the string "null" so Tauri keeps the `result`
         // field populated.
-        let script = EvalEngine::wrap_script(1, "element.click()");
+        let script = EvalEngine::wrap_script(1, "element.click()", None);
         assert!(
             script.contains("__r===undefined?'null':JSON.stringify(__r)"),
             "wrapped script must normalize undefined to the string 'null'; got: {script}"
         );
+    }
+
+    #[test]
+    fn test_wrap_script_without_origin_runs_unconditionally() {
+        let script = EvalEngine::wrap_script(1, "document.title", None);
+        assert!(
+            !script.contains("location.hostname"),
+            "no origin pin means no page-side origin check; got: {script}"
+        );
+        assert!(script.contains("document.title"));
+    }
+
+    #[test]
+    fn test_wrap_script_guards_checked_origin_before_running() {
+        // #173: eval queues the script; the page that runs it may not be the
+        // one that passed has_bridge. The wrapper must refuse the command
+        // before `element.click()` when location no longer matches.
+        let origin = Url::parse("https://app.example/login").expect("valid test URL");
+        assert_eq!(origin_key(&origin), "https://app.example:443");
+        let script = EvalEngine::wrap_script(3, "element.click()", Some(&origin));
+        let guard = origin_mismatch_js(&origin);
+        let refuse = format!("if({guard})return;");
+        assert!(
+            script.contains(&refuse),
+            "wrapper must refuse the command on origin mismatch; got: {script}"
+        );
+        let guard_at = script.find(&refuse).expect("early return on mismatch");
+        let body = script.find("element.click()").expect("user script");
+        assert!(
+            guard_at < body,
+            "origin guard must run before the command; got: {script}"
+        );
+        assert!(
+            script.contains("\"https:\"")
+                && script.contains("\"app.example\"")
+                && script.contains("location.port!==\"\""),
+            "guard must inject Url fields, not a JS port table; got: {script}"
+        );
+        assert!(
+            !script.contains("location.origin"),
+            "location.origin is null for file: and custom schemes; got: {script}"
+        );
+    }
+
+    #[test]
+    fn test_wrap_script_pins_hostless_file_url() {
+        let origin = Url::parse("file:///tmp/a.html#frag").expect("valid test URL");
+        assert_eq!(origin_key(&origin), "file:///tmp/a.html");
+        let script = EvalEngine::wrap_script(1, "1", Some(&origin));
+        let refuse = format!("if({})return;", origin_mismatch_js(&origin));
+        assert!(
+            script.contains(&refuse),
+            "hostless pages keep the rest of the URL; got: {script}"
+        );
+        assert!(
+            script.contains("file:///tmp/a.html"),
+            "hostless pages keep the rest of the URL; got: {script}"
+        );
+    }
+
+    #[test]
+    fn test_origin_mismatch_js_uses_url_fields_not_a_port_table() {
+        let expr = |text| origin_mismatch_js(&Url::parse(text).expect("valid test URL"));
+        let https = expr("https://host/");
+        assert!(https.contains("\"https:\"") && https.contains("\"host\""));
+        assert!(https.contains("location.port!==\"\""));
+        assert!(!https.contains("443") && !https.contains("location.port||"));
+        assert!(!https.contains("wss") && !https.contains("ftp"));
+        let http = expr("http://host/");
+        assert!(http.contains("\"http:\"") && http.contains("location.port!==\"\""));
+        assert!(!http.contains("80"));
+        let pinned = expr("https://host:8443/");
+        assert!(pinned.contains("location.port!==\"8443\""));
+        assert!(!pinned.contains("location.port||"));
+        let tauri = expr("tauri://localhost/");
+        assert!(tauri.contains("\"tauri:\"") && tauri.contains("\"localhost\""));
+        assert!(tauri.contains("location.port!==\"\""));
+        let file = expr("file:///tmp/a.html#frag");
+        assert!(file.contains("location.href.split('#')[0]"));
+        assert!(file.contains("file:///tmp/a.html"));
+        assert!(!file.contains("#frag"));
     }
 
     #[test]
