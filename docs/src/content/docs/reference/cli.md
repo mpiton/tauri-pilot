@@ -958,13 +958,19 @@ tauri-pilot navigate "/"
 
 Bridge commands only work on origins allowed to call the plugin back: the app
 origin, plus any origin listed in a capability's `remote.urls` that also
-grants `pilot:default`. `navigate` still loads any URL. If the destination
-origin has never said hello, it waits up to 3 seconds for one and fails
-without it. A slow page allowed by `remote.urls` can miss that window on
-its first visit; later commands succeed once the hello arrives. On an
-origin that cannot call back, later commands fail at once with an error
-that names the page and the origins that work. Run `tauri-pilot navigate`
-with an app URL to get the session back.
+grants `pilot:default`. They pin to the origin they checked. The wrapper
+compares `location` fields (not `location.origin`) and does not run the
+command if the document is elsewhere. If the URL already moved after eval,
+the RPC fails immediately; a later timeout is reclassified the same way.
+`navigate` is not pinned. It assigns the absolute destination resolved from
+the URL at check time, so a relative path cannot resolve against a page that
+already left, and it still loads any URL. If the destination origin has never
+said hello, it waits up to 3 seconds for one and fails without it. A slow
+page allowed by `remote.urls` can miss that window on its first visit; later
+commands succeed once the hello arrives. On an origin that cannot call back,
+later commands fail at once with an error that names the page and the origins
+that work. Run `tauri-pilot navigate` with an app URL to get the session
+back.
 
 ---
 

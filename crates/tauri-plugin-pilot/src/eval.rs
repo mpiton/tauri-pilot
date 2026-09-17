@@ -61,22 +61,42 @@ fn origin_keys(url: &Url) -> Vec<String> {
     }
 }
 
-/// JS expression that builds the same key as [`origin_key`] from `location`.
+/// JS predicate that is true when `location` is not the origin of `url`.
 ///
-/// `location.origin` is `"null"` for `file:` and custom schemes, so the page
-/// reconstructs scheme/host/port itself. When there is no host it uses the
-/// href without a fragment, matching hostless `origin_key` entries.
-/// Default ports (80, 443, 21) match `url::Url::port_or_known_default` for
-/// http(s), ws(s) and ftp; changing them would let a page slip the wrapper
-/// after a default-port URL was checked.
-const PAGE_ORIGIN_EXPR: &str = concat!(
-    "(function(){var h=location.hostname,s=location.protocol.slice(0,-1),p=location.port;",
-    "if(h){if(!p){if(s==='https'||s==='wss')p='443';",
-    "else if(s==='http'||s==='ws')p='80';",
-    "else if(s==='ftp')p='21';}",
-    "return p?s+'://'+h+':'+p:s+'://'+h;}",
-    "return location.href.split('#')[0];})()",
-);
+/// Injects scheme, hostname, and [`Url::port_or_known_default`] (or the
+/// hostless href) from `url` so the guard cannot drift from [`origin_key`].
+/// `location.origin` is `"null"` for `file:` and custom schemes, so the
+/// comparison uses `location`'s fields instead.
+fn origin_mismatch_js(url: &Url) -> String {
+    let json = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned());
+    match (
+        url.host_str().filter(|host| !host.is_empty()),
+        url.port_or_known_default(),
+    ) {
+        (Some(host), Some(port)) => {
+            let protocol = json(&format!("{}:", url.scheme()));
+            let host = json(host);
+            let port = json(&port.to_string());
+            format!(
+                "location.protocol!=={protocol}||location.hostname!=={host}||(location.port||{port})!=={port}"
+            )
+        }
+        (Some(host), None) => {
+            let protocol = json(&format!("{}:", url.scheme()));
+            let host = json(host);
+            format!(
+                "location.protocol!=={protocol}||location.hostname!=={host}||location.port!==\"\""
+            )
+        }
+        (None, _) => {
+            let href = match url.as_str().split_once('#') {
+                Some((without_fragment, _)) => without_fragment,
+                None => url.as_str(),
+            };
+            format!("location.href.split('#')[0]!=={}", json(href))
+        }
+    }
+}
 
 /// Error types for eval operations.
 #[derive(Debug, thiserror::Error)]
@@ -229,11 +249,12 @@ impl EvalEngine {
     /// `element.click()`) would cause the handler to log a bogus "neither
     /// result nor error" warning (#48).
     ///
-    /// When `origin` is `Some`, the wrapper compares the page's origin key with
-    /// that value and returns without running the command if they differ (#173).
-    /// A foreign page cannot call `__callback`, so a mismatch is silent there.
+    /// When `origin` is `Some`, the wrapper compares `location` to that URL's
+    /// scheme, host and port (or hostless href) and returns without running
+    /// the command if they differ (#173). A foreign page cannot call
+    /// `__callback`, so a mismatch is silent there.
     #[must_use]
-    pub fn wrap_script(id: u64, script: &str, origin: Option<&str>) -> String {
+    pub fn wrap_script(id: u64, script: &str, origin: Option<&Url>) -> String {
         let run = format!(
             "try{{let __r=await({script});\
              await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
@@ -242,10 +263,10 @@ impl EvalEngine {
              {{id:{id},error:(__e&&__e.message)||String(__e)}});}}"
         );
         match origin {
-            Some(origin) => {
-                let origin_js = serde_json::to_string(origin).unwrap_or_else(|_| "\"\"".to_owned());
-                format!("(async()=>{{if({PAGE_ORIGIN_EXPR}!=={origin_js})return;{run}}})();")
-            }
+            Some(origin) => format!(
+                "(async()=>{{if({})return;{run}}})();",
+                origin_mismatch_js(origin)
+            ),
             None => format!("(async()=>{{{run}}})();"),
         }
     }
@@ -410,23 +431,26 @@ mod tests {
         // #173: eval queues the script; the page that runs it may not be the
         // one that passed has_bridge. The wrapper must refuse the command
         // before `element.click()` when location no longer matches.
-        let origin = origin_key(&Url::parse("https://app.example/login").expect("valid test URL"));
-        assert_eq!(origin, "https://app.example:443");
+        let origin = Url::parse("https://app.example/login").expect("valid test URL");
+        assert_eq!(origin_key(&origin), "https://app.example:443");
         let script = EvalEngine::wrap_script(3, "element.click()", Some(&origin));
-        let encoded = serde_json::to_string(&origin).expect("origin JSON");
+        let guard = origin_mismatch_js(&origin);
+        let refuse = format!("if({guard})return;");
         assert!(
-            script.contains(&encoded),
-            "wrapper must embed the checked origin; got: {script}"
+            script.contains(&refuse),
+            "wrapper must refuse the command on origin mismatch; got: {script}"
         );
-        let guard = script.find("return").expect("early return on mismatch");
+        let guard_at = script.find(&refuse).expect("early return on mismatch");
         let body = script.find("element.click()").expect("user script");
         assert!(
-            guard < body,
+            guard_at < body,
             "origin guard must run before the command; got: {script}"
         );
         assert!(
-            script.contains(PAGE_ORIGIN_EXPR),
-            "page-side key must match origin_key; got: {script}"
+            script.contains("\"https:\"")
+                && script.contains("\"app.example\"")
+                && script.contains("\"443\""),
+            "guard must inject Url fields, not a JS port table; got: {script}"
         );
         assert!(
             !script.contains("location.origin"),
@@ -436,14 +460,37 @@ mod tests {
 
     #[test]
     fn test_wrap_script_pins_hostless_file_url() {
-        let origin = origin_key(&Url::parse("file:///tmp/a.html#frag").expect("valid test URL"));
-        assert_eq!(origin, "file:///tmp/a.html");
+        let origin = Url::parse("file:///tmp/a.html#frag").expect("valid test URL");
+        assert_eq!(origin_key(&origin), "file:///tmp/a.html");
         let script = EvalEngine::wrap_script(1, "1", Some(&origin));
-        let encoded = serde_json::to_string(&origin).expect("origin JSON");
+        let refuse = format!("if({})return;", origin_mismatch_js(&origin));
         assert!(
-            script.contains(&encoded),
+            script.contains(&refuse),
             "hostless pages keep the rest of the URL; got: {script}"
         );
+        assert!(
+            script.contains("file:///tmp/a.html"),
+            "hostless pages keep the rest of the URL; got: {script}"
+        );
+    }
+
+    #[test]
+    fn test_origin_mismatch_js_uses_url_fields_not_a_port_table() {
+        let expr = |text| origin_mismatch_js(&Url::parse(text).expect("valid test URL"));
+        let https = expr("https://host/");
+        assert!(
+            https.contains("\"https:\"") && https.contains("\"host\"") && https.contains("\"443\"")
+        );
+        assert!(!https.contains("wss") && !https.contains("ftp"));
+        let http = expr("http://host/");
+        assert!(http.contains("\"http:\"") && http.contains("\"80\""));
+        let tauri = expr("tauri://localhost/");
+        assert!(tauri.contains("\"tauri:\"") && tauri.contains("\"localhost\""));
+        assert!(tauri.contains("location.port!==\"\""));
+        let file = expr("file:///tmp/a.html#frag");
+        assert!(file.contains("location.href.split('#')[0]"));
+        assert!(file.contains("file:///tmp/a.html"));
+        assert!(!file.contains("#frag"));
     }
 
     #[test]

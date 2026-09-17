@@ -140,11 +140,25 @@ pub(crate) mod fake {
     /// where a test plays the bridge and resolves the engine.
     /// `url()` is live: [`Self::set_url`] is visible to a `target` already
     /// held across an await, matching a real webview that navigated.
-    #[derive(Clone, Default)]
+    ///
+    /// [`Clone`] shares windows and scripts, but starts with an empty
+    /// responder. Sharing the responder would cycle when `on_eval` captures
+    /// a clone of `self`.
+    #[derive(Default)]
     pub(crate) struct FakeWebviews {
         windows: Arc<Mutex<BTreeMap<String, Option<Url>>>>,
         scripts: Arc<Mutex<Vec<String>>>,
         responder: Arc<Mutex<Option<FakeResponder>>>,
+    }
+
+    impl Clone for FakeWebviews {
+        fn clone(&self) -> Self {
+            Self {
+                windows: Arc::clone(&self.windows),
+                scripts: Arc::clone(&self.scripts),
+                responder: Arc::new(Mutex::new(None)),
+            }
+        }
     }
 
     impl FakeWebviews {
@@ -351,14 +365,43 @@ pub(crate) mod fake {
         #[test]
         fn url_is_live_after_set_url() {
             let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+            let target = webviews.target(None).expect("main window");
             webviews.set_url("main", Some("https://other.test/"));
             assert_eq!(
-                webviews
-                    .target(None)
-                    .expect("main window")
-                    .url()
-                    .map(|url| url.to_string()),
+                target.url().map(|url| url.to_string()),
                 Some("https://other.test/".to_owned())
+            );
+        }
+
+        #[test]
+        fn clone_shares_windows_not_responder() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            let hits = Arc::new(AtomicUsize::new(0));
+            let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+            let pages = webviews.clone();
+            let hits_eval = Arc::clone(&hits);
+            let webviews = webviews.on_eval(move || {
+                hits_eval.fetch_add(1, Ordering::SeqCst);
+                let _ = pages.target(None);
+            });
+            webviews
+                .target(None)
+                .expect("main window")
+                .eval("1")
+                .expect("eval");
+            assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+            let later = webviews.clone();
+            later
+                .target(None)
+                .expect("main window")
+                .eval("2")
+                .expect("eval");
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                1,
+                "clone must start with an empty responder"
             );
         }
 
