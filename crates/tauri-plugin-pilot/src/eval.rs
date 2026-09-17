@@ -61,6 +61,23 @@ fn origin_keys(url: &Url) -> Vec<String> {
     }
 }
 
+/// JS expression that builds the same key as [`origin_key`] from `location`.
+///
+/// `location.origin` is `"null"` for `file:` and custom schemes, so the page
+/// reconstructs scheme/host/port itself. When there is no host it uses the
+/// href without a fragment, matching hostless `origin_key` entries.
+/// Default ports (80, 443, 21) match `url::Url::port_or_known_default` for
+/// http(s), ws(s) and ftp; changing them would let a page slip the wrapper
+/// after a default-port URL was checked.
+const PAGE_ORIGIN_EXPR: &str = concat!(
+    "(function(){var h=location.hostname,s=location.protocol.slice(0,-1),p=location.port;",
+    "if(h){if(!p){if(s==='https'||s==='wss')p='443';",
+    "else if(s==='http'||s==='ws')p='80';",
+    "else if(s==='ftp')p='21';}",
+    "return p?s+'://'+h+':'+p:s+'://'+h;}",
+    "return location.href.split('#')[0];})()",
+);
+
 /// Error types for eval operations.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum EvalError {
@@ -211,15 +228,26 @@ impl EvalEngine {
     /// not drop the `result` field — otherwise a void expression (e.g.,
     /// `element.click()`) would cause the handler to log a bogus "neither
     /// result nor error" warning (#48).
+    ///
+    /// When `origin` is `Some`, the wrapper compares the page's origin key with
+    /// that value and returns without running the command if they differ (#173).
+    /// A foreign page cannot call `__callback`, so a mismatch is silent there.
     #[must_use]
-    pub fn wrap_script(id: u64, script: &str) -> String {
-        format!(
-            "(async()=>{{try{{let __r=await({script});\
+    pub fn wrap_script(id: u64, script: &str, origin: Option<&str>) -> String {
+        let run = format!(
+            "try{{let __r=await({script});\
              await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
              {{id:{id},result:__r===undefined?'null':JSON.stringify(__r)}});\
              }}catch(__e){{await window.__TAURI_INTERNALS__.invoke('plugin:pilot|__callback',\
-             {{id:{id},error:(__e&&__e.message)||String(__e)}});}}}})();"
-        )
+             {{id:{id},error:(__e&&__e.message)||String(__e)}});}}"
+        );
+        match origin {
+            Some(origin) => {
+                let origin_js = serde_json::to_string(origin).unwrap_or_else(|_| "\"\"".to_owned());
+                format!("(async()=>{{if({PAGE_ORIGIN_EXPR}!=={origin_js})return;{run}}})();")
+            }
+            None => format!("(async()=>{{{run}}})();"),
+        }
     }
 
     /// Wait for a pending eval result with timeout.
@@ -329,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_wrap_script_contains_id_and_code() {
-        let script = EvalEngine::wrap_script(42, "document.title");
+        let script = EvalEngine::wrap_script(42, "document.title", None);
         assert!(script.contains("42"));
         assert!(script.contains("document.title"));
         assert!(script.contains("await("));
@@ -341,7 +369,7 @@ mod tests {
     // through `__callback`, avoiding native eval result callbacks entirely.
     #[test]
     fn test_wrap_script_uses_ipc_callback_delivery() {
-        let script = EvalEngine::wrap_script(7, "document.title");
+        let script = EvalEngine::wrap_script(7, "document.title", None);
         assert!(
             script.contains("__TAURI_INTERNALS__.invoke('plugin:pilot|__callback'"),
             "wrapped script must send eval results through __callback IPC; got: {script}"
@@ -360,10 +388,61 @@ mod tests {
         // to log "callback received with neither result nor error". The wrapper
         // converts undefined → the string "null" so Tauri keeps the `result`
         // field populated.
-        let script = EvalEngine::wrap_script(1, "element.click()");
+        let script = EvalEngine::wrap_script(1, "element.click()", None);
         assert!(
             script.contains("__r===undefined?'null':JSON.stringify(__r)"),
             "wrapped script must normalize undefined to the string 'null'; got: {script}"
+        );
+    }
+
+    #[test]
+    fn test_wrap_script_without_origin_runs_unconditionally() {
+        let script = EvalEngine::wrap_script(1, "document.title", None);
+        assert!(
+            !script.contains("location.hostname"),
+            "no origin pin means no page-side origin check; got: {script}"
+        );
+        assert!(script.contains("document.title"));
+    }
+
+    #[test]
+    fn test_wrap_script_guards_checked_origin_before_running() {
+        // #173: eval queues the script; the page that runs it may not be the
+        // one that passed has_bridge. The wrapper must refuse the command
+        // before `element.click()` when location no longer matches.
+        let origin = origin_key(&Url::parse("https://app.example/login").expect("valid test URL"));
+        assert_eq!(origin, "https://app.example:443");
+        let script = EvalEngine::wrap_script(3, "element.click()", Some(&origin));
+        let encoded = serde_json::to_string(&origin).expect("origin JSON");
+        assert!(
+            script.contains(&encoded),
+            "wrapper must embed the checked origin; got: {script}"
+        );
+        let guard = script.find("return").expect("early return on mismatch");
+        let body = script.find("element.click()").expect("user script");
+        assert!(
+            guard < body,
+            "origin guard must run before the command; got: {script}"
+        );
+        assert!(
+            script.contains(PAGE_ORIGIN_EXPR),
+            "page-side key must match origin_key; got: {script}"
+        );
+        assert!(
+            !script.contains("location.origin"),
+            "location.origin is null for file: and custom schemes; got: {script}"
+        );
+    }
+
+    #[test]
+    fn test_wrap_script_pins_hostless_file_url() {
+        let origin = origin_key(&Url::parse("file:///tmp/a.html#frag").expect("valid test URL"));
+        assert_eq!(origin, "file:///tmp/a.html");
+        let script = EvalEngine::wrap_script(1, "1", Some(&origin));
+        let encoded = serde_json::to_string(&origin).expect("origin JSON");
+        assert!(
+            script.contains(&encoded),
+            "hostless pages keep the rest of the URL; got: {script}"
         );
     }
 

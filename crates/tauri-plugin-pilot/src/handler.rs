@@ -582,7 +582,8 @@ async fn handle_navigate(
     let target = target(webviews, window)?;
     // Read before the eval so the URL names the page the script lands on.
     let page = target.url();
-    let (id, rx) = send_script(&script, engine, target.as_ref())?;
+    let origin = page.as_ref().map(origin_key);
+    let (id, rx) = send_script(&script, engine, target.as_ref(), origin.as_deref())?;
     let dest = navigate_destination(
         page.as_ref(),
         params.and_then(|p| p.get("url").and_then(serde_json::Value::as_str)),
@@ -677,7 +678,9 @@ fn fail_no_bridge(engine: &EvalEngine, id: u64, page: &tauri::Url) -> RpcError {
 /// Send a bridge script and wait for its callback.
 ///
 /// Refuses without running the script when the page has no bridge that can
-/// call back, instead of waiting out `timeout` (#153).
+/// call back, instead of waiting out `timeout` (#153). The wrapper also pins
+/// the origin that passed that check, so a navigation in the gap before eval
+/// cannot run the command on a page nobody checked (#173).
 async fn eval_bridge(
     script: &str,
     engine: &EvalEngine,
@@ -686,14 +689,55 @@ async fn eval_bridge(
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
     let target = target(webviews, window)?;
-    if let Some(page) = target.url().filter(|page| !engine.has_bridge(page)) {
+    let checked = target.url();
+    if let Some(page) = checked.as_ref().filter(|page| !engine.has_bridge(page)) {
         return Err(no_bridge_error(
             engine,
             &format!("no pilot bridge on the current page ({page})"),
         ));
     }
-    let (id, rx) = send_script(script, engine, target.as_ref())?;
-    wait(engine, id, rx, timeout).await
+    let origin = checked.as_ref().map(origin_key);
+    let (id, rx) = send_script(script, engine, target.as_ref(), origin.as_deref())?;
+    if let Some(page) = origin_moved_page(checked.as_ref(), target.url().as_ref()) {
+        return Err(fail_no_bridge(engine, id, page));
+    }
+    match engine.wait(id, rx, timeout).await {
+        Ok(value) => Ok(value),
+        Err(EvalError::Timeout(_)) => Err(timeout_or_moved_origin(
+            engine,
+            checked.as_ref(),
+            target.url().as_ref(),
+            timeout,
+        )),
+        Err(e) => Err(eval_rpc_error(&e)),
+    }
+}
+
+/// No-bridge error when the origin moved during the wait, else the timeout.
+fn timeout_or_moved_origin(
+    engine: &EvalEngine,
+    checked: Option<&tauri::Url>,
+    now: Option<&tauri::Url>,
+    timeout: Duration,
+) -> RpcError {
+    if let Some(page) = origin_moved_page(checked, now) {
+        no_bridge_error(
+            engine,
+            &format!("no pilot bridge on the current page ({page})"),
+        )
+    } else {
+        eval_rpc_error(&EvalError::Timeout(timeout))
+    }
+}
+
+/// The page `now` if it is a different origin from `checked`.
+fn origin_moved_page<'a>(
+    checked: Option<&tauri::Url>,
+    now: Option<&'a tauri::Url>,
+) -> Option<&'a tauri::Url> {
+    let now = now?;
+    let checked = checked?;
+    (origin_key(checked) != origin_key(now)).then_some(now)
 }
 
 /// Resolve the window a request targets.
@@ -709,13 +753,17 @@ fn target<'a>(
 }
 
 /// Register a callback, then eval `script` wrapped in the ADR-001 pattern.
+///
+/// `origin` is the page that passed the bridge check. The wrapper refuses to
+/// run the command if the document that eventually evals it is elsewhere.
 fn send_script(
     script: &str,
     engine: &EvalEngine,
     target: &dyn TargetWindow,
+    origin: Option<&str>,
 ) -> Result<CallbackSlot, RpcError> {
     let (id, rx) = engine.register();
-    let wrapped = EvalEngine::wrap_script(id, script);
+    let wrapped = EvalEngine::wrap_script(id, script, origin);
     match target.eval(&wrapped) {
         Ok(()) => Ok((id, rx)),
         Err(e) => {
@@ -743,11 +791,18 @@ async fn wait(
     rx: tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
-    engine.wait(id, rx, timeout).await.map_err(|e| RpcError {
+    engine
+        .wait(id, rx, timeout)
+        .await
+        .map_err(|e| eval_rpc_error(&e))
+}
+
+fn eval_rpc_error(e: &EvalError) -> RpcError {
+    RpcError {
         code: -32603,
         message: format!("Eval error: {e}"),
         data: None,
-    })
+    }
 }
 
 /// Build the error for a page whose bridge cannot answer, naming the
@@ -2075,6 +2130,114 @@ mod tests {
             .await
             .expect_err("a page without a bridge cannot answer");
         assert_eq!(webviews.scripts(), Vec::<String>::new());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_after_origin_change_fails_fast_with_no_bridge() {
+        // #173: the check reads target.url(), then eval queues the script.
+        // A concurrent navigate (or a redirect) can replace the page in that
+        // gap. The command must not run there, and the RPC must fail with
+        // the no-bridge error rather than wait out DEFAULT_TIMEOUT.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let pages = webviews.clone();
+        let webviews = webviews.on_eval(move || {
+            pages.set_url("main", Some(FOREIGN_PAGE));
+        });
+
+        let start = tokio::time::Instant::now();
+        let err = dispatch(
+            "click",
+            Some(&json!({"ref": "e1"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a command whose page was replaced must not succeed");
+
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains(FOREIGN_PAGE), "got: {}", err.message);
+        assert!(
+            err.message.contains("tauri://localhost"),
+            "got: {}",
+            err.message
+        );
+        let scripts = webviews.scripts();
+        assert_eq!(scripts.len(), 1, "the script is sent, then refused in-page");
+        let origin = origin_key(&url(APP_PAGE));
+        assert!(
+            scripts[0].contains(&origin),
+            "wrapper must pin the origin that passed the check; got: {}",
+            scripts[0]
+        );
+        assert!(
+            scripts[0].contains("window.__PILOT__.click"),
+            "got: {}",
+            scripts[0]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_timeout_on_same_origin_stays_eval_timeout() {
+        // A silent page that did not navigate is still an eval timeout, not
+        // the no-bridge error used when the origin moved (#173).
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+
+        let start = tokio::time::Instant::now();
+        let err = dispatch("title", None, &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("no callback means timeout");
+
+        assert!(
+            start.elapsed() >= DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert!(err.message.contains("timed out"), "got: {}", err.message);
+        assert!(
+            !err.message.contains("no pilot bridge"),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_timeout_after_late_origin_change_is_no_bridge() {
+        // #173: a redirect after eval is queued is invisible until the
+        // callback times out. Re-read the URL then, and surface no-bridge
+        // instead of a generic eval timeout.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let pages = webviews.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            pages.set_url("main", Some(FOREIGN_PAGE));
+        });
+
+        let start = tokio::time::Instant::now();
+        let err = dispatch("title", None, &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("a command whose page was replaced must not succeed");
+
+        assert!(
+            start.elapsed() >= DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains(FOREIGN_PAGE), "got: {}", err.message);
+        assert!(
+            err.message.contains("no pilot bridge"),
+            "got: {}",
+            err.message
+        );
     }
 
     #[tokio::test(start_paused = true)]
