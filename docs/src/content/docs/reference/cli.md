@@ -108,7 +108,18 @@ The MCP server exposes tools for the CLI's app-facing commands, including
 `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`,
 `drag`, `drop`, `text`, `html`, `value`, `attrs`, `eval`, `ipc`, `screenshot`,
 `navigate`, `url`, `title`, `wait`, `watch`, `logs`, `network`, `storage_*`,
-`forms`, `assert_*`, `record_*`, and `replay`.
+`forms`, `assert_*`, `record_*`, `replay`, and `run`.
+
+`pilot.run` executes a declarative TOML scenario. Pass `path` to a `.toml` file
+or inline `content` (not both), optionally set `fail_fast` to override the file,
+and read the JSON report (`ok`, counts, `summary`, `steps`). A finished run
+including failed steps is a successful tool result with `ok` false; only parse,
+I/O, connect, and timeout failures are tool errors. The tool also returns
+`INVALID_PARAMS` for an empty `[[step]]` list, `eval`/`drop`/`ipc` steps unless
+`TAURI_PILOT_MCP_ENABLE_DANGEROUS_TOOLS` is set, `javascript:` navigate URLs,
+and screenshot steps that set `path`. The CLI example
+`docs/examples/login-flow.toml` includes a screenshot `path` and cannot be run
+over MCP as written. JUnit XML is not written; the JSON report is the output.
 
 The server starts even if no Tauri app is currently running. Each tool call
 resolves and connects to the tauri-pilot Unix socket lazily, using `--socket`,

@@ -207,9 +207,14 @@ of shelling out for each command:
 
 The MCP server exposes the same app-inspection and interaction surface as the CLI,
 namespaced under `pilot.*`: `pilot.snapshot`, `pilot.click`, `pilot.fill`,
-`pilot.logs`, `pilot.network`, `pilot.eval`, `pilot.ipc`, `pilot.assert_*`, and
-the other testing tools. `tools/list` advertises the prefixed names; bare names
-(e.g. `snapshot`) still resolve via `tools/call` so existing setups keep working.
+`pilot.logs`, `pilot.network`, `pilot.eval`, `pilot.ipc`, `pilot.assert_*`,
+`pilot.run`, and the other testing tools. `pilot.run` executes a TOML scenario
+from `path` or inline `content` and returns a JSON report (`ok`, counts,
+`summary`, `steps`). Check `ok`; a finished run with failed steps is still a
+successful tool result. Only parse, I/O, connect, and timeout failures are tool
+errors. `tools/list`
+advertises the prefixed names; bare names (e.g. `snapshot`) still resolve via
+`tools/call` so existing setups keep working.
 Use global flags before `mcp` to pin a specific app socket or window:
 
 ```json

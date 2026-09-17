@@ -13,6 +13,7 @@ use crate::{build_scroll_params, build_wait_params, target_params, with_window};
 
 #[allow(clippy::module_name_repetitions, clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Scenario {
     pub(crate) connect: Option<Connect>,
     #[serde(default)]
@@ -22,6 +23,7 @@ pub(crate) struct Scenario {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Connect {
     pub(crate) socket: Option<PathBuf>,
     pub(crate) timeout_ms: Option<u64>,
@@ -29,6 +31,7 @@ pub(crate) struct Connect {
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScenarioMeta {
     pub(crate) name: Option<String>,
     #[serde(default = "default_true")]
@@ -52,6 +55,7 @@ fn default_true() -> bool {
 
 #[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Step {
     pub(crate) name: Option<String>,
     pub(crate) action: String,
@@ -134,6 +138,15 @@ impl ScenarioReport {
     pub(crate) fn all_passed(&self) -> bool {
         self.failed() == 0
     }
+
+    #[must_use]
+    pub(crate) fn summary_line(&self) -> String {
+        let passed = self.passed();
+        let failed = self.failed();
+        let skipped = self.skipped();
+        let secs = self.total_duration.as_secs_f64();
+        format!("{passed} passed · {failed} failed · {skipped} skipped  ({secs:.3}s)")
+    }
 }
 
 // ── Main runner ───────────────────────────────────────────────────────────────
@@ -145,7 +158,26 @@ pub(crate) fn load_scenario(path: &Path) -> Result<Scenario> {
         .with_context(|| format!("Failed to parse scenario TOML: {}", path.display()))
 }
 
+pub(crate) fn parse_scenario(content: &str) -> Result<Scenario> {
+    toml::from_str(content).context("Failed to parse scenario TOML")
+}
+
 pub(crate) async fn run_scenario(
+    client: &mut Client,
+    scenario: &Scenario,
+    window: Option<&str>,
+    fail_fast_override: Option<bool>,
+) -> Result<ScenarioReport> {
+    let steps = run_scenario_steps(client, scenario, window, fail_fast_override);
+    match scenario.scenario.global_timeout_ms {
+        Some(ms) => tokio::time::timeout(Duration::from_millis(ms), steps)
+            .await
+            .map_err(|_elapsed| anyhow::anyhow!("scenario exceeded global timeout of {ms}ms"))?,
+        None => steps.await,
+    }
+}
+
+async fn run_scenario_steps(
     client: &mut Client,
     scenario: &Scenario,
     window: Option<&str>,
@@ -530,16 +562,49 @@ fn print_step_fail(idx: usize, total: usize, name: &str, msg: &str) {
 }
 
 pub(crate) fn print_report(report: &ScenarioReport) {
-    let passed = report.passed();
-    let failed = report.failed();
-    let skipped = report.skipped();
-    let secs = report.total_duration.as_secs_f64();
     let name = crate::style::bold(&report.name);
 
     eprintln!();
     eprintln!("Scenario: {name}");
-    eprintln!("  {passed} passed · {failed} failed · {skipped} skipped  ({secs:.3}s)");
+    eprintln!("  {}", report.summary_line());
     eprintln!();
+}
+
+pub(crate) fn report_to_json(report: &ScenarioReport) -> Value {
+    json!({
+        "name": report.name,
+        "ok": report.all_passed(),
+        "passed": report.passed(),
+        "failed": report.failed(),
+        "skipped": report.skipped(),
+        "duration_ms": duration_millis(report.total_duration),
+        "summary": report.summary_line(),
+        "steps": report.results.iter().map(step_result_to_json).collect::<Vec<_>>(),
+    })
+}
+
+fn step_result_to_json(result: &StepResult) -> Value {
+    match &result.outcome {
+        StepOutcome::Passed { duration } => json!({
+            "name": result.name,
+            "status": "passed",
+            "duration_ms": duration_millis(*duration),
+        }),
+        StepOutcome::Failed { duration, message } => json!({
+            "name": result.name,
+            "status": "failed",
+            "duration_ms": duration_millis(*duration),
+            "message": message,
+        }),
+        StepOutcome::Skipped => json!({
+            "name": result.name,
+            "status": "skipped",
+        }),
+    }
+}
+
+fn duration_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 // ── JUnit XML output ──────────────────────────────────────────────────────────
@@ -692,6 +757,63 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_scenario_from_string() {
+        let toml_str = r##"
+[[step]]
+action = "click"
+target = "#btn"
+"##;
+        let scenario = parse_scenario(toml_str).expect("valid toml");
+        assert_eq!(scenario.step.len(), 1);
+        assert_eq!(scenario.step[0].action, "click");
+        assert_eq!(scenario.step[0].target.as_deref(), Some("#btn"));
+    }
+
+    #[test]
+    fn test_parse_scenario_rejects_invalid_toml() {
+        let err = parse_scenario("[[[not toml").expect_err("invalid toml");
+        assert!(
+            err.to_string().contains("Failed to parse scenario TOML"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_report_to_json_includes_summary_and_steps() {
+        let report = make_report(vec![
+            (
+                "step-1",
+                StepOutcome::Passed {
+                    duration: Duration::from_millis(100),
+                },
+            ),
+            (
+                "step-2",
+                StepOutcome::Failed {
+                    duration: Duration::from_millis(50),
+                    message: "oops".into(),
+                },
+            ),
+            ("step-3", StepOutcome::Skipped),
+        ]);
+        let value = report_to_json(&report);
+        assert_eq!(value["name"], "test-scenario");
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["passed"], 1);
+        assert_eq!(value["failed"], 1);
+        assert_eq!(value["skipped"], 1);
+        assert_eq!(
+            value["summary"],
+            "1 passed · 1 failed · 1 skipped  (1.234s)"
+        );
+        assert_eq!(value["steps"][0]["status"], "passed");
+        assert_eq!(value["steps"][1]["status"], "failed");
+        assert_eq!(value["steps"][1]["message"], "oops");
+        assert_eq!(value["steps"][2]["status"], "skipped");
+        assert!(value["steps"][2].get("duration_ms").is_none());
+    }
+
+    #[test]
     fn test_toml_parse_minimal() {
         let toml_str = r##"
 [[step]]
@@ -703,6 +825,91 @@ target = "#btn"
         assert_eq!(scenario.step[0].action, "click");
         assert_eq!(scenario.step[0].target.as_deref(), Some("#btn"));
         assert!(scenario.scenario.fail_fast);
+    }
+
+    #[test]
+    fn load_scenario_reads_valid_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("ok.toml");
+        std::fs::write(
+            &path,
+            r##"
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+        )
+        .expect("write scenario");
+        let scenario = load_scenario(&path).expect("load");
+        assert_eq!(scenario.step.len(), 1);
+        assert_eq!(scenario.step[0].action, "click");
+        assert_eq!(scenario.step[0].target.as_deref(), Some("#btn"));
+    }
+
+    #[test]
+    fn load_scenario_invalid_toml_is_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "[[[not toml").expect("write scenario");
+        let err = load_scenario(&path).expect_err("invalid toml");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Failed to parse scenario TOML"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_scenario_rejects_unknown_top_level_keys() {
+        let err = parse_scenario("[[steps]]\naction = \"click\"\n").expect_err("unknown key");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Failed to parse scenario TOML"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_scenario_rejects_unknown_nested_keys() {
+        let cases = [
+            (
+                r##"
+[connect]
+timeout_mss = 5000
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+                "timeout_mss",
+            ),
+            (
+                r##"
+[scenario]
+fail_fasst = false
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+                "fail_fasst",
+            ),
+            (
+                r##"
+[[step]]
+action = "click"
+target = "#btn"
+urls = "http://example.com"
+"##,
+                "urls",
+            ),
+        ];
+        for (toml_str, field) in cases {
+            let err = parse_scenario(toml_str).expect_err(field);
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("Failed to parse scenario TOML") && msg.contains(field),
+                "unexpected error for {field}: {msg}"
+            );
+        }
     }
 
     #[test]
