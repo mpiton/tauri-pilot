@@ -900,8 +900,13 @@ The bridge also copies only an allowlist of painted CSS properties onto the
 clone it renders (a full computed-style copy wedges WebKit for minutes on
 style-variable-heavy pages). A page that paints through a property outside
 that list renders without it, with no error, so if the PNG does not match
-what you see in the app that is the first thing to check. On macOS,
-`screenshot_native` sidesteps the allowlist entirely.
+what you see in the app that is the first thing to check. Standard CSS
+scrollbar properties (`scrollbar-color`, `scrollbar-width`,
+`scrollbar-gutter`) are on the list. `::-webkit-scrollbar` and other
+scrollbar pseudo-element rules are not: html-to-image copies computed
+styles on the element, not on pseudo-elements, so a WebKit-styled
+scrollbar is still missing from the PNG. On macOS, `screenshot_native`
+sidesteps the allowlist entirely.
 
 **Arguments:**
 

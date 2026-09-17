@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `screenshot` now copies `scrollbar-color`, `scrollbar-width`, and
+  `scrollbar-gutter` onto the clone, so a panel that styles its scrollbar
+  with those properties keeps the bar in the PNG. `::-webkit-scrollbar`
+  pseudo-element rules still cannot be carried this way; on macOS
+  `screenshot_native` captures what the window paints. [#166]
+
 - The Unix socket guard now deletes the socket file when dropped. It
   compared the file's inode with the one `fstat` returns for the listener,
   which belongs to the kernel's socket object rather than the file, so they
@@ -844,4 +850,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#163]: https://github.com/mpiton/tauri-pilot/issues/163
 [#164]: https://github.com/mpiton/tauri-pilot/issues/164
 [#165]: https://github.com/mpiton/tauri-pilot/issues/165
+[#166]: https://github.com/mpiton/tauri-pilot/issues/166
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194

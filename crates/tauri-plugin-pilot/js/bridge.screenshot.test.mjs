@@ -160,6 +160,11 @@ test("screenshot restricts the style properties html-to-image copies", async () 
     "fill", // replaced content + SVG
     "text-anchor",
     "appearance", // form controls
+    // #166: CSS scrollbar painting. `::-webkit-scrollbar` pseudo-element
+    // rules cannot be copied this way and are not in the list.
+    "scrollbar-color",
+    "scrollbar-width",
+    "scrollbar-gutter",
   ]) {
     assert.ok(props.includes(required), `missing ${required}`);
   }
