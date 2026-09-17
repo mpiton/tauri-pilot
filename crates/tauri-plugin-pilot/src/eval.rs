@@ -63,38 +63,28 @@ fn origin_keys(url: &Url) -> Vec<String> {
 
 /// JS predicate that is true when `location` is not the origin of `url`.
 ///
-/// Injects scheme, hostname, and [`Url::port_or_known_default`] (or the
-/// hostless href) from `url` so the guard cannot drift from [`origin_key`].
+/// Injects scheme, hostname, and [`Url::port`] (empty when the port is the
+/// scheme default, matching `location.port`) or the hostless href. Filling
+/// an empty `location.port` with the checked port would let `https://host/`
+/// pass a pin for `https://host:8443`.
 /// `location.origin` is `"null"` for `file:` and custom schemes, so the
 /// comparison uses `location`'s fields instead.
 fn origin_mismatch_js(url: &Url) -> String {
     let json = |value: &str| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned());
-    match (
-        url.host_str().filter(|host| !host.is_empty()),
-        url.port_or_known_default(),
-    ) {
-        (Some(host), Some(port)) => {
-            let protocol = json(&format!("{}:", url.scheme()));
-            let host = json(host);
-            let port = json(&port.to_string());
-            format!(
-                "location.protocol!=={protocol}||location.hostname!=={host}||(location.port||{port})!=={port}"
-            )
-        }
-        (Some(host), None) => {
-            let protocol = json(&format!("{}:", url.scheme()));
-            let host = json(host);
-            format!(
-                "location.protocol!=={protocol}||location.hostname!=={host}||location.port!==\"\""
-            )
-        }
-        (None, _) => {
-            let href = match url.as_str().split_once('#') {
-                Some((without_fragment, _)) => without_fragment,
-                None => url.as_str(),
-            };
-            format!("location.href.split('#')[0]!=={}", json(href))
-        }
+    if let Some(host) = url.host_str().filter(|host| !host.is_empty()) {
+        let protocol = json(&format!("{}:", url.scheme()));
+        let host = json(host);
+        let port = url.port().map(|port| port.to_string()).unwrap_or_default();
+        let port = json(&port);
+        format!(
+            "location.protocol!=={protocol}||location.hostname!=={host}||location.port!=={port}"
+        )
+    } else {
+        let href = match url.as_str().split_once('#') {
+            Some((without_fragment, _)) => without_fragment,
+            None => url.as_str(),
+        };
+        format!("location.href.split('#')[0]!=={}", json(href))
     }
 }
 
@@ -449,7 +439,7 @@ mod tests {
         assert!(
             script.contains("\"https:\"")
                 && script.contains("\"app.example\"")
-                && script.contains("\"443\""),
+                && script.contains("location.port!==\"\""),
             "guard must inject Url fields, not a JS port table; got: {script}"
         );
         assert!(
@@ -478,12 +468,16 @@ mod tests {
     fn test_origin_mismatch_js_uses_url_fields_not_a_port_table() {
         let expr = |text| origin_mismatch_js(&Url::parse(text).expect("valid test URL"));
         let https = expr("https://host/");
-        assert!(
-            https.contains("\"https:\"") && https.contains("\"host\"") && https.contains("\"443\"")
-        );
+        assert!(https.contains("\"https:\"") && https.contains("\"host\""));
+        assert!(https.contains("location.port!==\"\""));
+        assert!(!https.contains("443") && !https.contains("location.port||"));
         assert!(!https.contains("wss") && !https.contains("ftp"));
         let http = expr("http://host/");
-        assert!(http.contains("\"http:\"") && http.contains("\"80\""));
+        assert!(http.contains("\"http:\"") && http.contains("location.port!==\"\""));
+        assert!(!http.contains("80"));
+        let pinned = expr("https://host:8443/");
+        assert!(pinned.contains("location.port!==\"8443\""));
+        assert!(!pinned.contains("location.port||"));
         let tauri = expr("tauri://localhost/");
         assert!(tauri.contains("\"tauri:\"") && tauri.contains("\"localhost\""));
         assert!(tauri.contains("location.port!==\"\""));

@@ -1,9 +1,10 @@
 // Field comparison used by wrap_script (#173).
 //
-// The wrapper injects scheme, hostname, and Url::port_or_known_default (or
-// the hostless href) from the checked URL. This mocks `location` the way a
-// page would see those URLs and checks the comparison against origin_key
-// grouping: same origin must match, a different origin must not.
+// The wrapper injects scheme, hostname, and Url::port (empty when the port
+// is the scheme default, matching location.port) or the hostless href. Same
+// origin must match; a different origin must not. An empty location.port
+// must not inherit a non-default checked port (https://host:8443 vs
+// https://host/).
 //
 // Run: node --test crates/tauri-plugin-pilot/js/origin-guard.test.mjs
 
@@ -24,17 +25,10 @@ function mismatch(location, checked) {
   if (checked.hostless) {
     return location.href.split("#")[0] !== checked.hostless;
   }
-  if (checked.port === null) {
-    return (
-      location.protocol !== checked.protocol
-      || location.hostname !== checked.hostname
-      || location.port !== ""
-    );
-  }
   return (
     location.protocol !== checked.protocol
     || location.hostname !== checked.hostname
-    || (location.port || checked.port) !== checked.port
+    || location.port !== checked.port
   );
 }
 
@@ -42,21 +36,28 @@ const cases = [
   {
     name: "https://host/",
     href: "https://host/",
-    checked: { protocol: "https:", hostname: "host", port: "443" },
+    checked: { protocol: "https:", hostname: "host", port: "" },
     same: ["https://host/login", "https://host:443/"],
-    other: ["http://host/", "https://other/", "tauri://localhost/"],
+    other: ["http://host/", "https://other/", "tauri://localhost/", "https://host:8443/"],
   },
   {
     name: "http://host/",
     href: "http://host/",
-    checked: { protocol: "http:", hostname: "host", port: "80" },
+    checked: { protocol: "http:", hostname: "host", port: "" },
     same: ["http://host/x", "http://host:80/"],
-    other: ["https://host/", "http://other/"],
+    other: ["https://host/", "http://other/", "http://host:8080/"],
+  },
+  {
+    name: "https://host:8443/",
+    href: "https://host:8443/",
+    checked: { protocol: "https:", hostname: "host", port: "8443" },
+    same: ["https://host:8443/login"],
+    other: ["https://host/", "https://host:443/"],
   },
   {
     name: "tauri://localhost/",
     href: "tauri://localhost/",
-    checked: { protocol: "tauri:", hostname: "localhost", port: null },
+    checked: { protocol: "tauri:", hostname: "localhost", port: "" },
     same: ["tauri://localhost/settings"],
     other: ["https://host/", "tauri://other/"],
   },
