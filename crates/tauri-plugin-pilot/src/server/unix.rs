@@ -159,14 +159,14 @@ fn bind_abstract(address: &SocketAddr) -> Result<std::os::unix::net::UnixListene
 
 /// Applies owner-only permissions and removes stale pathname sockets only when
 /// connecting confirms that no live listener remains.
+///
+/// Does not change the process umask around bind: umask is per-process, and
+/// other threads would inherit a `0o177` mask (#172). `set_permissions(0o600)`
+/// still runs after bind, and every connection is checked against the peer UID.
 fn bind_pathname(
     socket_path: &std::path::Path,
 ) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
-    // SAFETY: umask is always safe to call; we restore the old mask immediately.
-    let old_mask = unsafe { libc::umask(0o177) };
     let first_bind = std::os::unix::net::UnixListener::bind(socket_path);
-    // SAFETY: restoring the umask we just saved.
-    unsafe { libc::umask(old_mask) };
 
     let listener = match first_bind {
         Ok(l) => l,
@@ -184,12 +184,7 @@ fn bind_pathname(
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
                     // Stale socket from a crashed process — safe to remove and retry.
                     let _ = std::fs::remove_file(socket_path);
-                    // SAFETY: umask is always safe to call; we restore the old mask immediately.
-                    let old_mask = unsafe { libc::umask(0o177) };
-                    let retry_bind = std::os::unix::net::UnixListener::bind(socket_path);
-                    // SAFETY: restoring the umask we just saved.
-                    unsafe { libc::umask(old_mask) };
-                    retry_bind?
+                    std::os::unix::net::UnixListener::bind(socket_path)?
                 }
                 Err(e) => {
                     return Err(Error::Io(e));
@@ -301,7 +296,7 @@ mod tests {
     use crate::protocol::Response;
     use crate::webview::fake::FakeWebviews;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
@@ -548,5 +543,110 @@ mod tests {
         let other_kept = socket.exists();
         let _ = std::fs::remove_file(&socket);
         assert!(other_kept, "guard must not unlink a socket it did not bind");
+    }
+
+    // `/proc/self/status` exists on Linux only; macOS/BSD return None.
+    fn proc_umask() -> Option<u32> {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            line.strip_prefix("Umask:")
+                .and_then(|rest| u32::from_str_radix(rest.trim(), 8).ok())
+        })
+    }
+
+    fn wait_flag(flag: &AtomicBool) {
+        while !flag.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn bind_does_not_restrict_directory_mode_on_other_threads() {
+        // #172: umask(0o177) around bind made concurrent create_dir
+        // produce 0o600 directories (no execute bit) and then EACCES.
+        let scratch = std::env::temp_dir().join(format!(
+            "tauri-pilot-umask-{}-{}",
+            std::process::id(),
+            TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        let probe = scratch.join("probe");
+        std::fs::create_dir(&probe).expect("probe dir");
+        let probe_mode = std::fs::metadata(&probe)
+            .expect("probe metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        let _ = std::fs::remove_dir(&probe);
+
+        let baseline_umask = proc_umask();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let ready = Arc::new(AtomicBool::new(false));
+        let mkdir_ok = Arc::new(AtomicU32::new(0));
+        let restricted_mode = Arc::new(AtomicU32::new(u32::MAX));
+        let drifted_umask = Arc::new(AtomicU32::new(u32::MAX));
+        let observer = {
+            let stop = Arc::clone(&stop);
+            let ready = Arc::clone(&ready);
+            let mkdir_ok = Arc::clone(&mkdir_ok);
+            let restricted_mode = Arc::clone(&restricted_mode);
+            let drifted_umask = Arc::clone(&drifted_umask);
+            let scratch = scratch.clone();
+            std::thread::spawn(move || {
+                ready.store(true, Ordering::Release);
+                let mut n = 0u32;
+                while !stop.load(Ordering::Acquire) {
+                    if let (Some(base), Some(now)) = (baseline_umask, proc_umask())
+                        && now != base
+                    {
+                        drifted_umask.store(now, Ordering::Relaxed);
+                    }
+                    let dir = scratch.join(format!("d{n}"));
+                    n = n.wrapping_add(1);
+                    if std::fs::create_dir(&dir).is_ok() {
+                        mkdir_ok.fetch_add(1, Ordering::Relaxed);
+                        if let Ok(meta) = std::fs::metadata(&dir) {
+                            let mode = meta.permissions().mode() & 0o777;
+                            if mode & 0o111 == 0 {
+                                restricted_mode.store(mode, Ordering::Relaxed);
+                            }
+                        }
+                        let _ = std::fs::remove_dir(&dir);
+                    }
+                }
+            })
+        };
+
+        wait_flag(&ready);
+        for _ in 0..500 {
+            let socket = unique_socket_path();
+            let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+            let (_listener, _guard) = bind(&address).expect("bind test socket");
+        }
+
+        stop.store(true, Ordering::Release);
+        observer.join().expect("observer");
+        let created = mkdir_ok.load(Ordering::Relaxed);
+        let mode = restricted_mode.load(Ordering::Relaxed);
+        let _ = std::fs::remove_dir_all(&scratch);
+        assert!(created > 0, "observer never created a directory");
+        if probe_mode & 0o111 != 0 {
+            assert_eq!(
+                mode,
+                u32::MAX,
+                "bind must not restrict umask; concurrent mkdir got {mode:#o}"
+            );
+        }
+        // Umask sampling needs `/proc`; skip the drift half off Linux.
+        #[cfg(target_os = "linux")]
+        {
+            let umask_now = drifted_umask.load(Ordering::Relaxed);
+            assert_eq!(
+                umask_now,
+                u32::MAX,
+                "process umask changed to {umask_now:#o} during bind"
+            );
+        }
     }
 }

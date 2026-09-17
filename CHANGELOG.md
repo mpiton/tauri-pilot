@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pathname socket bind no longer sets the process umask. `umask(0o177)`
+  around `UnixListener::bind` is per-process, so another thread that created
+  a directory in that window got mode `0o600` (no execute bit) and then
+  `EACCES`. Socket mode is still `0o600` via `set_permissions` after bind,
+  and connections still require a matching peer UID. [#172]
+
 - `screenshot` now copies `scrollbar-color`, `scrollbar-width`, and
   `scrollbar-gutter` onto the clone, so a panel that styles its scrollbar
   with those properties keeps the bar in the PNG. `::-webkit-scrollbar`
@@ -857,4 +863,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#165]: https://github.com/mpiton/tauri-pilot/issues/165
 [#166]: https://github.com/mpiton/tauri-pilot/issues/166
 [#167]: https://github.com/mpiton/tauri-pilot/issues/167
+[#172]: https://github.com/mpiton/tauri-pilot/issues/172
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194
