@@ -10,8 +10,8 @@ use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ErrorCode, Implementation,
-        JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
-        ToolAnnotations,
+        JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
+        Tool, ToolAnnotations,
     },
     service::{MaybeSendFuture, RequestContext, RoleServer},
     transport::stdio,
@@ -618,8 +618,8 @@ impl PilotMcpServer {
 }
 
 impl ServerHandler for PilotMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(
                 Implementation::new("tauri-pilot", env!("CARGO_PKG_VERSION"))
                     .with_title("tauri-pilot")
