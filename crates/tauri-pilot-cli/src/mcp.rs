@@ -969,7 +969,7 @@ fn tool_specs() -> Vec<ToolSpec> {
             description: "Execute a declarative TOML scenario and return a JSON report (`ok`, counts, `summary`, `steps`). A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.",
             schema: run_schema,
             read_only: false,
-            destructive: false,
+            destructive: true,
             idempotent: false,
         },
         ToolSpec {
