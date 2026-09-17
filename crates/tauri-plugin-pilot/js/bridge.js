@@ -1472,8 +1472,12 @@
     "z-index", "width", "height", "min-width", "min-height", "max-width",
     "max-height", "box-sizing", "aspect-ratio", "margin-top", "margin-right",
     "margin-bottom", "margin-left", "padding-top", "padding-right",
-    "padding-bottom", "padding-left", "overflow-x", "overflow-y", "visibility",
-    "opacity", "vertical-align", "content-visibility", "clip",
+    "padding-bottom", "padding-left", "overflow-x", "overflow-y",
+    // CSS scrollbar painting. `::-webkit-scrollbar` (and other scrollbar
+    // pseudo-elements) cannot be copied this way — html-to-image clones
+    // computed styles on the element, not on pseudo-elements (#166).
+    "scrollbar-color", "scrollbar-width", "scrollbar-gutter",
+    "visibility", "opacity", "vertical-align", "content-visibility", "clip",
     // Flex + grid
     "flex-direction", "flex-wrap", "flex-grow", "flex-shrink", "flex-basis",
     "justify-content", "justify-items", "justify-self", "align-content",
