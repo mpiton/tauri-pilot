@@ -454,10 +454,12 @@ tauri-pilot press Control+1
 tauri-pilot press Ctrl+Shift+P
 ```
 
-Before pressing, the plugin requests focus on the target window so the event
-lands on the right webview. The press takes effect on whatever element holds
-focus inside that window — call `click` first if you need to focus a specific
-input.
+Before pressing, the plugin requests focus on the target window and checks
+that the window actually received it. If the window manager refuses the
+request (common on X11 with focus-stealing prevention), `press` returns an
+error instead of injecting into whichever application currently has focus.
+The press takes effect on whatever element holds focus inside that window —
+call `click` first if you need to focus a specific input.
 
 ---
 

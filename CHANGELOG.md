@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `press` now waits until the target window actually has OS focus after
+  `set_focus`, and returns an error instead of injecting when the window
+  manager refuses the request. Previously `set_focus` succeeding was treated
+  as focus transferred, so on X11 with focus-stealing prevention the keys
+  could land in another application while the RPC still reported `ok`. [#175]
+
 - Bridge commands no longer run on a page that replaced the one they
   checked. The wrapper compares the checked origin before the command.
   If the URL already moved after eval, or a later timeout sees a
