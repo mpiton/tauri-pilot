@@ -13,6 +13,7 @@ use crate::{build_scroll_params, build_wait_params, target_params, with_window};
 
 #[allow(clippy::module_name_repetitions, clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Scenario {
     pub(crate) connect: Option<Connect>,
     #[serde(default)]
@@ -821,6 +822,48 @@ target = "#btn"
         assert_eq!(scenario.step[0].action, "click");
         assert_eq!(scenario.step[0].target.as_deref(), Some("#btn"));
         assert!(scenario.scenario.fail_fast);
+    }
+
+    #[test]
+    fn load_scenario_reads_valid_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("ok.toml");
+        std::fs::write(
+            &path,
+            r##"
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+        )
+        .expect("write scenario");
+        let scenario = load_scenario(&path).expect("load");
+        assert_eq!(scenario.step.len(), 1);
+        assert_eq!(scenario.step[0].action, "click");
+        assert_eq!(scenario.step[0].target.as_deref(), Some("#btn"));
+    }
+
+    #[test]
+    fn load_scenario_invalid_toml_is_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("bad.toml");
+        std::fs::write(&path, "[[[not toml").expect("write scenario");
+        let err = load_scenario(&path).expect_err("invalid toml");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Failed to parse scenario TOML"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_scenario_rejects_unknown_top_level_keys() {
+        let err = parse_scenario("[[steps]]\naction = \"click\"\n").expect_err("unknown key");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Failed to parse scenario TOML"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]

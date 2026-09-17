@@ -3,6 +3,7 @@ use std::{
     path::Path,
     path::PathBuf,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 use anyhow::Result;
@@ -481,24 +482,48 @@ impl PilotMcpServer {
             }
             (Some(path), None) => match scenario::load_scenario(Path::new(&path)) {
                 Ok(scenario) => scenario,
-                Err(err) => return Ok(tool_error(err)),
+                Err(err) => return Ok(tool_error(format!("{err:#}"))),
             },
             (None, Some(content)) => match scenario::parse_scenario(&content) {
                 Ok(scenario) => scenario,
-                Err(err) => return Ok(tool_error(err)),
+                Err(err) => return Ok(tool_error(format!("{err:#}"))),
             },
         };
-        let mut client = match self.connect_client().await {
+        if scenario.step.is_empty() {
+            return Err(invalid_params("run requires at least one [[step]] entry"));
+        }
+        validate_run_scenario_steps(&scenario)?;
+        let mut client = match self.connect_for_run(&scenario).await {
             Ok(client) => client,
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(format!("{err:#}"))),
         };
         Ok(
             match scenario::run_scenario(&mut client, &scenario, window.as_deref(), fail_fast).await
             {
                 Ok(report) => tool_success(scenario::report_to_json(&report)),
-                Err(err) => tool_error(err),
+                Err(err) => tool_error(format!("{err:#}")),
             },
         )
+    }
+
+    async fn connect_for_run(&self, scenario: &scenario::Scenario) -> Result<Client> {
+        let connect = scenario.connect.as_ref();
+        let timeout_ms = connect.and_then(|c| c.timeout_ms);
+        let connect_fut = async {
+            match (
+                self.socket.as_ref(),
+                connect.and_then(|c| c.socket.as_ref()),
+            ) {
+                (None, Some(socket)) => Client::connect(socket).await,
+                _ => self.connect_client().await,
+            }
+        };
+        match timeout_ms {
+            Some(ms) => tokio::time::timeout(Duration::from_millis(ms), connect_fut)
+                .await
+                .map_err(|_elapsed| anyhow::anyhow!("connection timed out after {ms}ms"))?,
+            None => connect_fut.await,
+        }
     }
 
     async fn assert_text(
@@ -722,6 +747,29 @@ fn dangerous_mcp_tools_enabled() -> bool {
     })
 }
 
+fn validate_run_scenario_steps(scenario: &scenario::Scenario) -> Result<(), McpError> {
+    let dangerous_enabled = dangerous_mcp_tools_enabled();
+    for step in &scenario.step {
+        if !dangerous_enabled && DANGEROUS_MCP_TOOLS.contains(&step.action.as_str()) {
+            return Err(invalid_params(format!(
+                "scenario step action '{}' is disabled by default. Set {ENABLE_DANGEROUS_MCP_TOOLS_ENV}=1 to enable dangerous MCP tools.",
+                step.action
+            )));
+        }
+        if step.action == "navigate"
+            && let Some(url) = step.url.as_deref()
+        {
+            validate_navigate_url(url)?;
+        }
+        if step.action == "screenshot" && step.path.is_some() {
+            return Err(invalid_params(
+                "run screenshot steps cannot set 'path'; MCP returns the PNG as a data URL",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_navigate_url(url: &str) -> Result<(), McpError> {
     // Mirror the normalization a browser's URL parser applies before it
     // resolves the scheme, so a crafted string can't smuggle a `javascript:`
@@ -920,7 +968,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "run",
-            description: "Execute a declarative TOML scenario and return per-step results plus a summary.",
+            description: "Execute a declarative TOML scenario and return a JSON report (`ok`, counts, `summary`, `steps`). A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.",
             schema: run_schema,
             read_only: false,
             destructive: false,
@@ -2067,11 +2115,40 @@ mod tests {
     async fn run_invalid_toml_content_is_tool_error() {
         let mut args = Map::new();
         args.insert("content".to_owned(), json!("[[[not toml"));
-        let result = PilotMcpServer::new(None, None)
+        let missing_socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-missing-parse-{}.sock",
+            std::process::id()
+        ));
+        let result = PilotMcpServer::new(Some(missing_socket), None)
             .call_tool_by_name("run", args)
             .await
             .expect("tool call returns");
         assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(
+            error.contains("Failed to parse scenario TOML"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_unknown_top_level_key_is_tool_error() {
+        let mut args = Map::new();
+        args.insert("content".to_owned(), json!("[[steps]]\naction = \"click\""));
+        let missing_socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-missing-unknown-{}.sock",
+            std::process::id()
+        ));
+        let result = PilotMcpServer::new(Some(missing_socket), None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call returns");
+        assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(
+            error.contains("Failed to parse scenario TOML"),
+            "unexpected error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -2082,13 +2159,143 @@ mod tests {
             "run-missing"
         ));
         let _ = std::fs::remove_file(&path);
+        let missing_socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-missing-load-{}.sock",
+            std::process::id()
+        ));
         let mut args = Map::new();
         args.insert("path".to_owned(), json!(path.display().to_string()));
-        let result = PilotMcpServer::new(None, None)
+        let result = PilotMcpServer::new(Some(missing_socket), None)
             .call_tool_by_name("run", args)
             .await
             .expect("tool call returns");
         assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(
+            error.contains("Failed to read scenario file"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_connect_failure_is_tool_error() {
+        let missing_socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-missing-connect-{}.sock",
+            std::process::id()
+        ));
+        let mut args = Map::new();
+        args.insert(
+            "content".to_owned(),
+            json!(
+                r##"
+[[step]]
+action = "click"
+target = "#btn"
+"##
+            ),
+        );
+        let result = PilotMcpServer::new(Some(missing_socket), None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call returns");
+        assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(
+            error.contains("Cannot connect to socket")
+                || error.contains("Cannot connect to named pipe"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_rejects_empty_steps() {
+        let err = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", {
+                let mut args = Map::new();
+                args.insert("content".to_owned(), json!(""));
+                args
+            })
+            .await
+            .expect_err("empty scenario");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("at least one [[step]]"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn run_rejects_eval_step_when_dangerous_tools_disabled() {
+        let mut args = Map::new();
+        args.insert(
+            "content".to_owned(),
+            json!(
+                r#"
+[[step]]
+action = "eval"
+script = "1+1"
+"#
+            ),
+        );
+        let err = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect_err("eval gated");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("eval") && err.message.contains("disabled by default"),
+            "unexpected error: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn run_rejects_javascript_navigate_urls() {
+        let contents = [
+            "[[step]]\naction = \"navigate\"\nurl = \" javascript:alert(1)\"",
+            "[[step]]\naction = \"navigate\"\nurl = \"JaVaScRiPt:alert(1)\"",
+            "[[step]]\naction = \"navigate\"\nurl = \"java\\tscript:alert(1)\"",
+        ];
+        for content in contents {
+            let mut args = Map::new();
+            args.insert("content".to_owned(), json!(content));
+            let err = PilotMcpServer::new(None, None)
+                .call_tool_by_name("run", args)
+                .await
+                .expect_err(&format!("javascript URL should be rejected: {content}"));
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "content: {content}");
+            assert!(
+                err.message.contains("does not allow javascript: URLs"),
+                "unexpected error message for {content}: {}",
+                err.message
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn run_rejects_screenshot_step_with_path() {
+        let mut args = Map::new();
+        args.insert(
+            "content".to_owned(),
+            json!(
+                r#"
+[[step]]
+action = "screenshot"
+path = "/tmp/out.png"
+"#
+            ),
+        );
+        let err = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect_err("screenshot path gated");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("cannot set 'path'"),
+            "unexpected error: {}",
+            err.message
+        );
     }
 
     #[test]
@@ -2541,6 +2748,225 @@ target = "#btn"
 
     #[tokio::test]
     #[cfg(unix)]
+    async fn run_tool_executes_path_click_scenario() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-path-{}.sock",
+            std::process::id()
+        ));
+        let scenario_path = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-path-{}.toml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let _ = std::fs::remove_file(&scenario_path);
+        std::fs::write(
+            &scenario_path,
+            r##"
+[scenario]
+name = "mcp-run-path"
+[[step]]
+name = "click submit"
+action = "click"
+target = "#btn"
+"##,
+        )
+        .expect("write scenario");
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "click");
+            let mut response =
+                serde_json::to_vec(&Response::success(request.id, json!({"ok": true})))
+                    .expect("serialize response");
+            response.push(b'\n');
+            writer.write_all(&response).await.expect("write response");
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert(
+            "path".to_owned(),
+            json!(scenario_path.display().to_string()),
+        );
+        let result = pilot
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call succeeds");
+        assert_eq!(result.is_error, Some(false));
+        let report = result
+            .structured_content
+            .as_ref()
+            .and_then(|content| content.get("result"))
+            .expect("structured result");
+        assert_eq!(report["ok"], true);
+        assert_eq!(report["name"], "mcp-run-path");
+        assert_eq!(report["steps"].as_array().map(Vec::len), Some(1));
+        assert_eq!(report["steps"][0]["status"], "passed");
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+        let _ = std::fs::remove_file(&scenario_path);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_global_timeout_is_tool_error() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-timeout-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.expect("accept");
+            std::future::pending::<()>().await;
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert(
+            "content".to_owned(),
+            json!(
+                r##"
+[scenario]
+name = "timeout"
+global_timeout_ms = 200
+[[step]]
+action = "click"
+target = "#btn"
+"##
+            ),
+        );
+        let result = pilot
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call returns");
+        assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(
+            error.contains("scenario exceeded global timeout"),
+            "unexpected error: {error}"
+        );
+        server.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_honors_connect_socket_when_server_has_none() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-connect-toml-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "click");
+            let mut response =
+                serde_json::to_vec(&Response::success(request.id, json!({"ok": true})))
+                    .expect("serialize response");
+            response.push(b'\n');
+            writer.write_all(&response).await.expect("write response");
+        });
+
+        let content = format!(
+            r##"
+[connect]
+socket = "{}"
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+            socket.display()
+        );
+        let mut args = Map::new();
+        args.insert("content".to_owned(), json!(content));
+        let result = PilotMcpServer::new(None, None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call succeeds");
+        assert_eq!(result.is_error, Some(false));
+        let report = result
+            .structured_content
+            .as_ref()
+            .and_then(|content| content.get("result"))
+            .expect("structured result");
+        assert_eq!(report["ok"], true);
+        assert_eq!(report["steps"][0]["status"], "passed");
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_keeps_server_socket_when_connect_socket_is_set() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-connect-server-{}.sock",
+            std::process::id()
+        ));
+        let missing = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-connect-ignored-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "click");
+            let mut response =
+                serde_json::to_vec(&Response::success(request.id, json!({"ok": true})))
+                    .expect("serialize response");
+            response.push(b'\n');
+            writer.write_all(&response).await.expect("write response");
+        });
+
+        let content = format!(
+            r##"
+[connect]
+socket = "{}"
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+            missing.display()
+        );
+        let mut args = Map::new();
+        args.insert("content".to_owned(), json!(content));
+        let result = PilotMcpServer::new(Some(socket.clone()), None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call succeeds");
+        assert_eq!(result.is_error, Some(false));
+        let report = result
+            .structured_content
+            .as_ref()
+            .and_then(|content| content.get("result"))
+            .expect("structured result");
+        assert_eq!(report["ok"], true);
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
     async fn run_tool_fail_fast_skips_remaining_steps() {
         let socket = std::env::temp_dir().join(format!(
             "tauri-pilot-mcp-run-failfast-{}.sock",
@@ -2680,6 +3106,15 @@ target = "#btn"
             .call_tool_by_name("click", args)
             .await
             .expect("tool call succeeds")
+    }
+
+    fn tool_error_text(result: &CallToolResult) -> &str {
+        result
+            .structured_content
+            .as_ref()
+            .and_then(|content| content.get("error"))
+            .and_then(Value::as_str)
+            .expect("error payload")
     }
 
     #[cfg(unix)]
