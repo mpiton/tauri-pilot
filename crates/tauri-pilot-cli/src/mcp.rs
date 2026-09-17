@@ -762,9 +762,7 @@ fn validate_run_scenario_steps(scenario: &scenario::Scenario) -> Result<(), McpE
             validate_navigate_url(url)?;
         }
         if step.action == "screenshot" && step.path.is_some() {
-            return Err(invalid_params(
-                "run screenshot steps cannot set 'path'; MCP returns the PNG as a data URL",
-            ));
+            return Err(invalid_params("run screenshot steps cannot set 'path'"));
         }
     }
     Ok(())
@@ -1829,7 +1827,6 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::protocol::{Request, Response};
-    #[cfg(unix)]
     use serial_test::serial;
     #[cfg(unix)]
     use tokio::net::UnixListener;
@@ -2129,6 +2126,10 @@ mod tests {
             error.contains("Failed to parse scenario TOML"),
             "unexpected error: {error}"
         );
+        assert!(
+            error.contains("TOML parse error") || error.contains("line"),
+            "cause chain missing from error: {error}"
+        );
     }
 
     #[tokio::test]
@@ -2148,6 +2149,10 @@ mod tests {
         assert!(
             error.contains("Failed to parse scenario TOML"),
             "unexpected error: {error}"
+        );
+        assert!(
+            error.contains("unknown field") && error.contains("steps"),
+            "cause chain missing from error: {error}"
         );
     }
 
@@ -2226,7 +2231,12 @@ target = "#btn"
     }
 
     #[tokio::test]
+    #[serial]
     async fn run_rejects_eval_step_when_dangerous_tools_disabled() {
+        let previous = std::env::var(ENABLE_DANGEROUS_MCP_TOOLS_ENV).ok();
+        // SAFETY: `#[serial]` serializes tests that touch this env var.
+        unsafe { std::env::remove_var(ENABLE_DANGEROUS_MCP_TOOLS_ENV) };
+
         let mut args = Map::new();
         args.insert(
             "content".to_owned(),
@@ -2248,6 +2258,14 @@ script = "1+1"
             "unexpected error: {}",
             err.message
         );
+
+        // SAFETY: restore whatever the process had before this test.
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var(ENABLE_DANGEROUS_MCP_TOOLS_ENV, value),
+                None => std::env::remove_var(ENABLE_DANGEROUS_MCP_TOOLS_ENV),
+            }
+        }
     }
 
     #[tokio::test]
