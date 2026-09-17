@@ -703,7 +703,7 @@ fn target<'a>(
 ) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
     webviews.target(window).map_err(|e| RpcError {
         code: -32603,
-        message: format!("Eval failed: {e}"),
+        message: e,
         data: None,
     })
 }
@@ -1021,7 +1021,7 @@ mod tests {
         .await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
-        assert!(err.message.contains("No webview"));
+        assert_eq!(err.message, "No webview available");
     }
 
     #[tokio::test]
