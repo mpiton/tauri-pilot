@@ -23,6 +23,7 @@ pub(crate) struct Scenario {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Connect {
     pub(crate) socket: Option<PathBuf>,
     pub(crate) timeout_ms: Option<u64>,
@@ -30,6 +31,7 @@ pub(crate) struct Connect {
 
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ScenarioMeta {
     pub(crate) name: Option<String>,
     #[serde(default = "default_true")]
@@ -53,6 +55,7 @@ fn default_true() -> bool {
 
 #[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Step {
     pub(crate) name: Option<String>,
     pub(crate) action: String,
@@ -864,6 +867,49 @@ target = "#btn"
             msg.contains("Failed to parse scenario TOML"),
             "unexpected error: {msg}"
         );
+    }
+
+    #[test]
+    fn parse_scenario_rejects_unknown_nested_keys() {
+        let cases = [
+            (
+                r##"
+[connect]
+timeout_mss = 5000
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+                "timeout_mss",
+            ),
+            (
+                r##"
+[scenario]
+fail_fasst = false
+[[step]]
+action = "click"
+target = "#btn"
+"##,
+                "fail_fasst",
+            ),
+            (
+                r##"
+[[step]]
+action = "click"
+target = "#btn"
+urls = "http://example.com"
+"##,
+                "urls",
+            ),
+        ];
+        for (toml_str, field) in cases {
+            let err = parse_scenario(toml_str).expect_err(field);
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("Failed to parse scenario TOML") && msg.contains(field),
+                "unexpected error for {field}: {msg}"
+            );
+        }
     }
 
     #[test]

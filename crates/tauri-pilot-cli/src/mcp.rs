@@ -2230,12 +2230,36 @@ target = "#btn"
         );
     }
 
+    struct RestoreEnv {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl RestoreEnv {
+        fn unset(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: callers use `#[serial]` around tests that mutate this env var.
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for RestoreEnv {
+        fn drop(&mut self) {
+            // SAFETY: paired with `unset`; restores the pre-test value even if the test panics.
+            unsafe {
+                match &self.previous {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     #[serial]
     async fn run_rejects_eval_step_when_dangerous_tools_disabled() {
-        let previous = std::env::var(ENABLE_DANGEROUS_MCP_TOOLS_ENV).ok();
-        // SAFETY: `#[serial]` serializes tests that touch this env var.
-        unsafe { std::env::remove_var(ENABLE_DANGEROUS_MCP_TOOLS_ENV) };
+        let _guard = RestoreEnv::unset(ENABLE_DANGEROUS_MCP_TOOLS_ENV);
 
         let mut args = Map::new();
         args.insert(
@@ -2258,14 +2282,6 @@ script = "1+1"
             "unexpected error: {}",
             err.message
         );
-
-        // SAFETY: restore whatever the process had before this test.
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var(ENABLE_DANGEROUS_MCP_TOOLS_ENV, value),
-                None => std::env::remove_var(ENABLE_DANGEROUS_MCP_TOOLS_ENV),
-            }
-        }
     }
 
     #[tokio::test]
