@@ -45,6 +45,7 @@ pub(crate) trait TargetWindow: Send {
     fn eval(&self, script: &str) -> Result<(), String>;
 
     /// Window label, as the host app knows it.
+    #[cfg(any(test, feature = "press"))]
     fn label(&self) -> &str;
 
     /// Ask the OS to focus the window.
@@ -140,6 +141,7 @@ impl<R: tauri::Runtime> TargetWindow for tauri::WebviewWindow<R> {
         Self::eval(self, script).map_err(|e| e.to_string())
     }
 
+    #[cfg(any(test, feature = "press"))]
     fn label(&self) -> &str {
         Self::label(self)
     }
@@ -378,6 +380,7 @@ pub(crate) mod fake {
             Ok(())
         }
 
+        #[cfg(any(test, feature = "press"))]
         fn label(&self) -> &str {
             &self.label
         }

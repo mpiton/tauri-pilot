@@ -2,7 +2,9 @@ use crate::diff;
 use crate::eval::{EvalEngine, EvalError, HELLO_ID, origin_key};
 #[cfg(feature = "press")]
 use crate::key;
-use crate::protocol::{RPC_INTERNAL_ERROR, RPC_INVALID_PARAMS, RpcError};
+#[cfg(feature = "press")]
+use crate::protocol::RPC_INTERNAL_ERROR;
+use crate::protocol::{RPC_INVALID_PARAMS, RpcError};
 use crate::recorder::{RecordEntry, Recorder};
 use crate::screenshot;
 use crate::webview::{TargetWindow, Webviews};
