@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `check` on an already-selected radio no longer unchecks it and empties
+  the group. Checkboxes still toggle. [#177]
+
 - `press` now waits until the target window actually has OS focus after
   `set_focus`, and returns an error instead of injecting when the window
   manager refuses the request. Previously `set_focus` succeeding was treated
@@ -879,4 +882,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#172]: https://github.com/mpiton/tauri-pilot/issues/172
 [#173]: https://github.com/mpiton/tauri-pilot/issues/173
 [#175]: https://github.com/mpiton/tauri-pilot/issues/175
+[#177]: https://github.com/mpiton/tauri-pilot/issues/177
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194
