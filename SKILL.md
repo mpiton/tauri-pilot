@@ -99,9 +99,10 @@ Three target formats, auto-detected:
 
 `fill` accepts `<input>`, `<textarea>`, `<select>`, and contenteditable
 elements. `type` accepts the same except `<select>` (use `fill` or `select`).
-Both error on anything else. `check` accepts only checkbox and radio inputs.
-For fill and type, ok means the value landed; for check, confirm with
-`assert checked`.
+Both error on anything else. `check` accepts only checkbox and radio inputs:
+it toggles a checkbox and selects a radio (an already-selected radio stays
+selected). For fill and type, ok means the value landed; for check, confirm
+with `assert checked`.
 
 On contenteditable, fill/type try `insertText` first so Tiptap/ProseMirror
 see the write, then fall back to `textContent`. Read the result with `text`

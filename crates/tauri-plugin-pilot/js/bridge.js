@@ -791,7 +791,9 @@
   function check(params) {
     const el = resolveTarget(params);
     requireCheckable(el);
-    el.checked = !el.checked;
+    const type = el && el.type != null ? String(el.type).toLowerCase() : "";
+    // Radios have no click-to-uncheck; toggling `.checked` can empty the group.
+    el.checked = type === "radio" ? true : !el.checked;
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
   }

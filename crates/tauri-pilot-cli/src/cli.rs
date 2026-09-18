@@ -70,7 +70,7 @@ pub(crate) enum Command {
     Press { key: String },
     /// Select an option in a <select>.
     Select { target: String, value: String },
-    /// Toggle a checkbox or radio input.
+    /// Toggle a checkbox, or select a radio input.
     Check { target: String },
     /// Scroll the page or an element.
     Scroll {

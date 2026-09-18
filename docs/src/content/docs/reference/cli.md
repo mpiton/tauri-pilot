@@ -482,8 +482,10 @@ tauri-pilot select @e5 "closed"
 
 ### `check`
 
-Toggle an `<input type="checkbox">` or `<input type="radio">` (check if
-unchecked, uncheck if checked). Throws on any other element.
+Toggle an `<input type="checkbox">` (check if unchecked, uncheck if
+checked). For `<input type="radio">`, select it and leave it selected —
+an already-selected radio stays selected, matching a real click.
+Throws on any other element.
 
 ```bash
 tauri-pilot check <target>

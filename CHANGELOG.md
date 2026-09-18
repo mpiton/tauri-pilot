@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `check` on an already-selected radio no longer unchecks it and empties
+  the group. Checkboxes still toggle. [#177]
+
 - `press` now waits until the target window actually has OS focus after
   `set_focus`, and returns an error instead of injecting when the window
   manager refuses the request. Previously `set_focus` succeeding was treated

@@ -814,7 +814,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "check",
-            description: "Toggle an <input type=checkbox> or <input type=radio>. Errors on any other element.",
+            description: "Toggle an <input type=checkbox>, or select an <input type=radio> (already selected stays selected). Errors on any other element.",
             schema: target_schema,
             read_only: false,
             destructive: false,

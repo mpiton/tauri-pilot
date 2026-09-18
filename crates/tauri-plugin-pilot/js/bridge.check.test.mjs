@@ -1,8 +1,9 @@
-// Dependency-free behavioural tests for the bridge `check` action (#154).
+// Dependency-free behavioural tests for the bridge `check` action (#154, #177).
 //
 // `check` used to assign `el.checked = !el.checked` on any target. On a <div>
 // that creates an expando and reports ok. It must accept only checkbox and
 // radio inputs, using a realm-safe tag+type guard (not `instanceof`).
+// Checkboxes toggle. Radios select and stay selected (no click-to-uncheck).
 //
 // Run: node --test crates/tauri-plugin-pilot/js/bridge.check.test.mjs
 
@@ -54,16 +55,24 @@ function loadBridge(queryResult) {
   return globalThis.window.__PILOT__;
 }
 
-test("check toggles checkbox and radio inputs", () => {
-  for (const type of ["checkbox", "radio"]) {
-    const el = makeInput(type, false);
-    const pilot = loadBridge(el);
-    assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
-    assert.equal(el.checked, true);
-    assert.ok(el.events.includes("change"));
-    assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
-    assert.equal(el.checked, false);
-  }
+test("check toggles a checkbox", () => {
+  const el = makeInput("checkbox", false);
+  const pilot = loadBridge(el);
+  assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
+  assert.equal(el.checked, true);
+  assert.ok(el.events.includes("change"));
+  assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
+  assert.equal(el.checked, false);
+});
+
+test("check selects a radio and leaves it selected", () => {
+  const el = makeInput("radio", false);
+  const pilot = loadBridge(el);
+  assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
+  assert.equal(el.checked, true);
+  assert.ok(el.events.includes("change"));
+  assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
+  assert.equal(el.checked, true);
 });
 
 test("check throws on a non-input target", () => {
