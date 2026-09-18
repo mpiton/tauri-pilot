@@ -2,6 +2,8 @@ use crate::diff;
 use crate::eval::{EvalEngine, EvalError, HELLO_ID, origin_key};
 #[cfg(feature = "press")]
 use crate::key;
+#[cfg(feature = "press")]
+use crate::protocol::RPC_INTERNAL_ERROR;
 use crate::protocol::{RPC_INVALID_PARAMS, RpcError};
 use crate::recorder::{RecordEntry, Recorder};
 use crate::screenshot;
@@ -11,14 +13,21 @@ use std::time::Duration;
 #[cfg(feature = "press")]
 use tokio::sync::Mutex as AsyncMutex;
 
-/// Delay after requesting window focus before injecting OS-level keyboard
-/// events, so the window manager has time to actually transfer focus. Tuned
-/// empirically — too short and the first key on Wayland drops; too long and
-/// press feels sluggish.
+/// How long `press` waits for the target window to actually gain OS focus
+/// after `set_focus`. `set_focus` only reports that the activation request
+/// was dispatched; on X11, focus-stealing prevention can ignore it and still
+/// return success. Tuned empirically — too short and a legitimate focus
+/// transfer is reported as failure; too long and a refused focus delays the
+/// error. Polling interval is [`FOCUS_POLL_MS`].
 #[cfg(feature = "press")]
 const FOCUS_SETTLE_MS: u64 = 80;
 
-/// Serializes the full `focus → settle → inject` sequence across concurrent
+/// Pause between `is_focused` polls while waiting for [`FOCUS_SETTLE_MS`].
+/// Short enough to notice focus inside the budget, long enough not to spin.
+#[cfg(feature = "press")]
+const FOCUS_POLL_MS: u64 = 5;
+
+/// Serializes the full `focus → confirm → inject` sequence across concurrent
 /// `press` calls. The inner `key::PRESS_LOCK` only covers the OS injection,
 /// so without this outer lock two calls targeting different windows could
 /// race on the focus step and deliver both keys to whichever window won the
@@ -472,7 +481,7 @@ async fn handle_press(
         data: None,
     })?;
 
-    // Hold this lock across the whole focus → settle → inject sequence so
+    // Hold this lock across the whole focus → confirm → inject sequence so
     // two concurrent `press` calls cannot interleave their focus steps (call
     // A focuses window X, call B focuses window Y, then both keys land on Y).
     let _order_guard = PRESS_ORDER_LOCK.lock().await;
@@ -483,27 +492,22 @@ async fn handle_press(
         message: format!("cannot focus target window: {e}"),
         data: None,
     })?;
-    match target.focus() {
-        Ok(()) => {
-            // Only wait if the WM actually accepted the focus request —
-            // a failed focus call won't transfer focus, so sleeping
-            // would just delay the press for nothing.
-            tokio::time::sleep(Duration::from_millis(FOCUS_SETTLE_MS)).await;
+    if let Err(e) = target.focus() {
+        if let Some(label) = window {
+            // The caller explicitly targeted a window; silently
+            // falling through would deliver the key to whatever
+            // window currently has focus and still return ok.
+            return Err(RpcError {
+                code: -32603,
+                message: format!("failed to focus window '{label}': {e}"),
+                data: None,
+            });
         }
-        Err(e) => {
-            if let Some(label) = window {
-                // The caller explicitly targeted a window; silently
-                // falling through would deliver the key to whatever
-                // window currently has focus and still return ok.
-                return Err(RpcError {
-                    code: -32603,
-                    message: format!("failed to focus window '{label}': {e}"),
-                    data: None,
-                });
-            }
-            tracing::warn!(error = %e, "focus before press failed (continuing)");
-        }
+        tracing::warn!(error = %e, "focus before press failed (continuing)");
     }
+    // `focus()` succeeding only means the activation request was dispatched.
+    // Poll until the window actually has OS focus, otherwise keys go elsewhere.
+    wait_until_focused(target).await?;
 
     let combo = key_str.to_owned();
     tokio::task::spawn_blocking(move || key::simulate_press(&combo))
@@ -532,6 +536,52 @@ async fn handle_press(
         })?;
 
     Ok(serde_json::json!({"ok": true}))
+}
+
+/// Poll until `target` reports OS focus, or [`FOCUS_SETTLE_MS`] elapses.
+///
+/// Takes the window by value so the future stays `Send` without requiring
+/// `TargetWindow: Sync` (the box is owned across each sleep). A failed
+/// focus query returns immediately instead of looking like another app won.
+#[cfg(feature = "press")]
+async fn wait_until_focused(target: Box<dyn TargetWindow + '_>) -> Result<(), RpcError> {
+    let budget = Duration::from_millis(FOCUS_SETTLE_MS);
+    let poll = Duration::from_millis(FOCUS_POLL_MS);
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        match target.is_focused() {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => {
+                return Err(RpcError {
+                    code: RPC_INTERNAL_ERROR,
+                    message: format!(
+                        "cannot press: failed to query focus for window '{}': {e}",
+                        target.label()
+                    ),
+                    data: None,
+                });
+            }
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(press_unfocused_error(target.label()));
+        }
+        let step = poll.min(remaining);
+        tokio::time::sleep(step).await;
+    }
+}
+
+/// Error when `press` would type into whichever app currently has focus.
+#[cfg(feature = "press")]
+fn press_unfocused_error(label: &str) -> RpcError {
+    RpcError {
+        code: RPC_INTERNAL_ERROR,
+        message: format!(
+            "cannot press: window '{label}' did not gain focus (another application has it)"
+        ),
+        data: None,
+    }
 }
 
 /// Handle a method that requires JS evaluation via the bridge.
@@ -1082,6 +1132,126 @@ mod tests {
         .await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_fails_when_window_does_not_gain_focus() {
+        // set_focus reports success even when the WM refuses the transfer
+        // (X11 focus-stealing prevention). Injecting anyway would type into
+        // whichever app actually has focus (#175).
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "a"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.expect_err("unfocused press must not inject");
+        assert_eq!(err.code, -32603);
+        assert_eq!(
+            err.message,
+            "cannot press: window 'main' did not gain focus (another application has it)"
+        );
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_focus_error_names_the_window() {
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("settings", Some("https://app.test/"));
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "a", "window": "settings"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.expect_err("unfocused press must not inject");
+        assert_eq!(err.code, -32603);
+        assert_eq!(
+            err.message,
+            "cannot press: window 'settings' did not gain focus (another application has it)"
+        );
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_until_focused_succeeds_when_already_focused() {
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        webviews.set_focused("main", true);
+        let target = webviews.target(None).expect("main window");
+        wait_until_focused(target).await.expect("already focused");
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_until_focused_succeeds_when_focus_arrives() {
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        let later = webviews.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            later.set_focused("main", true);
+        });
+        let target = webviews.target(None).expect("main window");
+        wait_until_focused(target)
+            .await
+            .expect("focus arrived within the budget");
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_until_focused_errors_when_never_focused() {
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        let target = webviews.target(None).expect("main window");
+        let err = wait_until_focused(target).await.expect_err("never focused");
+        assert_eq!(err.code, RPC_INTERNAL_ERROR);
+        assert_eq!(
+            err.message,
+            "cannot press: window 'main' did not gain focus (another application has it)"
+        );
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_until_focused_errors_when_focus_query_fails() {
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        webviews.set_focus_query_error("main", "FailedToSendMessage");
+        let target = webviews.target(None).expect("main window");
+        let err = wait_until_focused(target)
+            .await
+            .expect_err("query failure is not unfocused");
+        assert_eq!(err.code, RPC_INTERNAL_ERROR);
+        assert_eq!(
+            err.message,
+            "cannot press: failed to query focus for window 'main': FailedToSendMessage"
+        );
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_skips_injection_when_focus_query_fails() {
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        webviews.set_focus_query_error("main", "FailedToSendMessage");
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "a"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.expect_err("query failure must not inject");
+        assert_eq!(err.code, -32603);
+        assert_eq!(
+            err.message,
+            "cannot press: failed to query focus for window 'main': FailedToSendMessage"
+        );
     }
 
     #[tokio::test]

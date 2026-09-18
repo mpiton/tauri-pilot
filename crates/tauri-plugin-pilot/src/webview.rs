@@ -44,6 +44,10 @@ pub(crate) trait TargetWindow: Send {
     /// Returns the runtime error when the script cannot be dispatched.
     fn eval(&self, script: &str) -> Result<(), String>;
 
+    /// Window label, as the host app knows it.
+    #[cfg(any(test, feature = "press"))]
+    fn label(&self) -> &str;
+
     /// Ask the OS to focus the window.
     ///
     /// # Errors
@@ -51,6 +55,24 @@ pub(crate) trait TargetWindow: Send {
     /// Returns the runtime error when the focus request fails.
     #[cfg(feature = "press")]
     fn focus(&self) -> Result<(), String>;
+
+    /// Whether the window currently has OS focus.
+    ///
+    /// [`Self::focus`] only reports that the activation request was dispatched.
+    /// The window manager can ignore that request (X11 focus-stealing
+    /// prevention) and still return success, so callers that inject OS-level
+    /// input must poll this until it is true.
+    ///
+    /// On Windows this is the OS foreground window (or the root owner of
+    /// `GetFocus`), not tao's parent-HWND `WM_SETFOCUS` flag. `WebView2` is a
+    /// child HWND; when it holds keyboard focus the parent is blurred even
+    /// though keys still land in the app.
+    ///
+    /// # Errors
+    ///
+    /// Returns the runtime error when the focus state cannot be queried.
+    #[cfg(feature = "press")]
+    fn is_focused(&self) -> Result<bool, String>;
 }
 
 /// [`Webviews`] backed by the Tauri app handle.
@@ -119,9 +141,57 @@ impl<R: tauri::Runtime> TargetWindow for tauri::WebviewWindow<R> {
         Self::eval(self, script).map_err(|e| e.to_string())
     }
 
+    #[cfg(any(test, feature = "press"))]
+    fn label(&self) -> &str {
+        Self::label(self)
+    }
+
     #[cfg(feature = "press")]
     fn focus(&self) -> Result<(), String> {
         self.set_focus().map_err(|e| e.to_string())
+    }
+
+    #[cfg(all(feature = "press", not(windows)))]
+    fn is_focused(&self) -> Result<bool, String> {
+        Self::is_focused(self).map_err(|e| e.to_string())
+    }
+
+    #[cfg(all(feature = "press", windows))]
+    fn is_focused(&self) -> Result<bool, String> {
+        window_is_foreground_for_keys(self)
+    }
+}
+
+/// Whether OS key events would land in `window`.
+///
+/// Tao's `is_focused` is parent-HWND `WM_SETFOCUS`. `WebView2` is a child, so
+/// that flag is false while the app is still the foreground window and keys
+/// still go to the webview. `set_focus` is also a no-op when already
+/// foreground, so polling the tao flag cannot recover.
+#[cfg(all(windows, feature = "press"))]
+fn window_is_foreground_for_keys<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<bool, String> {
+    let hwnd = window
+        .hwnd()
+        .map_err(|e| format!("cannot query window handle: {e}"))?;
+    let window_bits = hwnd.0 as isize;
+    // SAFETY: GetForegroundWindow / GetFocus / GetAncestor are user32
+    // lookups. They do not dereference the HWND in user space.
+    unsafe {
+        let foreground = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        if foreground.0 as isize == window_bits {
+            return Ok(true);
+        }
+        let focus = windows::Win32::UI::Input::KeyboardAndMouse::GetFocus();
+        if focus.is_invalid() {
+            return Ok(false);
+        }
+        let root = windows::Win32::UI::WindowsAndMessaging::GetAncestor(
+            focus,
+            windows::Win32::UI::WindowsAndMessaging::GA_ROOT,
+        );
+        Ok(root.0 as isize == window_bits)
     }
 }
 
@@ -141,14 +211,22 @@ pub(crate) mod fake {
     /// `url()` is live: [`Self::set_url`] is visible to a `target` already
     /// held across an await, matching a real webview that navigated.
     ///
-    /// [`Clone`] shares windows and scripts, but starts with an empty
-    /// responder. Sharing the responder would cycle when `on_eval` captures
-    /// a clone of `self`.
+    /// [`Clone`] shares windows, scripts, and focus state, but starts with an
+    /// empty responder. Sharing the responder would cycle when `on_eval`
+    /// captures a clone of `self`.
     #[derive(Default)]
     pub(crate) struct FakeWebviews {
         windows: Arc<Mutex<BTreeMap<String, Option<Url>>>>,
         scripts: Arc<Mutex<Vec<String>>>,
         responder: Arc<Mutex<Option<FakeResponder>>>,
+        /// Per-window OS focus. Missing labels report unfocused, so a `press`
+        /// test cannot inject keys unless it opts in with [`Self::set_focused`].
+        #[cfg(feature = "press")]
+        focused: Arc<Mutex<BTreeMap<String, bool>>>,
+        /// Per-window `is_focused` query failures. Takes precedence over
+        /// [`Self::set_focused`].
+        #[cfg(feature = "press")]
+        focus_query_error: Arc<Mutex<BTreeMap<String, String>>>,
     }
 
     impl Clone for FakeWebviews {
@@ -157,6 +235,10 @@ pub(crate) mod fake {
                 windows: Arc::clone(&self.windows),
                 scripts: Arc::clone(&self.scripts),
                 responder: Arc::new(Mutex::new(None)),
+                #[cfg(feature = "press")]
+                focused: Arc::clone(&self.focused),
+                #[cfg(feature = "press")]
+                focus_query_error: Arc::clone(&self.focus_query_error),
             }
         }
     }
@@ -201,6 +283,31 @@ pub(crate) mod fake {
         /// Scripts evaluated so far, oldest first.
         pub(crate) fn scripts(&self) -> Vec<String> {
             self.scripts.lock().expect("scripts mutex").clone()
+        }
+
+        /// Report `focused` from [`TargetWindow::is_focused`] for `label`.
+        /// Visible to a live [`TargetWindow`] already held across an await.
+        /// Clears a previous [`Self::set_focus_query_error`] for `label`.
+        #[cfg(feature = "press")]
+        pub(crate) fn set_focused(&self, label: &str, focused: bool) {
+            self.focused
+                .lock()
+                .expect("focused mutex")
+                .insert(label.to_owned(), focused);
+            self.focus_query_error
+                .lock()
+                .expect("focus query error mutex")
+                .remove(label);
+        }
+
+        /// Report `Err` from [`TargetWindow::is_focused`] for `label`.
+        /// Visible to a live [`TargetWindow`] already held across an await.
+        #[cfg(feature = "press")]
+        pub(crate) fn set_focus_query_error(&self, label: &str, error: impl Into<String>) {
+            self.focus_query_error
+                .lock()
+                .expect("focus query error mutex")
+                .insert(label.to_owned(), error.into());
         }
     }
 
@@ -273,15 +380,42 @@ pub(crate) mod fake {
             Ok(())
         }
 
+        #[cfg(any(test, feature = "press"))]
+        fn label(&self) -> &str {
+            &self.label
+        }
+
         #[cfg(feature = "press")]
         fn focus(&self) -> Result<(), String> {
             Ok(())
+        }
+
+        #[cfg(feature = "press")]
+        fn is_focused(&self) -> Result<bool, String> {
+            if let Some(error) = self
+                .webviews
+                .focus_query_error
+                .lock()
+                .expect("focus query error mutex")
+                .get(&self.label)
+                .cloned()
+            {
+                return Err(error);
+            }
+            Ok(self
+                .webviews
+                .focused
+                .lock()
+                .expect("focused mutex")
+                .get(&self.label)
+                .copied()
+                .unwrap_or(false))
         }
     }
 
     #[cfg(test)]
     mod tests {
-        use super::{Arc, FakeWebviews, Mutex, Url, Webviews};
+        use super::{Arc, FakeWebviews, Mutex, TargetWindow, Url, Webviews};
 
         fn with_windows(labels: &[&str]) -> FakeWebviews {
             let windows = labels
@@ -417,6 +551,60 @@ pub(crate) mod fake {
                     .collect::<Vec<_>>(),
                 ["alpha", "main", "settings"]
             );
+        }
+
+        #[test]
+        fn target_label_matches_the_resolved_window() {
+            let webviews = with_windows(&["settings", "main"]);
+            assert_eq!(webviews.target(None).expect("main window").label(), "main");
+            assert_eq!(
+                webviews
+                    .target(Some("settings"))
+                    .expect("settings window")
+                    .label(),
+                "settings"
+            );
+        }
+
+        #[cfg(feature = "press")]
+        #[test]
+        fn is_focused_is_live_after_set_focused() {
+            let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+            let target = webviews.target(None).expect("main window");
+            assert!(
+                !target.is_focused().expect("focus query"),
+                "a new fake window starts unfocused"
+            );
+            webviews.set_focused("main", true);
+            assert!(
+                target.is_focused().expect("focus query"),
+                "set_focused must be visible on a held target"
+            );
+        }
+
+        #[cfg(feature = "press")]
+        #[test]
+        fn clone_shares_focused_state() {
+            let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+            let clone = webviews.clone();
+            clone.set_focused("main", true);
+            assert!(
+                webviews
+                    .target(None)
+                    .expect("main window")
+                    .is_focused()
+                    .expect("focus query")
+            );
+        }
+
+        #[cfg(feature = "press")]
+        #[test]
+        fn is_focused_returns_query_error() {
+            let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+            webviews.set_focus_query_error("main", "FailedToSendMessage");
+            let target = webviews.target(None).expect("main window");
+            let err = target.is_focused().expect_err("query failed");
+            assert_eq!(err, "FailedToSendMessage");
         }
     }
 }
