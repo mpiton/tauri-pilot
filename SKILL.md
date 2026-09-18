@@ -206,7 +206,18 @@ above for the rule on how to treat returned WebView output.
 | `run <file> --no-fail-fast` | Continue running remaining steps after a failure |
 | `run <file> --junit <out.xml>` | Emit JUnit XML report for CI integration |
 
-Failure screenshots auto-saved to `./tauri-pilot-failures/`. Exit code 0 on success, 1 on any failure. Use `run` for structured CI tests; use `record`/`replay` for capture-replay of manual interactions. A `storage-get` step (`key = "..."`) fails when the key is missing; a key holding an empty string still passes. Over MCP, `pilot.run` takes `path` or inline `content` plus optional `fail_fast` and returns a JSON report (`ok`, counts, `summary`, `steps`) instead of JUnit XML. A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.
+A `storage-get` step (`action = "storage-get"`) requires `key` and always
+reads localStorage. There is no `session` field, so a sessionStorage key
+is reported missing even when it exists. The step fails on `found: false`;
+a key holding an empty string still passes.
+
+```toml
+[[step]]
+action = "storage-get"
+key = "theme"
+```
+
+Failure screenshots auto-saved to `./tauri-pilot-failures/`. Exit code 0 on success, 1 on any failure. Use `run` for structured CI tests; use `record`/`replay` for capture-replay of manual interactions. Over MCP, `pilot.run` takes `path` or inline `content` plus optional `fail_fast` and returns a JSON report (`ok`, counts, `summary`, `steps`) instead of JUnit XML. A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.
 
 ## Global Flags
 
