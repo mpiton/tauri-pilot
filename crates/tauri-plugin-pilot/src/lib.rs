@@ -667,7 +667,7 @@ mod tests {
         let app = tauri::test::mock_builder()
             .plugin(super::init())
             .build(context);
-        let _ = std::fs::remove_file(&path);
+        super::server::unix::cleanup_bind_files(&path);
 
         let app = app.expect("second instance must start without a pilot server (#152)");
         assert!(
@@ -688,7 +688,7 @@ mod tests {
             .as_pathname()
             .expect("pathname socket")
             .to_path_buf();
-        let _ = std::fs::remove_file(&path);
+        super::server::unix::cleanup_bind_files(&path);
 
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().identifier = identifier;
@@ -702,7 +702,7 @@ mod tests {
         super::on_pilot_event(app.handle(), &tauri::RunEvent::Exit);
 
         let left = path.exists();
-        let _ = std::fs::remove_file(&path);
+        super::server::unix::cleanup_bind_files(&path);
         assert!(!left, "RunEvent::Exit must unlink the socket (#194)");
     }
 
