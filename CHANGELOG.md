@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- TOML scenario `storage-get` step reads a storage key and fails when it is
+  missing (`found: false`). A key holding an empty string still passes. [#184]
+
 - MCP `pilot.run` executes a TOML scenario from a `path` or inline `content`
   and returns per-step results plus the CLI summary line. `fail_fast`
   overrides the scenario file; JUnit XML is not written because the
@@ -883,4 +886,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#173]: https://github.com/mpiton/tauri-pilot/issues/173
 [#175]: https://github.com/mpiton/tauri-pilot/issues/175
 [#177]: https://github.com/mpiton/tauri-pilot/issues/177
+[#184]: https://github.com/mpiton/tauri-pilot/issues/184
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194
