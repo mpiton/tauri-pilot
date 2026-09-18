@@ -435,6 +435,7 @@ pub async fn run(
     engine: EvalEngine,
     webviews: Arc<dyn Webviews>,
     recorder: Recorder,
+    cleanup: Option<crate::PilotGuard>,
 ) {
     let (first_server, guard) = match bind(&pipe_path) {
         Ok(bound) => bound,
@@ -444,8 +445,20 @@ pub async fn run(
         }
     };
     let identifier = guard.identifier.clone();
+    // Plugin Exit drops the guard; tests pass None and keep it in this task.
+    // Also release when the accept loop ends so a dead pipe is unregistered
+    // while the app PID is still alive.
+    let _guard = if let Some(cleanup) = &cleanup {
+        cleanup.hold_windows(guard);
+        None
+    } else {
+        Some(guard)
+    };
     if let Err(e) = accept_loop(first_server, &identifier, engine, webviews, recorder).await {
         tracing::error!("named pipe server error: {e}");
+    }
+    if let Some(cleanup) = cleanup {
+        cleanup.release();
     }
 }
 
@@ -545,6 +558,7 @@ mod tests {
                 engine,
                 Arc::new(FakeWebviews::default()),
                 Recorder::new(),
+                None,
             )
             .await;
         });
@@ -660,6 +674,7 @@ mod tests {
                 EvalEngine::new(),
                 Arc::new(FakeWebviews::default()),
                 Recorder::new(),
+                None,
             )
             .await;
         });

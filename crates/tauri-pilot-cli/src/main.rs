@@ -1586,21 +1586,83 @@ fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
                         .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
             })
         })
-        .filter(|p| {
-            use std::os::unix::fs::MetadataExt;
-            // SAFETY: getuid() has no preconditions.
-            let my_uid = unsafe { libc::getuid() };
-            std::fs::metadata(p).is_ok_and(|m| m.uid() == my_uid)
-        })
+        .filter(|p| is_owned_pathname_socket(p))
         .collect();
 
     candidates.sort_by_key(|p| {
-        std::fs::metadata(p)
+        std::fs::symlink_metadata(p)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
 
-    candidates.pop()
+    // Newest first; skip leftovers that refuse a connection (#194).
+    candidates
+        .into_iter()
+        .rev()
+        .find(|p| socket_has_listener(p))
+}
+
+/// Current process uid. `getuid` has no preconditions.
+#[cfg(not(windows))]
+fn current_uid() -> u32 {
+    // SAFETY: getuid() has no preconditions.
+    unsafe { libc::getuid() }
+}
+
+/// True when `path` is a pathname socket owned by this user, not a symlink.
+///
+/// `lstat` (not `stat`) so a world-writable `tauri-pilot-*.sock` name that
+/// points at another live socket cannot pass the uid check (#194).
+#[cfg(not(windows))]
+fn is_owned_pathname_socket(path: &Path) -> bool {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    meta.file_type().is_socket() && meta.uid() == current_uid()
+}
+
+/// Upper bound for one auto-detect connect probe.
+///
+/// A leftover file fails immediately with `ConnectionRefused`. A healthy
+/// local listener accepts just as fast. This only fires if the listen
+/// backlog is full, which would otherwise block `resolve_socket` before
+/// the configured JSON-RPC connect timeout runs.
+#[cfg(not(windows))]
+const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
+
+/// True when a process is accepting on this pathname socket.
+///
+/// `ConnectionRefused` (and any other connect error) means no listener, so
+/// auto-detect must not treat the file as a running app (#194). A probe that
+/// exceeds [`SOCKET_PROBE_TIMEOUT`] is treated as live: connect did not
+/// refuse, so a listener exists (typically a full accept backlog).
+#[cfg(not(windows))]
+fn socket_has_listener(path: &Path) -> bool {
+    if !is_owned_pathname_socket(path) {
+        return false;
+    }
+    unix_connect_ready(path)
+}
+
+/// Connects with a timeout so a full accept backlog cannot stall auto-detect.
+#[cfg(not(windows))]
+fn unix_connect_ready(path: &Path) -> bool {
+    let path_buf = path.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    match std::thread::Builder::new()
+        .name("tauri-pilot-socket-probe".into())
+        .spawn(move || {
+            let _ = tx.send(std::os::unix::net::UnixStream::connect(&path_buf).is_ok());
+        }) {
+        Ok(_) => match rx.recv_timeout(SOCKET_PROBE_TIMEOUT) {
+            Ok(ok) => ok,
+            // Timed out: connect did not refuse, so a listener is there.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => true,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => false,
+        },
+        Err(_) => std::os::unix::net::UnixStream::connect(path).is_ok(),
+    }
 }
 
 #[cfg(test)]
@@ -1709,18 +1771,16 @@ mod tests {
     #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_finds_socket_in_xdg_runtime_dir() {
-        let dir =
-            std::env::temp_dir().join(format!("tauri-pilot-xdg-cli-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let dir = isolated_socket_dir("xdg");
         let sock = dir.join("tauri-pilot-myapp.sock");
-        // Create a dummy file that looks like a socket name.
-        std::fs::write(&sock, b"").expect("create dummy socket file");
+        let _listener = bind_live_socket(&sock);
 
         // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
+        drop(_listener);
         let _ = std::fs::remove_file(&sock);
         let _ = std::fs::remove_dir(&dir);
 
@@ -1731,25 +1791,23 @@ mod tests {
     #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_prefers_xdg_runtime_dir_over_tmp() {
-        let dir = std::env::temp_dir().join(format!(
-            "tauri-pilot-xdg-precedence-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let dir = isolated_socket_dir("prec");
         let xdg_sock = dir.join("tauri-pilot-xdg.sock");
         let tmp_sock = std::path::PathBuf::from(format!(
             "/tmp/tauri-pilot-newer-tmp-test-{}.sock",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&tmp_sock);
-        std::fs::write(&xdg_sock, b"").expect("create xdg socket file");
-        std::fs::write(&tmp_sock, b"").expect("create newer tmp socket file");
+        let _xdg_listener = bind_live_socket(&xdg_sock);
+        let _tmp_listener = bind_live_socket(&tmp_sock);
 
         // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
+        drop(_xdg_listener);
+        drop(_tmp_listener);
         let _ = std::fs::remove_file(&xdg_sock);
         let _ = std::fs::remove_file(&tmp_sock);
         let _ = std::fs::remove_dir(&dir);
@@ -1766,12 +1824,12 @@ mod tests {
             std::process::id()
         ));
         // Remove then recreate to ensure this file has the newest mtime.
-        let _ = std::fs::remove_file(&tmp_sock);
-        std::fs::write(&tmp_sock, b"").expect("create dummy socket in /tmp");
+        let _listener = bind_live_socket(&tmp_sock);
 
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
         let result = resolve_socket(None);
 
+        drop(_listener);
         let _ = std::fs::remove_file(&tmp_sock);
 
         // Assert the result is a valid tauri-pilot socket path, not an exact path,
@@ -1795,6 +1853,100 @@ mod tests {
         let explicit = std::path::PathBuf::from("/tmp/my-explicit.sock");
         let result = resolve_socket(Some(explicit.clone()));
         assert_eq!(result.expect("explicit path returned"), explicit);
+    }
+
+    /// Isolated dir for Unix socket tests.
+    ///
+    /// macOS `sockaddr_un.sun_path` is 104 bytes. GitHub Actions `TMPDIR` is
+    /// `/var/folders/.../T/` (~50 chars), so a long `tauri-pilot-*-test-{pid}`
+    /// name plus `tauri-pilot-*.sock` overflows `SUN_LEN`. `/tmp` stays short
+    /// on Linux and macOS.
+    #[cfg(unix)]
+    fn isolated_socket_dir(tag: &str) -> PathBuf {
+        let dir = PathBuf::from("/tmp").join(format!("tp{tag}{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create socket test dir");
+        dir
+    }
+
+    #[cfg(unix)]
+    fn bind_live_socket(path: &Path) -> std::os::unix::net::UnixListener {
+        let _ = std::fs::remove_file(path);
+        std::os::unix::net::UnixListener::bind(path).expect("bind live socket")
+    }
+
+    #[cfg(unix)]
+    fn make_dead_socket(path: &Path) {
+        drop(bind_live_socket(path));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn test_resolve_socket_skips_dead_sockets() {
+        // #194: a leftover file with no listener must not count as a running app.
+        // Probe the isolated dir directly: resolve_socket(None) also walks /tmp,
+        // which other tests may populate with live sockets.
+        let dir = isolated_socket_dir("dead");
+        let dead = dir.join("tauri-pilot-dead.sock");
+        make_dead_socket(&dead);
+
+        let found = newest_socket_in_dir(&dir);
+
+        let _ = std::fs::remove_file(&dead);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert!(
+            found.is_none(),
+            "dead socket must not be selected: {found:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn test_resolve_socket_prefers_live_socket_over_newer_dead_one() {
+        // #194: quitting app B must not hide a still-running app A.
+        let dir = isolated_socket_dir("lod");
+        let live = dir.join("tauri-pilot-app-a.sock");
+        let dead = dir.join("tauri-pilot-app-b.sock");
+        let listener = bind_live_socket(&live);
+        // Dead file must be newer so mtime-only discovery would pick it.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        make_dead_socket(&dead);
+
+        let found = newest_socket_in_dir(&dir);
+
+        drop(listener);
+        let _ = std::fs::remove_file(&live);
+        let _ = std::fs::remove_file(&dead);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(found.expect("live socket found"), live);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn test_resolve_socket_skips_symlink_to_live_socket() {
+        // A planted tauri-pilot-*.sock symlink must not pass the uid/socket
+        // filter even when it points at a live socket this user owns.
+        let dir = isolated_socket_dir("link");
+        let real = dir.join("real-listener.sock");
+        let planted = dir.join("tauri-pilot-planted.sock");
+        let listener = bind_live_socket(&real);
+        std::os::unix::fs::symlink(&real, &planted).expect("plant symlink");
+
+        let found = newest_socket_in_dir(&dir);
+
+        drop(listener);
+        let _ = std::fs::remove_file(&planted);
+        let _ = std::fs::remove_file(&real);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert!(
+            found.is_none(),
+            "symlink must not be selected as a live socket: {found:?}"
+        );
     }
 
     #[test]
