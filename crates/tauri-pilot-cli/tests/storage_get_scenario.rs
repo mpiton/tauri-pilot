@@ -173,3 +173,25 @@ fn storage_get_scenario_empty_value_passes() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn storage_get_scenario_missing_found_fails() {
+    let (output, methods, params) =
+        run_storage_get_scenario("some-key", serde_json::json!({"value": ""}));
+
+    assert_storage_get_called(&methods, &params, "some-key");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a response without boolean found must fail the scenario"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("found"),
+        "failure must name the missing found field, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("not found"),
+        "missing found is not a missing key, got: {stderr}"
+    );
+}
