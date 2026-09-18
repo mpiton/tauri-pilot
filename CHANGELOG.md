@@ -37,8 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pathname socket bind serializes stale replacement with an exclusive
   flock on a sibling lock file, so two instances starting over the same
   leftover socket cannot unlink each other's file or record the wrong
-  inode. The lock is released before bind returns, so a live second
-  instance still gets "already in use" immediately. [#195]
+  inode. The flock is released before bind returns, so a live second
+  instance still gets "already in use" immediately. The sibling
+  `{socket}.lock` file may remain and is reused on the next bind. [#195]
 
 - `check` on an already-selected radio no longer unchecks it and empties
   the group. Checkboxes still toggle. [#177]

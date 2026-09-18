@@ -130,6 +130,7 @@ fn android_socket_name(identifier: &str) -> std::io::Result<String> {
 ///
 /// Pathname bind serializes stale replacement with a sibling lock file so two
 /// instances cannot steal the path. The lock is released before this returns.
+/// The sibling `{socket}.lock` file may remain and is reused on the next bind.
 ///
 /// # Errors
 /// Rejects unnamed addresses. Propagates I/O errors from binding, the sibling
@@ -176,16 +177,22 @@ struct BindLock {
 /// itself: `unlink` + rebind replaces that inode and would drop the flock
 /// mid-section. The socket directory is not used either (`/tmp` is
 /// world-writable).
-pub(crate) fn bind_lock_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+fn bind_lock_path(socket_path: &std::path::Path) -> std::path::PathBuf {
     let mut lock = socket_path.as_os_str().to_owned();
     lock.push(".lock");
     std::path::PathBuf::from(lock)
 }
 
+/// Removes a pathname socket and its sibling lock file.
+#[cfg(test)]
+pub(crate) fn cleanup_bind_files(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(bind_lock_path(path));
+}
+
 fn acquire_bind_lock(socket_path: &std::path::Path) -> std::io::Result<BindLock> {
     use std::fs::OpenOptions;
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::io::AsRawFd;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
     let path = bind_lock_path(socket_path);
     let file = OpenOptions::new()
@@ -195,17 +202,19 @@ fn acquire_bind_lock(socket_path: &std::path::Path) -> std::io::Result<BindLock>
         // Reuse a leftover lock file; flock is on the inode, not the contents.
         .truncate(false)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(&path)?;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    let rc = unsafe {
-        // SAFETY: `file` is an open fd we own. `flock` does not take
-        // ownership of the fd or invalidate it. `LOCK_EX` is a valid
-        // operation for an open file.
-        libc::flock(file.as_raw_fd(), libc::LOCK_EX)
-    };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error());
+    let meta = file.metadata()?;
+    // SAFETY: getuid() has no preconditions.
+    let my_uid = unsafe { libc::getuid() };
+    if !meta.is_file() || meta.uid() != my_uid || meta.nlink() != 1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "bind lock must be a regular file owned by this user",
+        ));
     }
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    file.lock()?;
     Ok(BindLock { _file: file })
 }
 
@@ -426,11 +435,6 @@ mod tests {
         ))
     }
 
-    fn cleanup_bind_files(path: &Path) {
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(super::bind_lock_path(path));
-    }
-
     fn plant_stale_socket(path: &Path) {
         let stale = std::os::unix::net::UnixListener::bind(path).expect("plant stale socket");
         drop(stale);
@@ -514,19 +518,31 @@ mod tests {
 
     #[test]
     fn leftover_bind_lock_file_does_not_block_bind() {
+        use std::os::unix::fs::PermissionsExt;
+
         let socket = unique_socket_path();
-        std::fs::write(super::bind_lock_path(&socket), b"").expect("plant leftover lock");
+        let lock_path = super::bind_lock_path(&socket);
+        std::fs::write(&lock_path, b"").expect("plant leftover lock");
+        std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o666))
+            .expect("widen leftover lock");
         let address = SocketAddr::from_pathname(&socket).expect("test socket address");
         let (listener, guard) = bind(&address).expect("bind with leftover lock file");
+        let mode = std::fs::metadata(&lock_path)
+            .expect("lock metadata")
+            .permissions()
+            .mode()
+            & 0o777;
         drop(guard);
         drop(listener);
         cleanup_bind_files(&socket);
+        assert_eq!(
+            mode, 0o600,
+            "reused leftover lock must be owner-only, got {mode:#o}"
+        );
     }
 
     #[test]
     fn bind_releases_sibling_lock_before_returning() {
-        use std::os::unix::io::AsRawFd;
-
         let socket = unique_socket_path();
         let address = SocketAddr::from_pathname(&socket).expect("test socket address");
         let (listener, guard) = bind(&address).expect("bind test socket");
@@ -535,15 +551,12 @@ mod tests {
             .write(true)
             .open(super::bind_lock_path(&socket))
             .expect("open sibling lock after bind");
-        let rc = unsafe {
-            // SAFETY: `lock` is an open fd we own; flock does not take it.
-            libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
-        };
+        lock.try_lock()
+            .expect("sibling lock must be free after bind returns");
         drop(guard);
         drop(listener);
         drop(lock);
         cleanup_bind_files(&socket);
-        assert_eq!(rc, 0, "sibling lock must be free after bind returns");
     }
 
     #[test]
@@ -552,12 +565,14 @@ mod tests {
         std::fs::create_dir(super::bind_lock_path(&socket)).expect("lock path is a directory");
         let address = SocketAddr::from_pathname(&socket).expect("test socket address");
         let result = bind(&address);
+        let bound = socket.exists();
         let _ = std::fs::remove_dir(super::bind_lock_path(&socket));
         cleanup_bind_files(&socket);
         assert!(
             result.is_err(),
             "must not bind if the sibling lock cannot be created"
         );
+        assert!(!bound, "lock create failure must not leave a bound socket");
     }
 
     #[test]
