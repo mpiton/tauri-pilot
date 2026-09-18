@@ -446,7 +446,9 @@ pub async fn run(
     };
     let identifier = guard.identifier.clone();
     // Plugin Exit drops the guard; tests pass None and keep it in this task.
-    let _guard = if let Some(cleanup) = cleanup {
+    // Also release when the accept loop ends so a dead pipe is unregistered
+    // while the app PID is still alive.
+    let _guard = if let Some(cleanup) = &cleanup {
         cleanup.hold_windows(guard);
         None
     } else {
@@ -454,6 +456,9 @@ pub async fn run(
     };
     if let Err(e) = accept_loop(first_server, &identifier, engine, webviews, recorder).await {
         tracing::error!("named pipe server error: {e}");
+    }
+    if let Some(cleanup) = cleanup {
+        cleanup.release();
     }
 }
 

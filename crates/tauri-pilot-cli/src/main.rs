@@ -1586,16 +1586,11 @@ fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
                         .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
             })
         })
-        .filter(|p| {
-            use std::os::unix::fs::MetadataExt;
-            // SAFETY: getuid() has no preconditions.
-            let my_uid = unsafe { libc::getuid() };
-            std::fs::metadata(p).is_ok_and(|m| m.uid() == my_uid)
-        })
+        .filter(|p| is_owned_pathname_socket(p))
         .collect();
 
     candidates.sort_by_key(|p| {
-        std::fs::metadata(p)
+        std::fs::symlink_metadata(p)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
@@ -1607,13 +1602,67 @@ fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
         .find(|p| socket_has_listener(p))
 }
 
+/// Current process uid. `getuid` has no preconditions.
+#[cfg(not(windows))]
+fn current_uid() -> u32 {
+    // SAFETY: getuid() has no preconditions.
+    unsafe { libc::getuid() }
+}
+
+/// True when `path` is a pathname socket owned by this user, not a symlink.
+///
+/// `lstat` (not `stat`) so a world-writable `tauri-pilot-*.sock` name that
+/// points at another live socket cannot pass the uid check (#194).
+#[cfg(not(windows))]
+fn is_owned_pathname_socket(path: &Path) -> bool {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    meta.file_type().is_socket() && meta.uid() == current_uid()
+}
+
+/// Upper bound for one auto-detect connect probe.
+///
+/// A leftover file fails immediately with `ConnectionRefused`. A healthy
+/// local listener accepts just as fast. This only fires if the listen
+/// backlog is full, which would otherwise block `resolve_socket` before
+/// the configured JSON-RPC connect timeout runs.
+#[cfg(not(windows))]
+const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(200);
+
 /// True when a process is accepting on this pathname socket.
 ///
 /// `ConnectionRefused` (and any other connect error) means no listener, so
-/// auto-detect must not treat the file as a running app (#194).
+/// auto-detect must not treat the file as a running app (#194). A probe that
+/// exceeds [`SOCKET_PROBE_TIMEOUT`] is treated as live: connect did not
+/// refuse, so a listener exists (typically a full accept backlog).
 #[cfg(not(windows))]
 fn socket_has_listener(path: &Path) -> bool {
-    std::os::unix::net::UnixStream::connect(path).is_ok()
+    if !is_owned_pathname_socket(path) {
+        return false;
+    }
+    unix_connect_ready(path)
+}
+
+/// Connects with a timeout so a full accept backlog cannot stall auto-detect.
+#[cfg(not(windows))]
+fn unix_connect_ready(path: &Path) -> bool {
+    let path_buf = path.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    match std::thread::Builder::new()
+        .name("tauri-pilot-socket-probe".into())
+        .spawn(move || {
+            let _ = tx.send(std::os::unix::net::UnixStream::connect(&path_buf).is_ok());
+        }) {
+        Ok(_) => match rx.recv_timeout(SOCKET_PROBE_TIMEOUT) {
+            Ok(ok) => ok,
+            // Timed out: connect did not refuse, so a listener is there.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => true,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => false,
+        },
+        Err(_) => std::os::unix::net::UnixStream::connect(path).is_ok(),
+    }
 }
 
 #[cfg(test)]
@@ -1872,6 +1921,35 @@ mod tests {
         let _ = std::fs::remove_dir(&dir);
 
         assert_eq!(found.expect("live socket found"), live);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn test_resolve_socket_skips_symlink_to_live_socket() {
+        // A planted tauri-pilot-*.sock symlink must not pass the uid/socket
+        // filter even when it points at a live socket this user owns.
+        let dir = std::env::temp_dir().join(format!(
+            "tauri-pilot-symlink-probe-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create probe test dir");
+        let real = dir.join("real-listener.sock");
+        let planted = dir.join("tauri-pilot-planted.sock");
+        let listener = bind_live_socket(&real);
+        std::os::unix::fs::symlink(&real, &planted).expect("plant symlink");
+
+        let found = newest_socket_in_dir(&dir);
+
+        drop(listener);
+        let _ = std::fs::remove_file(&planted);
+        let _ = std::fs::remove_file(&real);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert!(
+            found.is_none(),
+            "symlink must not be selected as a live socket: {found:?}"
+        );
     }
 
     #[test]

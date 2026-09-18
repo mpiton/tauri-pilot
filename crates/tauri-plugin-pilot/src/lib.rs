@@ -706,6 +706,31 @@ mod tests {
         assert!(!left, "RunEvent::Exit must unlink the socket (#194)");
     }
 
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
+    fn hold_after_release_drops_guard_immediately() {
+        // Windows bind can finish after RunEvent::Exit; GuardSlot::Released
+        // must drop a late hold so the instance file does not survive quit.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        struct DropSpy(Arc<AtomicBool>);
+        impl Drop for DropSpy {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let slot = Mutex::new(super::GuardSlot::Empty);
+        super::release_slot(&slot);
+        super::hold_slot(&slot, DropSpy(Arc::clone(&dropped)));
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "hold after release must drop the guard immediately"
+        );
+    }
+
     #[cfg(all(windows, debug_assertions))]
     #[test]
     fn normal_quit_unlinks_instance_file() {
