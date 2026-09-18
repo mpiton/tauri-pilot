@@ -659,6 +659,7 @@ mod tests {
             .as_pathname()
             .expect("pathname socket")
             .to_path_buf();
+        let lock = super::server::unix::bind_lock_path(&path);
         // First instance: a live listener on the pilot socket.
         let _first = std::os::unix::net::UnixListener::bind(&path).expect("bind first instance");
 
@@ -668,6 +669,7 @@ mod tests {
             .plugin(super::init())
             .build(context);
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock);
 
         let app = app.expect("second instance must start without a pilot server (#152)");
         assert!(
@@ -688,7 +690,9 @@ mod tests {
             .as_pathname()
             .expect("pathname socket")
             .to_path_buf();
+        let lock = super::server::unix::bind_lock_path(&path);
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock);
 
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().identifier = identifier;
@@ -703,6 +707,7 @@ mod tests {
 
         let left = path.exists();
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&lock);
         assert!(!left, "RunEvent::Exit must unlink the socket (#194)");
     }
 

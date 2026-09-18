@@ -128,8 +128,12 @@ fn android_socket_name(identifier: &str) -> std::io::Result<String> {
 /// Returns the listener and a cleanup guard for pathname sockets. Abstract sockets
 /// have no guard because the kernel releases their names when the listener closes.
 ///
+/// Pathname bind serializes stale replacement with a sibling lock file so two
+/// instances cannot steal the path. The lock is released before this returns.
+///
 /// # Errors
-/// Rejects unnamed addresses and propagates socket binding or configuration errors.
+/// Rejects unnamed addresses. Propagates I/O errors from binding, the sibling
+/// lock file, or socket configuration.
 pub fn bind(
     address: &SocketAddr,
 ) -> Result<(std::os::unix::net::UnixListener, Option<SocketGuard>), Error> {
@@ -158,15 +162,67 @@ fn bind_abstract(address: &SocketAddr) -> Result<std::os::unix::net::UnixListene
     Ok(listener)
 }
 
+/// Exclusive flock for pathname bind. Closing the fd releases it, so the
+/// file must live until `SocketGuard` has recorded the inode.
+#[must_use]
+struct BindLock {
+    _file: std::fs::File,
+}
+
+/// Sibling of `socket_path` used only as a flock inode.
+///
+/// The suffix is appended to the full socket pathname (`foo.sock.lock`) so
+/// it cannot collide with the socket file. The lock must not be the socket
+/// itself: `unlink` + rebind replaces that inode and would drop the flock
+/// mid-section. The socket directory is not used either (`/tmp` is
+/// world-writable).
+pub(crate) fn bind_lock_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    let mut lock = socket_path.as_os_str().to_owned();
+    lock.push(".lock");
+    std::path::PathBuf::from(lock)
+}
+
+fn acquire_bind_lock(socket_path: &std::path::Path) -> std::io::Result<BindLock> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+
+    let path = bind_lock_path(socket_path);
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        // Reuse a leftover lock file; flock is on the inode, not the contents.
+        .truncate(false)
+        .mode(0o600)
+        .open(&path)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    let rc = unsafe {
+        // SAFETY: `file` is an open fd we own. `flock` does not take
+        // ownership of the fd or invalidate it. `LOCK_EX` is a valid
+        // operation for an open file.
+        libc::flock(file.as_raw_fd(), libc::LOCK_EX)
+    };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(BindLock { _file: file })
+}
+
 /// Applies owner-only permissions and removes stale pathname sockets only when
 /// connecting confirms that no live listener remains.
 ///
-/// Does not change the process umask around bind: umask is per-process, and
-/// other threads would inherit a `0o177` mask (#172). `set_permissions(0o600)`
-/// still runs after bind, and every connection is checked against the peer UID.
+/// An exclusive flock on a sibling lock file covers the stale probe, unlink,
+/// rebind, and inode read so two starters cannot steal the path (#195). The
+/// lock is released when this function returns, not for the server lifetime
+/// (#152). Does not change the process umask around bind: umask is
+/// per-process, and other threads would inherit a `0o177` mask (#172).
+/// `set_permissions(0o600)` still runs after bind, and every connection is
+/// checked against the peer UID.
 fn bind_pathname(
     socket_path: &std::path::Path,
 ) -> Result<(std::os::unix::net::UnixListener, SocketGuard), Error> {
+    let _lock = acquire_bind_lock(socket_path)?;
     let first_bind = std::os::unix::net::UnixListener::bind(socket_path);
 
     let listener = match first_bind {
@@ -370,6 +426,158 @@ mod tests {
         ))
     }
 
+    fn cleanup_bind_files(path: &Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(super::bind_lock_path(path));
+    }
+
+    fn plant_stale_socket(path: &Path) {
+        let stale = std::os::unix::net::UnixListener::bind(path).expect("plant stale socket");
+        drop(stale);
+        assert!(
+            path.exists(),
+            "stale socket file must remain after listener drop"
+        );
+    }
+
+    fn path_reaches_listener(listener: &std::os::unix::net::UnixListener, path: &Path) -> bool {
+        if std::os::unix::net::UnixStream::connect(path).is_err() {
+            return false;
+        }
+        listener.accept().is_ok()
+    }
+
+    #[test]
+    fn overlapping_stale_replaces_leave_one_reachable_winner() {
+        for i in 0..200 {
+            let socket = unique_socket_path();
+            plant_stale_socket(&socket);
+            let a_path = socket.clone();
+            let b_path = socket.clone();
+            let a = std::thread::spawn(move || {
+                let address = SocketAddr::from_pathname(&a_path).expect("test socket address");
+                bind(&address)
+            });
+            let b = std::thread::spawn(move || {
+                let address = SocketAddr::from_pathname(&b_path).expect("test socket address");
+                bind(&address)
+            });
+            let ra = a.join().expect("thread a");
+            let rb = b.join().expect("thread b");
+
+            let mut oks = Vec::new();
+            for result in [ra, rb] {
+                match result {
+                    Ok(pair) => oks.push(pair),
+                    Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::AddrInUse => {}
+                    Err(e) => panic!("iteration {i}: unexpected bind error {e}"),
+                }
+            }
+            let reachable = oks
+                .iter()
+                .filter(|(listener, _)| path_reaches_listener(listener, &socket))
+                .count();
+            let ok_count = oks.len();
+            for (listener, guard) in oks {
+                drop(guard);
+                drop(listener);
+            }
+            cleanup_bind_files(&socket);
+            assert_eq!(
+                (ok_count, reachable),
+                (1, 1),
+                "iteration {i}: one bind must win and own the path"
+            );
+        }
+    }
+
+    #[test]
+    fn live_socket_is_already_in_use_without_waiting() {
+        let socket = unique_socket_path();
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+        let (listener, guard) = bind(&address).expect("first bind");
+        let started = std::time::Instant::now();
+        let second = bind(&address);
+        let elapsed = started.elapsed();
+        drop(guard);
+        drop(listener);
+        cleanup_bind_files(&socket);
+        assert!(
+            matches!(&second, Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::AddrInUse),
+            "live socket must stay in use"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "second bind waited {elapsed:?}; lock must not outlive bind"
+        );
+    }
+
+    #[test]
+    fn leftover_bind_lock_file_does_not_block_bind() {
+        let socket = unique_socket_path();
+        std::fs::write(super::bind_lock_path(&socket), b"").expect("plant leftover lock");
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+        let (listener, guard) = bind(&address).expect("bind with leftover lock file");
+        drop(guard);
+        drop(listener);
+        cleanup_bind_files(&socket);
+    }
+
+    #[test]
+    fn bind_releases_sibling_lock_before_returning() {
+        use std::os::unix::io::AsRawFd;
+
+        let socket = unique_socket_path();
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+        let (listener, guard) = bind(&address).expect("bind test socket");
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(super::bind_lock_path(&socket))
+            .expect("open sibling lock after bind");
+        let rc = unsafe {
+            // SAFETY: `lock` is an open fd we own; flock does not take it.
+            libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
+        };
+        drop(guard);
+        drop(listener);
+        drop(lock);
+        cleanup_bind_files(&socket);
+        assert_eq!(rc, 0, "sibling lock must be free after bind returns");
+    }
+
+    #[test]
+    fn bind_fails_when_sibling_lock_cannot_be_created() {
+        let socket = unique_socket_path();
+        std::fs::create_dir(super::bind_lock_path(&socket)).expect("lock path is a directory");
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+        let result = bind(&address);
+        let _ = std::fs::remove_dir(super::bind_lock_path(&socket));
+        cleanup_bind_files(&socket);
+        assert!(
+            result.is_err(),
+            "must not bind if the sibling lock cannot be created"
+        );
+    }
+
+    #[test]
+    fn sibling_lock_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let socket = unique_socket_path();
+        let address = SocketAddr::from_pathname(&socket).expect("test socket address");
+        let (listener, guard) = bind(&address).expect("bind test socket");
+        let mode = std::fs::metadata(super::bind_lock_path(&socket))
+            .expect("lock metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        drop(guard);
+        drop(listener);
+        cleanup_bind_files(&socket);
+        assert_eq!(mode, 0o600, "lock file must be owner-only, got {mode:#o}");
+    }
+
     async fn start_test_server(path: &Path) -> tokio::task::JoinHandle<()> {
         let address = SocketAddr::from_pathname(path).expect("test socket address");
         let (listener, guard) = bind(&address).expect("bind test socket");
@@ -419,7 +627,7 @@ mod tests {
         );
 
         handle.abort();
-        let _ = std::fs::remove_file(&socket);
+        cleanup_bind_files(&socket);
     }
 
     #[tokio::test]
@@ -448,7 +656,7 @@ mod tests {
         assert_eq!(err.code, -32700);
 
         handle.abort();
-        let _ = std::fs::remove_file(&socket);
+        cleanup_bind_files(&socket);
     }
 
     #[tokio::test]
@@ -477,7 +685,7 @@ mod tests {
         }
 
         handle.abort();
-        let _ = std::fs::remove_file(&socket);
+        cleanup_bind_files(&socket);
     }
 
     #[test]
@@ -519,6 +727,7 @@ mod tests {
         );
         drop(listener);
         drop(guard);
+        cleanup_bind_files(&socket);
     }
 
     #[test]
@@ -532,7 +741,7 @@ mod tests {
         drop(listener);
         drop(guard);
         let own_left = socket.exists();
-        let _ = std::fs::remove_file(&socket);
+        cleanup_bind_files(&socket);
         assert!(!own_left, "guard must unlink the socket it bound");
 
         // Another instance re-bound the path: that socket is not ours to remove.
@@ -544,7 +753,7 @@ mod tests {
         let _other = std::os::unix::net::UnixListener::bind(&socket).expect("rebind socket path");
         drop(guard);
         let other_kept = socket.exists();
-        let _ = std::fs::remove_file(&socket);
+        cleanup_bind_files(&socket);
         assert!(other_kept, "guard must not unlink a socket it did not bind");
     }
 
@@ -625,7 +834,10 @@ mod tests {
         for _ in 0..500 {
             let socket = unique_socket_path();
             let address = SocketAddr::from_pathname(&socket).expect("test socket address");
-            let (_listener, _guard) = bind(&address).expect("bind test socket");
+            let (listener, guard) = bind(&address).expect("bind test socket");
+            drop(guard);
+            drop(listener);
+            cleanup_bind_files(&socket);
         }
 
         stop.store(true, Ordering::Release);
