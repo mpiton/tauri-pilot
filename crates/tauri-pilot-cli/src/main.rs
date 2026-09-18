@@ -1771,9 +1771,7 @@ mod tests {
     #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_finds_socket_in_xdg_runtime_dir() {
-        let dir =
-            std::env::temp_dir().join(format!("tauri-pilot-xdg-cli-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let dir = isolated_socket_dir("xdg");
         let sock = dir.join("tauri-pilot-myapp.sock");
         let _listener = bind_live_socket(&sock);
 
@@ -1793,11 +1791,7 @@ mod tests {
     #[cfg(unix)]
     #[serial]
     fn test_resolve_socket_prefers_xdg_runtime_dir_over_tmp() {
-        let dir = std::env::temp_dir().join(format!(
-            "tauri-pilot-xdg-precedence-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let dir = isolated_socket_dir("prec");
         let xdg_sock = dir.join("tauri-pilot-xdg.sock");
         let tmp_sock = std::path::PathBuf::from(format!(
             "/tmp/tauri-pilot-newer-tmp-test-{}.sock",
@@ -1861,6 +1855,19 @@ mod tests {
         assert_eq!(result.expect("explicit path returned"), explicit);
     }
 
+    /// Isolated dir for Unix socket tests.
+    ///
+    /// macOS `sockaddr_un.sun_path` is 104 bytes. GitHub Actions `TMPDIR` is
+    /// `/var/folders/.../T/` (~50 chars), so a long `tauri-pilot-*-test-{pid}`
+    /// name plus `tauri-pilot-*.sock` overflows `SUN_LEN`. `/tmp` stays short
+    /// on Linux and macOS.
+    #[cfg(unix)]
+    fn isolated_socket_dir(tag: &str) -> PathBuf {
+        let dir = PathBuf::from("/tmp").join(format!("tp{tag}{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create socket test dir");
+        dir
+    }
+
     #[cfg(unix)]
     fn bind_live_socket(path: &Path) -> std::os::unix::net::UnixListener {
         let _ = std::fs::remove_file(path);
@@ -1879,9 +1886,7 @@ mod tests {
         // #194: a leftover file with no listener must not count as a running app.
         // Probe the isolated dir directly: resolve_socket(None) also walks /tmp,
         // which other tests may populate with live sockets.
-        let dir =
-            std::env::temp_dir().join(format!("tauri-pilot-dead-only-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let dir = isolated_socket_dir("dead");
         let dead = dir.join("tauri-pilot-dead.sock");
         make_dead_socket(&dead);
 
@@ -1901,11 +1906,7 @@ mod tests {
     #[serial]
     fn test_resolve_socket_prefers_live_socket_over_newer_dead_one() {
         // #194: quitting app B must not hide a still-running app A.
-        let dir = std::env::temp_dir().join(format!(
-            "tauri-pilot-live-over-dead-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let dir = isolated_socket_dir("lod");
         let live = dir.join("tauri-pilot-app-a.sock");
         let dead = dir.join("tauri-pilot-app-b.sock");
         let listener = bind_live_socket(&live);
@@ -1929,11 +1930,7 @@ mod tests {
     fn test_resolve_socket_skips_symlink_to_live_socket() {
         // A planted tauri-pilot-*.sock symlink must not pass the uid/socket
         // filter even when it points at a live socket this user owns.
-        let dir = std::env::temp_dir().join(format!(
-            "tauri-pilot-symlink-probe-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("create probe test dir");
+        let dir = isolated_socket_dir("link");
         let real = dir.join("real-listener.sock");
         let planted = dir.join("tauri-pilot-planted.sock");
         let listener = bind_live_socket(&real);
