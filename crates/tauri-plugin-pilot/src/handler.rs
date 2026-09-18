@@ -539,15 +539,27 @@ async fn handle_press(
 /// Poll until `target` reports OS focus, or [`FOCUS_SETTLE_MS`] elapses.
 ///
 /// Takes the window by value so the future stays `Send` without requiring
-/// `TargetWindow: Sync` (the box is owned across each sleep).
+/// `TargetWindow: Sync` (the box is owned across each sleep). A failed
+/// focus query returns immediately instead of looking like another app won.
 #[cfg(feature = "press")]
 async fn wait_until_focused(target: Box<dyn TargetWindow + '_>) -> Result<(), RpcError> {
     let budget = Duration::from_millis(FOCUS_SETTLE_MS);
     let poll = Duration::from_millis(FOCUS_POLL_MS);
     let mut waited = Duration::ZERO;
     loop {
-        if matches!(target.is_focused(), Ok(true)) {
-            return Ok(());
+        match target.is_focused() {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => {
+                return Err(RpcError {
+                    code: RPC_INTERNAL_ERROR,
+                    message: format!(
+                        "cannot press: failed to query focus for window '{}': {e}",
+                        target.label()
+                    ),
+                    data: None,
+                });
+            }
         }
         let remaining = budget.saturating_sub(waited);
         if remaining.is_zero() {
@@ -1200,6 +1212,44 @@ mod tests {
         assert_eq!(
             err.message,
             "cannot press: window 'main' did not gain focus (another application has it)"
+        );
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_wait_until_focused_errors_when_focus_query_fails() {
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        webviews.set_focus_query_error("main", "FailedToSendMessage");
+        let target = webviews.target(None).expect("main window");
+        let err = wait_until_focused(target)
+            .await
+            .expect_err("query failure is not unfocused");
+        assert_eq!(err.code, RPC_INTERNAL_ERROR);
+        assert_eq!(
+            err.message,
+            "cannot press: failed to query focus for window 'main': FailedToSendMessage"
+        );
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_skips_injection_when_focus_query_fails() {
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        webviews.set_focus_query_error("main", "FailedToSendMessage");
+        let result = dispatch(
+            "press",
+            Some(&json!({"key": "a"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.expect_err("query failure must not inject");
+        assert_eq!(err.code, -32603);
+        assert_eq!(
+            err.message,
+            "cannot press: failed to query focus for window 'main': FailedToSendMessage"
         );
     }
 
