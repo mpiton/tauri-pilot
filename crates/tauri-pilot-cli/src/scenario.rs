@@ -465,6 +465,7 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
             );
             Ok(json!({"ok": true}))
         }
+        "storage-get" => storage_get_step(client, step, window).await,
         other => anyhow::bail!("unknown step action: {other:?}"),
     }
 }
@@ -473,6 +474,27 @@ fn require_target(step: &Step) -> Result<&str> {
     step.target
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("step '{}' requires 'target'", step.action))
+}
+
+/// Read a storage key and fail the step when the plugin reports `found: false`.
+///
+/// A present key whose value is the empty string still passes, matching
+/// `tauri-pilot storage get`.
+async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
+    let key = step
+        .key
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("storage-get step requires 'key'"))?;
+    let result = client
+        .call(
+            "storage.get",
+            with_window(Some(json!({"key": key, "session": false})), window),
+        )
+        .await?;
+    if result["found"] == false {
+        anyhow::bail!("storage key {key:?} was not found");
+    }
+    Ok(result)
 }
 
 /// Resolve the optional scroll target from a TOML step.
