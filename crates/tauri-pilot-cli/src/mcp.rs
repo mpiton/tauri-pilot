@@ -3165,12 +3165,17 @@ target = "#btn"
     fn spawn_click_server(socket: &Path, source: &'static str, requests: usize) -> JoinHandle<()> {
         let listener = UnixListener::bind(socket).expect("bind mock socket");
         tokio::spawn(async move {
-            for _ in 0..requests {
+            let mut remaining = requests;
+            while remaining > 0 {
                 let (stream, _) = listener.accept().await.expect("accept");
                 let (reader, mut writer) = stream.into_split();
                 let mut reader = BufReader::new(reader);
                 let mut line = String::new();
-                reader.read_line(&mut line).await.expect("read request");
+                let n = reader.read_line(&mut line).await.expect("read request");
+                // Auto-detect probes with a connect/drop (#194); ignore empty peers.
+                if n == 0 || line.trim().is_empty() {
+                    continue;
+                }
                 let request: Request = serde_json::from_str(line.trim()).expect("parse request");
                 assert_eq!(request.method, "click");
                 let mut response =
@@ -3178,6 +3183,7 @@ target = "#btn"
                         .expect("serialize response");
                 response.push(b'\n');
                 writer.write_all(&response).await.expect("write response");
+                remaining -= 1;
             }
         })
     }

@@ -33,6 +33,102 @@ pub(crate) const BRIDGE_JS: &str = concat!(
     include_str!("../js/bridge.js"),
 );
 
+/// Holds the socket/registry guard in plugin state so `RunEvent::Exit` can drop it.
+///
+/// The server task lives on Tauri's static runtime, which is never shut down, and
+/// tao ends the process with `process::exit` (no destructors). Aborting that task
+/// from `on_event` races exit. Dropping the guard here is the window that runs.
+#[cfg(all(any(unix, windows), debug_assertions))]
+#[derive(Clone)]
+struct PilotGuard(std::sync::Arc<PilotGuardInner>);
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+enum GuardSlot<T> {
+    Empty,
+    Held(T),
+    /// `RunEvent::Exit` already ran. A later `hold_*` must drop immediately
+    /// (Windows bind happens on the server task and can lose the race).
+    Released,
+}
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+struct PilotGuardInner {
+    #[cfg(unix)]
+    unix: std::sync::Mutex<GuardSlot<server::unix::SocketGuard>>,
+    #[cfg(windows)]
+    windows: std::sync::Mutex<GuardSlot<server::windows::RegistryGuard>>,
+}
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+impl PilotGuard {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(PilotGuardInner {
+            #[cfg(unix)]
+            unix: std::sync::Mutex::new(GuardSlot::Empty),
+            #[cfg(windows)]
+            windows: std::sync::Mutex::new(GuardSlot::Empty),
+        }))
+    }
+
+    fn release(&self) {
+        #[cfg(unix)]
+        release_slot(&self.0.unix);
+        #[cfg(windows)]
+        release_slot(&self.0.windows);
+    }
+
+    #[cfg(unix)]
+    fn hold_unix(&self, guard: Option<server::unix::SocketGuard>) {
+        if let Some(guard) = guard {
+            hold_slot(&self.0.unix, guard);
+        }
+    }
+
+    #[cfg(windows)]
+    fn hold_windows(&self, guard: server::windows::RegistryGuard) {
+        hold_slot(&self.0.windows, guard);
+    }
+}
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+fn lock_slot<T>(slot: &std::sync::Mutex<GuardSlot<T>>) -> std::sync::MutexGuard<'_, GuardSlot<T>> {
+    match slot.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+fn hold_slot<T>(slot: &std::sync::Mutex<GuardSlot<T>>, value: T) {
+    let mut guard = lock_slot(slot);
+    if matches!(&*guard, GuardSlot::Released) {
+        drop(guard);
+        drop(value);
+        return;
+    }
+    *guard = GuardSlot::Held(value);
+}
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+fn release_slot<T>(slot: &std::sync::Mutex<GuardSlot<T>>) {
+    let mut guard = lock_slot(slot);
+    let previous = std::mem::replace(&mut *guard, GuardSlot::Released);
+    drop(guard);
+    if let GuardSlot::Held(value) = previous {
+        drop(value);
+    }
+}
+
+#[cfg(all(any(unix, windows), debug_assertions))]
+fn on_pilot_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::RunEvent) {
+    use tauri::Manager;
+    if matches!(event, tauri::RunEvent::Exit)
+        && let Some(guard) = app.try_state::<PilotGuard>()
+    {
+        guard.release();
+    }
+}
+
 /// Initialize the tauri-pilot plugin.
 ///
 /// On non-Unix, non-Windows platforms or in release builds, returns a no-op plugin.
@@ -72,6 +168,9 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let engine = EvalEngine::new();
                 app.manage(engine.clone());
 
+                let cleanup = PilotGuard::new();
+                app.manage(cleanup.clone());
+
                 let identifier = sanitize_identifier(&app.config().identifier);
 
                 let webviews: Arc<dyn webview::Webviews> =
@@ -101,9 +200,11 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     }) else {
                         return Ok(());
                     };
+                    // Keep the guard in plugin state, not the server task (#194).
+                    cleanup.hold_unix(guard);
                     tauri::async_runtime::spawn(server::run(
                         listener,
-                        guard,
+                        None,
                         engine,
                         webviews,
                         recorder,
@@ -121,10 +222,12 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     engine,
                     webviews,
                     recorder,
+                    Some(cleanup),
                 ));
 
                 Ok(())
             })
+            .on_event(on_pilot_event)
             .invoke_handler(tauri::generate_handler![
                 handler::callback,
                 handler::__callback
@@ -571,6 +674,73 @@ mod tests {
             app.try_state::<super::eval::EvalEngine>().is_some(),
             "plugin setup must still run for the second instance"
         );
+    }
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    #[test]
+    fn normal_quit_unlinks_socket_file() {
+        // #194: RunEvent::Exit must drop the plugin-owned socket guard so the
+        // pathname file is gone before tao calls process::exit.
+        let identifier = format!("com.pilot.issue194-{}", std::process::id());
+        let address = super::server::socket_address(&super::sanitize_identifier(&identifier))
+            .expect("socket address");
+        let path = address
+            .as_pathname()
+            .expect("pathname socket")
+            .to_path_buf();
+        let _ = std::fs::remove_file(&path);
+
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = identifier;
+        let app = tauri::test::mock_builder()
+            .plugin(super::init())
+            .build(context)
+            .expect("app starts");
+
+        assert!(path.exists(), "plugin must bind a pathname socket");
+
+        super::on_pilot_event(app.handle(), &tauri::RunEvent::Exit);
+
+        let left = path.exists();
+        let _ = std::fs::remove_file(&path);
+        assert!(!left, "RunEvent::Exit must unlink the socket (#194)");
+    }
+
+    #[cfg(all(windows, debug_assertions))]
+    #[test]
+    fn normal_quit_unlinks_instance_file() {
+        // #194: RunEvent::Exit must drop RegistryGuard. Bind is async, so Exit
+        // may run first; GuardSlot::Released still drops a late hold.
+        use std::time::{Duration, Instant};
+
+        let identifier = format!("com.pilot.issue194-{}", std::process::id());
+        let sanitized = super::sanitize_identifier(&identifier);
+        let instances = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .expect("LOCALAPPDATA")
+            .join("tauri-pilot")
+            .join("instances")
+            .join(format!("{sanitized}.json"));
+        let _ = std::fs::remove_file(&instances);
+
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = identifier;
+        let app = tauri::test::mock_builder()
+            .plugin(super::init())
+            .build(context)
+            .expect("app starts");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && !instances.exists() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(instances.exists(), "plugin must register the instance file");
+
+        super::on_pilot_event(app.handle(), &tauri::RunEvent::Exit);
+
+        let left = instances.exists();
+        let _ = std::fs::remove_file(&instances);
+        assert!(!left, "RunEvent::Exit must remove the instance file (#194)");
     }
 
     #[cfg(all(any(unix, windows), debug_assertions))]

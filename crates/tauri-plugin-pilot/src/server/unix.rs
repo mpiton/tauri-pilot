@@ -12,10 +12,11 @@ use tokio::net::UnixListener;
 
 /// RAII guard that removes the socket file on drop.
 ///
-/// The guard drops when the server task ends, is aborted, or panics. Quitting
-/// the app never drops it: the task lives on Tauri's static runtime, which is
-/// never shut down, so the file stays until the next bind at the same path
-/// removes it as stale (#194).
+/// Drop unlinks the pathname socket when the recorded inode still matches.
+/// The plugin stores this guard in plugin state and drops it on
+/// `RunEvent::Exit`, so a normal quit removes the file before tao calls
+/// `process::exit`. A crash or `SIGKILL` still leaves the file; the next bind
+/// treats `ConnectionRefused` as stale and unlinks it.
 ///
 /// Stores the socket file's inode at bind time so it only unlinks its own
 /// socket, not one created by an overlapping instance.
@@ -208,7 +209,9 @@ fn bind_pathname(
 }
 
 /// Run the accept loop on a pre-bound std listener. Converts to tokio internally.
-/// The guard is held for its `Drop` cleanup, which runs before the listener closes.
+///
+/// The plugin passes `None` and holds `SocketGuard` in plugin state so Exit can
+/// drop it (#194). Tests may still pass a guard so aborting the task unlinks.
 pub async fn run(
     listener: std::os::unix::net::UnixListener,
     guard: Option<SocketGuard>,

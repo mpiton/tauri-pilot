@@ -1600,7 +1600,20 @@ fn newest_socket_in_dir(dir: &Path) -> Option<PathBuf> {
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
 
-    candidates.pop()
+    // Newest first; skip leftovers that refuse a connection (#194).
+    candidates
+        .into_iter()
+        .rev()
+        .find(|p| socket_has_listener(p))
+}
+
+/// True when a process is accepting on this pathname socket.
+///
+/// `ConnectionRefused` (and any other connect error) means no listener, so
+/// auto-detect must not treat the file as a running app (#194).
+#[cfg(not(windows))]
+fn socket_has_listener(path: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
 #[cfg(test)]
@@ -1713,14 +1726,14 @@ mod tests {
             std::env::temp_dir().join(format!("tauri-pilot-xdg-cli-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create xdg test dir");
         let sock = dir.join("tauri-pilot-myapp.sock");
-        // Create a dummy file that looks like a socket name.
-        std::fs::write(&sock, b"").expect("create dummy socket file");
+        let _listener = bind_live_socket(&sock);
 
         // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
+        drop(_listener);
         let _ = std::fs::remove_file(&sock);
         let _ = std::fs::remove_dir(&dir);
 
@@ -1742,14 +1755,16 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_file(&tmp_sock);
-        std::fs::write(&xdg_sock, b"").expect("create xdg socket file");
-        std::fs::write(&tmp_sock, b"").expect("create newer tmp socket file");
+        let _xdg_listener = bind_live_socket(&xdg_sock);
+        let _tmp_listener = bind_live_socket(&tmp_sock);
 
         // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
+        drop(_xdg_listener);
+        drop(_tmp_listener);
         let _ = std::fs::remove_file(&xdg_sock);
         let _ = std::fs::remove_file(&tmp_sock);
         let _ = std::fs::remove_dir(&dir);
@@ -1766,12 +1781,12 @@ mod tests {
             std::process::id()
         ));
         // Remove then recreate to ensure this file has the newest mtime.
-        let _ = std::fs::remove_file(&tmp_sock);
-        std::fs::write(&tmp_sock, b"").expect("create dummy socket in /tmp");
+        let _listener = bind_live_socket(&tmp_sock);
 
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
         let result = resolve_socket(None);
 
+        drop(_listener);
         let _ = std::fs::remove_file(&tmp_sock);
 
         // Assert the result is a valid tauri-pilot socket path, not an exact path,
@@ -1795,6 +1810,68 @@ mod tests {
         let explicit = std::path::PathBuf::from("/tmp/my-explicit.sock");
         let result = resolve_socket(Some(explicit.clone()));
         assert_eq!(result.expect("explicit path returned"), explicit);
+    }
+
+    #[cfg(unix)]
+    fn bind_live_socket(path: &Path) -> std::os::unix::net::UnixListener {
+        let _ = std::fs::remove_file(path);
+        std::os::unix::net::UnixListener::bind(path).expect("bind live socket")
+    }
+
+    #[cfg(unix)]
+    fn make_dead_socket(path: &Path) {
+        drop(bind_live_socket(path));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn test_resolve_socket_skips_dead_sockets() {
+        // #194: a leftover file with no listener must not count as a running app.
+        // Probe the isolated dir directly: resolve_socket(None) also walks /tmp,
+        // which other tests may populate with live sockets.
+        let dir =
+            std::env::temp_dir().join(format!("tauri-pilot-dead-only-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let dead = dir.join("tauri-pilot-dead.sock");
+        make_dead_socket(&dead);
+
+        let found = newest_socket_in_dir(&dir);
+
+        let _ = std::fs::remove_file(&dead);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert!(
+            found.is_none(),
+            "dead socket must not be selected: {found:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[serial]
+    fn test_resolve_socket_prefers_live_socket_over_newer_dead_one() {
+        // #194: quitting app B must not hide a still-running app A.
+        let dir = std::env::temp_dir().join(format!(
+            "tauri-pilot-live-over-dead-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create xdg test dir");
+        let live = dir.join("tauri-pilot-app-a.sock");
+        let dead = dir.join("tauri-pilot-app-b.sock");
+        let listener = bind_live_socket(&live);
+        // Dead file must be newer so mtime-only discovery would pick it.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        make_dead_socket(&dead);
+
+        let found = newest_socket_in_dir(&dir);
+
+        drop(listener);
+        let _ = std::fs::remove_file(&live);
+        let _ = std::fs::remove_file(&dead);
+        let _ = std::fs::remove_dir(&dir);
+
+        assert_eq!(found.expect("live socket found"), live);
     }
 
     #[test]
