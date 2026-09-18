@@ -545,7 +545,7 @@ async fn handle_press(
 async fn wait_until_focused(target: Box<dyn TargetWindow + '_>) -> Result<(), RpcError> {
     let budget = Duration::from_millis(FOCUS_SETTLE_MS);
     let poll = Duration::from_millis(FOCUS_POLL_MS);
-    let mut waited = Duration::ZERO;
+    let deadline = tokio::time::Instant::now() + budget;
     loop {
         match target.is_focused() {
             Ok(true) => return Ok(()),
@@ -561,13 +561,12 @@ async fn wait_until_focused(target: Box<dyn TargetWindow + '_>) -> Result<(), Rp
                 });
             }
         }
-        let remaining = budget.saturating_sub(waited);
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             return Err(press_unfocused_error(target.label()));
         }
         let step = poll.min(remaining);
         tokio::time::sleep(step).await;
-        waited += step;
     }
 }
 
