@@ -4,6 +4,13 @@ use anyhow::{Result, bail};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+/// Longest request line the plugin reads, trailing newline included.
+///
+/// Mirrors `MAX_LINE_LENGTH` in the plugin's `server/mod.rs`, which answers a
+/// longer line with an error and closes the connection, often while the CLI
+/// is still writing. The crates ship separately, so change both together.
+const MAX_REQUEST_LEN: usize = 1_048_576;
+
 /// JSON-RPC client over a platform-specific transport (Unix socket or Named Pipe).
 pub(crate) struct Client {
     #[cfg(unix)]
@@ -48,6 +55,12 @@ impl Client {
 
         let mut bytes = serde_json::to_vec(&request)?;
         bytes.push(b'\n');
+        if bytes.len() > MAX_REQUEST_LEN {
+            bail!(
+                "{method} request is {} bytes; the plugin accepts at most {MAX_REQUEST_LEN} bytes (1 MiB)",
+                bytes.len()
+            );
+        }
         self.writer.write_all(&bytes).await?;
         self.writer.flush().await?;
 
@@ -59,7 +72,11 @@ impl Client {
 
         let response: Response = serde_json::from_str(line.trim())?;
 
-        if response.id != serde_json::Value::Number(id.into()) {
+        // JSON-RPC 2.0 answers with `"id": null` when it could not read the
+        // request id: an oversized line or a parse error. Only one request is
+        // in flight, so that error is ours; report it, not a mismatch (#214).
+        let unreadable_id = response.id.is_null() && response.error.is_some();
+        if !unreadable_id && response.id != serde_json::Value::Number(id.into()) {
             bail!("Response ID mismatch: expected {id}, got {}", response.id);
         }
 
@@ -117,7 +134,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
 
     static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -250,6 +267,81 @@ mod tests {
         assert_eq!(result, serde_json::Value::Null);
 
         handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_client_null_id_error_is_reported_as_the_error() {
+        // JSON-RPC 2.0 answers with `"id": null` when the request id could not
+        // be read, as the plugin does for an oversized line. That error is the
+        // failure to report, not an id mismatch. Regression test for #214.
+        let socket = unique_socket_path("t05e");
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read line");
+            let raw = r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Request line exceeds maximum length"}}"#;
+            writer.write_all(raw.as_bytes()).await.expect("write raw");
+            writer.write_all(b"\n").await.expect("write newline");
+            writer.flush().await.expect("flush");
+        });
+
+        let mut client = connect_with_retry(&socket).await;
+        let err = client.call("eval", None).await.expect_err("server error");
+        assert_eq!(
+            err.to_string(),
+            "RPC error (-32700): Request line exceeds maximum length"
+        );
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    /// Bytes the first `call("eval", …)` of a connection sends around the
+    /// script, trailing newline included.
+    const EVAL_ENVELOPE: usize =
+        r#"{"jsonrpc":"2.0","id":1,"method":"eval","params":{"script":""}}"#.len() + 1;
+
+    #[tokio::test]
+    async fn test_client_refuses_request_over_plugin_limit_before_sending() {
+        // The plugin reads at most 1 MiB per line, newline included. Past that
+        // it answers with an error and hangs up, often while the CLI is still
+        // writing ("Broken pipe"). Refuse such a request up front (#214).
+        let socket = unique_socket_path("t05f");
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut received = Vec::new();
+            stream
+                .read_to_end(&mut received)
+                .await
+                .expect("read to end");
+            received.len()
+        });
+
+        let mut client = connect_with_retry(&socket).await;
+        let script = "a".repeat(1_048_577 - EVAL_ENVELOPE);
+        let call = client.call("eval", Some(serde_json::json!({ "script": script })));
+        let err = tokio::time::timeout(Duration::from_secs(5), call)
+            .await
+            .expect("refused without waiting for the plugin")
+            .expect_err("oversized request");
+        assert_eq!(
+            err.to_string(),
+            "eval request is 1048577 bytes; the plugin accepts at most 1048576 bytes (1 MiB)"
+        );
+
+        drop(client);
+        let received = handle.await.expect("mock server task");
+        assert_eq!(
+            received, 0,
+            "an oversized request must not reach the plugin"
+        );
         let _ = std::fs::remove_file(&socket);
     }
 

@@ -822,6 +822,14 @@ Prefer `<<'EOF'` with quotes around the heredoc delimiter. It disables shell
 variable and command expansion, so `$` and backticks inside the script do not
 need escaping.
 
+The plugin reads at most 1 MiB (1,048,576 bytes) per request. The limit counts
+the JSON-RPC request the CLI sends, where quotes, backslashes and newlines in
+the script are escaped, so a script just under 1 MiB can still be too large. A
+larger request fails before it is sent, with
+`eval request is N bytes; the plugin accepts at most 1048576 bytes (1 MiB)`.
+To inject a library, use its minified build rather than the development one;
+otherwise split the script across several calls.
+
 Statements are supported alongside bare expressions — `const`, `let`, `var`,
 function declarations and blocks all work, and the completion value of the last
 expression is returned:
