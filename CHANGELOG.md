@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `logs --level error` now records uncaught exceptions and unhandled
+  promise rejections, not only `console.*` calls. Rejections are prefixed
+  `Unhandled rejection: `; the human-readable renderer prints `source`
+  when the bridge set it. Failed resource loads (`<img>`/`<script>` 404)
+  stay out of the buffer. [#188]
+
 - Pathname socket bind serializes stale replacement with an exclusive
   flock on a sibling lock file, so two instances starting over the same
   leftover socket cannot unlink each other's file or record the wrong

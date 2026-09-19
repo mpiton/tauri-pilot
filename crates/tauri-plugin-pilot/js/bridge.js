@@ -69,13 +69,9 @@
     try {
       const stack = new Error().stack;
       if (!stack) return null;
-      // Skip frames: Error constructor, extractSource, console[level] wrapper
-      const lines = stack.split('\n');
-      for (let i = 3; i < lines.length; i++) {
-        const line = lines[i];
-        if (line && !line.includes('__PILOT__')) return line.trim();
-      }
-      return null;
+      // Skip the two location-bearing frames that are always ours:
+      // extractSource itself and the console[level] wrapper.
+      return firstAppFrame(stack, 2);
     } catch (_) { return null; }
   }
 
@@ -101,96 +97,88 @@
 
   ['log', 'warn', 'error', 'info'].forEach(level => {
     console[level] = function(...args) {
-      // extractSource() must be called from this frame: it skips a fixed
-      // number of stack frames to reach the caller.
+      // extractSource() must be called from this frame: it skips the two
+      // location-bearing frames that are always ours (itself and this wrapper).
       pushLog(level, args, extractSource());
       _originalConsole[level].apply(console, args);
     };
   });
 
-  function safeTag(value) {
+  function isError(value) {
+    // instanceof is realm-bound, so an Error thrown from an iframe fails it.
+    // The brand check catches those; Error subclasses keep the same tag.
     try {
-      return Object.prototype.toString.call(value);
+      if (value instanceof Error) return true;
     } catch (_) {
-      // A revoked proxy refuses the internal IsArray check, and a
-      // Symbol.toStringTag accessor is free to throw.
+      return false;
+    }
+    try {
+      return Object.prototype.toString.call(value) === '[object Error]';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function describeReason(reason) {
+    try {
+      // Errors carry nothing enumerable, so JSON.stringify would render even a
+      // perfectly readable one as "{}".
+      if (isError(reason)) {
+        const name = reason.name;
+        const message = reason.message;
+        // Symbol.toStringTag is writable, so the brand check alone would
+        // promote any object wearing the tag to "undefined: undefined". Take
+        // the shortcut only when the fields exist — not when they are strings:
+        // a subclass is free to put a number in `message`.
+        if (name !== undefined || message !== undefined) {
+          const label = name === undefined ? 'Error' : String(name);
+          const text = message === undefined ? '' : String(message);
+          return text ? label + ': ' + text : label;
+        }
+      }
+      if (typeof reason === 'string') return reason;
+      // JSON.stringify answers undefined for a symbol, function or undefined,
+      // and "null" for NaN and Infinity. String() keeps all of those legible.
+      if (reason === null || typeof reason !== 'object') return String(reason);
+      try {
+        const json = JSON.stringify(reason);
+        return typeof json === 'string' ? json : String(reason);
+      } catch (_) {
+        return String(reason);
+      }
+    } catch (_) {
       return '[unprintable]';
     }
   }
 
-  function safeString(value) {
-    try {
-      return String(value);
-    } catch (_) {
-      // No toString: a null-prototype object, or one that throws.
-      return safeTag(value);
-    }
-  }
-
-  function safeRead(value, key) {
-    // Every read on the way to a log entry has to survive a hostile reason:
-    // a revoked proxy rejects them all, and an accessor may throw. Describing
-    // the reason badly beats losing the only record that it happened.
-    try {
-      return value[key];
-    } catch (_) {
-      return undefined;
-    }
-  }
-
-  function isError(value) {
-    // instanceof is realm-bound, so an Error thrown from an iframe fails it.
-    // The brand check catches those, and Error subclasses keep the same tag.
-    try {
-      if (value instanceof Error) return true;
-    } catch (_) {
-      // instanceof walks the prototype chain, which a revoked proxy refuses.
-    }
-    return safeTag(value) === '[object Error]';
-  }
-
-  function describeReason(reason) {
-    // Errors carry nothing enumerable, so JSON.stringify would render even a
-    // perfectly readable one as "{}".
-    if (isError(reason)) {
-      const name = safeRead(reason, 'name');
-      const message = safeRead(reason, 'message');
-      // Symbol.toStringTag is writable, so the brand check alone would promote
-      // any object wearing the tag to "undefined: undefined" and throw away
-      // what it actually carried. Take the shortcut only when the fields exist
-      // -- but existing is the test, not being a string: a subclass is free to
-      // put a number or an object in `message`, and dropping it would lose the
-      // only description of the failure there is.
-      if (name !== undefined || message !== undefined) {
-        const label = name === undefined ? 'Error' : safeString(name);
-        // The stack goes in `source`; keep the message readable in `args`.
-        const text = message === undefined ? '' : safeString(message);
-        return text ? label + ': ' + text : label;
+  function firstAppFrame(stack, skipLocationFrames) {
+    const lines = stack.split('\n');
+    let skipped = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      // V8 opens with "Name: message" (possibly multi-line); JavaScriptCore
+      // (WebKitGTK, WKWebView) starts at the throwing frame. Keep the first
+      // line that carries a :line:col location; header and message lines do not.
+      if (!/:\d+:\d+\)?$/.test(line)) continue;
+      if (line.includes('__PILOT__')) continue;
+      if (skipped < skipLocationFrames) {
+        skipped++;
+        continue;
       }
+      return line;
     }
-    if (typeof reason === 'string') return reason;
-    // JSON.stringify answers undefined for a symbol, function or undefined,
-    // and "null" for NaN and Infinity. String() keeps all of those legible.
-    if (reason === null || typeof reason !== 'object') return safeString(reason);
-    try {
-      const json = JSON.stringify(reason);
-      return typeof json === 'string' ? json : safeString(reason);
-    } catch (_) {
-      return safeString(reason);
-    }
+    return null;
   }
 
   function stackSource(error) {
-    // Same hostile-reason problem: reading .stack must not throw.
     if (!error) return null;
-    const stack = safeRead(error, 'stack');
-    if (typeof stack !== 'string') return null;
-    const lines = stack.split('\n');
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i];
-      if (line && line.trim() && !line.includes('__PILOT__')) return line.trim();
+    try {
+      const stack = error.stack;
+      if (typeof stack !== 'string') return null;
+      return firstAppFrame(stack, 0);
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
   // Uncaught errors and unhandled rejections never pass through console.* --
@@ -198,23 +186,31 @@
   // `logs --level error` workflow cannot see the failures it exists to find.
   if (typeof window.addEventListener === 'function') {
     window.addEventListener('error', event => {
-      // Only script errors carry a message. Failed resource loads (<img>,
-      // <script> 404) raise a bare Event that does not bubble to window, but
-      // guard anyway rather than logging an empty entry.
-      if (!event || typeof event.message !== 'string') return;
-      const where = event.filename
-        ? event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0)
-        : null;
-      pushLog('error', [event.message], stackSource(event.error) || where);
+      try {
+        // Only script errors carry a message. Failed resource loads (<img>,
+        // <script> 404) raise a bare Event that does not bubble to window, but
+        // guard anyway rather than logging an empty entry.
+        if (!event || typeof event.message !== 'string') return;
+        const where = event.filename
+          ? event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0)
+          : null;
+        pushLog('error', [event.message], stackSource(event.error) || where);
+      } catch (_) {
+        if (event && typeof event.message === 'string') {
+          pushLog('error', [event.message], null);
+        }
+      }
     });
 
     window.addEventListener('unhandledrejection', event => {
-      const reason = event && event.reason;
-      pushLog(
-        'error',
-        ['Unhandled rejection: ' + describeReason(reason)],
-        stackSource(reason)
-      );
+      let message = 'Unhandled rejection: [unprintable]';
+      let source = null;
+      try {
+        const reason = event && event.reason;
+        message = 'Unhandled rejection: ' + describeReason(reason);
+        source = stackSource(reason);
+      } catch (_) {}
+      pushLog('error', [message], source);
     });
   }
 

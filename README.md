@@ -167,7 +167,7 @@ the JavaScript do not need escaping.
 | `assert` | One-step verification (text, visible, hidden, value, count, checked, contains, url) |
 | `watch` | Watch for DOM mutations |
 | `storage` | Read/write localStorage and sessionStorage (`--session`) |
-| `logs` | Capture and display console output |
+| `logs` | Capture and display console output, uncaught errors, and unhandled rejections |
 | `network` | Capture and display network requests |
 | `record` | Record interactions (`start`, `stop --output`, `status`) |
 | `replay` | Replay recorded session (`--export sh` for shell script) |
