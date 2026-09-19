@@ -44,9 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saved earlier and called later from a timer records a second entry, since
   it looks like a logger's early-bound `console.log`. Redefining the
   property outright (React's dev build does while it builds a component
-  stack) drops capture until the next `logs` call restores it; lines logged
-  in between are lost. On a frozen console, `logs --level error` says that
-  capture is unavailable instead of showing an empty buffer. [#190]
+  stack), or assigning to a method that cannot be redefined, where the
+  bridge could only install itself by plain assignment, drops capture until
+  the next `logs` call restores it; lines logged in between are lost. On a
+  frozen console, `logs --level error` says that capture is unavailable
+  instead of showing an empty buffer. [#190]
 
 - `logs --level error` now records uncaught exceptions and unhandled
   promise rejections, not only `console.*` calls. Rejections are prefixed

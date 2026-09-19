@@ -219,11 +219,16 @@
       try {
         const descriptor = Object.getOwnPropertyDescriptor(console, level);
         if (descriptor && descriptor.get === accessor.get) return;
-        const installed = console[level];
-        install();
-        accessor.set(installed);
+        accessor.set(console[level]);
+        try {
+          install();
+        } catch (_) {
+          // Unconfigurable: any page assignment replaces the plain fallback,
+          // so put a view back the same way.
+          console[level] = viewAt(current);
+        }
       } catch (_) {
-        // Still unconfigurable: the fallback above is all there is.
+        // Frozen: nothing can be written back.
       }
     });
   });

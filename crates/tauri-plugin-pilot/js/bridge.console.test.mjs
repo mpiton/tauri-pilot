@@ -358,10 +358,12 @@ test("a frozen console does not stop the bridge from loading", () => {
   );
 });
 
-test("an unconfigurable but writable console is still captured", () => {
+test("an unconfigurable but writable console is still captured, even after a page assignment", () => {
   installGlobals();
   // defineProperty throws on these, so the bridge falls back to a plain
-  // assignment: the only capture left on such a console.
+  // assignment: the only capture left on such a console. A page assignment
+  // replaces that outright, so capture has to come back when the buffer is
+  // read, as it does after a redefine.
   const stub = {};
   for (const level of Object.keys(REAL_CONSOLE)) {
     Object.defineProperty(stub, level, {
@@ -373,16 +375,22 @@ test("an unconfigurable but writable console is still captured", () => {
   }
   const realConsole = globalThis.console;
   globalThis.console = stub;
+  const seen = [];
   let logged;
   try {
     (0, eval)(BRIDGE_SRC);
+    const pilot = globalThis.window.__PILOT__;
     console.log("plain fallback");
-    logged = messages(globalThis.window.__PILOT__);
+    console.log = (...args) => { seen.push(args[0]); };
+    pilot.consoleLogs();
+    console.log("recovered");
+    logged = messages(pilot);
   } finally {
     globalThis.console = realConsole;
   }
 
-  assert.deepEqual(logged, ["plain fallback"]);
+  assert.deepEqual(logged, ["plain fallback", "recovered"]);
+  assert.deepEqual(seen, ["recovered"], "the page's replacement still runs");
 });
 
 test("capture recovers once the accessor has been redefined away", () => {
