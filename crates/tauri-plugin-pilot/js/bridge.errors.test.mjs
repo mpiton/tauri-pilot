@@ -140,6 +140,21 @@ test("a JavaScriptCore stack names the throwing frame, not the caller", () => {
   assert.doesNotMatch(entry.source, /main\.js/, "the throwing frame beats the caller and the event location");
 });
 
+test("an anonymous JavaScriptCore frame is still the throw site", () => {
+  // JSC writes `@url:line:col` for anonymous callbacks (no function name).
+  // `[^:]+@` required a name, so this line was skipped and source became the
+  // enclosing named frame — or null on a rejection with only anonymous frames.
+  const { pilot, win } = loadBridge();
+  const error = new Error("boom");
+  error.stack =
+    "@https://app.example/widget.js:12:5\nglobal code@https://app.example/main.js:40:1";
+  win.dispatch("unhandledrejection", { reason: error });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.match(entry.source, /widget\.js:12:5/);
+  assert.doesNotMatch(entry.source, /main\.js/, "the anonymous throw site beats the named caller");
+});
+
 test("a V8 message that ends with :line:col is not treated as a frame", () => {
   // The location regex alone matches "Error: failed at url:12:5". That is the
   // V8 header, not a frame; source must be the real `at` line below it.
