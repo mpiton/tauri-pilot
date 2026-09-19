@@ -1,3 +1,7 @@
+// Every stdout write must go through `out!`/`outln!`, which exit quietly on a
+// closed pipe; a bare `println!` panics there again (#213).
+#![deny(clippy::print_stdout)]
+
 mod cli;
 mod client;
 mod mcp;
@@ -23,6 +27,7 @@ use cli::{
     parse_target,
 };
 use client::Client;
+use output::{out, outln};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -123,7 +128,7 @@ async fn main() -> Result<()> {
         if args.json {
             output::format_json(&serde_json::json!({"path": path.display().to_string()}))?;
         } else {
-            println!(
+            outln!(
                 "{}",
                 crate::style::success(&format!("Saved to {}", path.display()))
             );
@@ -140,8 +145,19 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    format_result(output_kind, &result, args.json)?;
-    if matches!(output_kind, OutputKind::StorageGet) && result["found"] == false {
+    print_result(output_kind, &result, args.json)
+}
+
+/// Prints `result`, exiting 1 when `storage get` found no key (#160).
+///
+/// The status is set before printing so a closed stdout pipe keeps it (#213).
+fn print_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) -> Result<()> {
+    let missing_key = matches!(kind, OutputKind::StorageGet) && result["found"] == false;
+    if missing_key {
+        output::set_broken_pipe_exit(1);
+    }
+    format_result(kind, result, emit_json)?;
+    if missing_key {
         std::process::exit(1);
     }
     Ok(())
@@ -196,14 +212,14 @@ fn format_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) 
             if result.get("cleared").is_some() {
                 output::format_text(result);
             } else {
-                print!("{}", output::format_logs(result));
+                out!("{}", output::format_logs(result));
             }
         }
         OutputKind::Network => {
             if result.get("cleared").is_some() {
                 output::format_text(result);
             } else {
-                print!("{}", output::format_network(result));
+                out!("{}", output::format_network(result));
             }
         }
         OutputKind::Watch => output::format_watch(result),
@@ -222,7 +238,7 @@ fn format_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) 
         OutputKind::Record => {
             let formatted = output::format_record(result);
             if !formatted.is_empty() {
-                println!("{formatted}");
+                outln!("{formatted}");
             }
         }
         OutputKind::Replay | OutputKind::Text => output::format_text(result),
@@ -237,7 +253,7 @@ fn report_ping(result: &Value) {
         env!("CARGO_PKG_VERSION"),
         result.get("plugin_version").and_then(Value::as_str),
     );
-    println!("{}", crate::style::success(&summary));
+    outln!("{}", crate::style::success(&summary));
     if let Some(warning) = warning {
         eprintln!("{}", crate::style::warn(&warning));
     }
@@ -304,10 +320,10 @@ async fn follow_logs(
             if emit_json {
                 // Emit NDJSON: one JSON object per entry for jq compatibility
                 for entry in entries {
-                    println!("{entry}");
+                    outln!("{entry}");
                 }
             } else {
-                print!("{}", output::format_logs(&result));
+                out!("{}", output::format_logs(&result));
             }
             last_seen_id = entries
                 .last()
@@ -355,10 +371,10 @@ async fn follow_network(
         {
             if emit_json {
                 for entry in entries {
-                    println!("{entry}");
+                    outln!("{entry}");
                 }
             } else {
-                print!("{}", output::format_network(&result));
+                out!("{}", output::format_network(&result));
             }
             last_seen_id = entries
                 .last()
