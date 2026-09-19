@@ -109,20 +109,39 @@
   //
   // That is what makes the ordinary "save it and call it back" shape
   // terminate, and it has to hold when the call back happens from a timer or
-  // a promise, long after the original call returned. A single shared
-  // re-entry counter cannot: by then it has unwound, the deferred call looks
-  // like a fresh one, and it goes around the loop again -- recording the same
-  // line forever.
-  const _consoleChains = Object.create(null);
-  // Recognising Pilot's own functions off a property would take the page's
-  // word for it: the marker is writable, so a replacement could claim to be
-  // one and get itself dropped or filed under another level. Identity in a
-  // map the page cannot reach is not forgeable.
+  // a promise, long after the original call returned. A re-entry counter
+  // cannot do that part: by then it has unwound, the deferred call looks like
+  // a fresh one, and it goes around the loop again.
+  //
+  // Recording is a separate question. A call that arrives while a view is
+  // already running is part of a call recorded further up the stack -- a
+  // wrapper handing on to what it saved, or one level forwarding to another
+  // -- so only the outermost call records. Any other call is a fresh line,
+  // including a logger's `const log = console.log` from init after the page
+  // replaced console.log. A saved reference called back from a timer records
+  // a second time: from outside, it is indistinguishable from that logger.
+  //
+  // Recognising Pilot's own functions off a marker property would take the
+  // page's word for it: page code can set the marker too, so a replacement
+  // could claim to be one and get itself dropped or filed under another
+  // level. Identity in a map the page cannot reach is not forgeable. Each
+  // view maps to its chain and depth, which is all it takes to name the
+  // function it calls.
   const _consoleViews = new WeakMap();
+  // Pilot views currently on the stack, across every level.
+  let _consoleActive = 0;
+  const _consoleHeals = [];
 
   ['log', 'warn', 'error', 'info'].forEach(level => {
+    // Entries are never removed or reordered, since a saved view may still
+    // route through any of them. Assigning a function already in the chain
+    // reuses its entry, so only distinct functions grow it. The ceiling is a
+    // normalizer that re-binds on every pass (`console.log =
+    // console.log.bind(console)`): each bind is a new function, so each pass
+    // adds an entry -- the same extra layer it would add without Pilot.
     const chain = [_originalConsole[level]];
-    _consoleChains[level] = chain;
+    // Depth of the view the getter hands out.
+    let current = 1;
     const views = [];
 
     // One view per chain depth, created once, so identity stays stable:
@@ -131,50 +150,49 @@
     function viewAt(depth) {
       if (views[depth]) return views[depth];
       const view = function(...args) {
-        // Only the reference the page reaches for right now is an entry
-        // point. A view saved before further replacements were installed is a
-        // continuation of a call that was already recorded, so recording here
-        // would duplicate it.
-        //
-        // extractSource() must be called from this frame: it skips the two
-        // location-bearing frames that are always ours (itself and this view).
-        if (depth === chain.length) pushLog(level, args, extractSource());
-        return chain[depth - 1].apply(console, args);
+        const outermost = _consoleActive === 0;
+        _consoleActive++;
+        try {
+          // extractSource() must be called from this frame: it skips the two
+          // location-bearing frames that are always ours (itself and this view).
+          if (outermost) pushLog(level, args, extractSource());
+          return chain[depth - 1].apply(console, args);
+        } finally {
+          _consoleActive--;
+        }
       };
-      _consoleViews.set(view, level);
+      _consoleViews.set(view, { chain, depth });
       views[depth] = view;
       return view;
     }
 
+    const accessor = {
+      configurable: true,
+      enumerable: true,
+      get() { return viewAt(current); },
+      set(next) {
+        if (typeof next !== 'function') return;
+        // A view stands for the function it calls, never for itself:
+        // stacking one would file a call twice, or under two levels. Resolve
+        // it through its own chain and depth, not the current tail, so
+        // `console.log = saved` puts back exactly what `saved` called, and
+        // `console.log = console.warn` takes whatever warn's view ran --
+        // stale or not. An entry never changes, so pointing at one can never
+        // close a loop between two aliased levels.
+        const owner = _consoleViews.get(next);
+        const target = owner ? owner.chain[owner.depth - 1] : next;
+        const at = chain.indexOf(target);
+        if (at === -1) chain.push(target);
+        current = at === -1 ? chain.length : at + 1;
+      },
+    };
+
+    function install() {
+      Object.defineProperty(console, level, accessor);
+    }
+
     try {
-      Object.defineProperty(console, level, {
-        configurable: true,
-        enumerable: true,
-        get() { return viewAt(chain.length); },
-        set(next) {
-          if (typeof next !== 'function') return;
-          const pilotLevel = _consoleViews.get(next);
-          // A save-then-restore round trip should change nothing.
-          if (pilotLevel === level) return;
-          if (typeof pilotLevel === 'string') {
-            // `console.log = console.warn`. Stacking the other level's view
-            // would file one call under two levels, and dropping to that
-            // level's real function would skip whatever the page has
-            // installed on it. Take the other chain's tail as it stands now,
-            // which is what the view being assigned resolves to: its
-            // replacements still run, and only this level records.
-            //
-            // Reading that tail lazily instead would let two levels aliased
-            // to each other chase one another's growing tails until the
-            // stack gives out. An entry already in a chain never changes, so
-            // referencing one can never close a loop.
-            const other = _consoleChains[pilotLevel];
-            chain.push(other[other.length - 1]);
-            return;
-          }
-          chain.push(next);
-        },
-      });
+      install();
     } catch (_) {
       // Unconfigurable console: fall back to the plain assignment, which is
       // still better than no capture at all.
@@ -184,10 +202,35 @@
         // Frozen console, and the file is strict, so the assignment throws
         // too. Losing capture on one level is bad; letting it abort the IIFE
         // would leave no window.__PILOT__ at all and take the whole plugin
-        // down with it.
+        // down with it. Record the loss so `logs` can explain an empty buffer
+        // instead of repeating the silence this change exists to remove.
+        pushLog('error', ['tauri-pilot: console.' + level + ' capture unavailable (console is frozen)'], null);
       }
     }
+
+    // configurable has to stay true (React's dev build redefines console.*),
+    // so page code can still replace the accessor with a plain data property.
+    // React does exactly that while it builds a component stack, then puts
+    // back what it read, and the next plain assignment displaces capture as
+    // in #190. Nothing fires on a redefine, so heal whenever the buffer is
+    // read: chain whatever is installed now and put the accessor back. Lines
+    // logged in between are lost.
+    _consoleHeals.push(() => {
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(console, level);
+        if (descriptor && descriptor.get === accessor.get) return;
+        const installed = console[level];
+        install();
+        accessor.set(installed);
+      } catch (_) {
+        // Still unconfigurable: the fallback above is all there is.
+      }
+    });
   });
+
+  function healConsole() {
+    _consoleHeals.forEach(heal => heal());
+  }
 
   function isError(value) {
     // instanceof is realm-bound, so an Error thrown from an iframe fails it.
@@ -304,6 +347,7 @@
   }
 
   function consoleLogs(options) {
+    healConsole();
     let result = _logs.slice();
     if (options) {
       if (options.level) {
@@ -322,6 +366,7 @@
   }
 
   function clearLogs() {
+    healConsole();
     _logs.length = 0;
     return { cleared: true };
   }

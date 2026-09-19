@@ -34,10 +34,12 @@ const REAL_CONSOLE = {
 // its chain) while its getter kept answering with that bridge's view, so every
 // test after the first booted on top of the last one's wrapper. The accessor is
 // configurable, so redefining it gives each test a genuinely native console.
-function resetConsole() {
+// `native` stands in for chosen levels, so a test can see what reaches the
+// real console.
+function resetConsole(native = {}) {
   for (const level of Object.keys(REAL_CONSOLE)) {
     Object.defineProperty(console, level, {
-      value: REAL_CONSOLE[level],
+      value: native[level] || REAL_CONSOLE[level],
       writable: true,
       configurable: true,
       enumerable: true,
@@ -63,8 +65,8 @@ after(() => {
   }
 });
 
-function loadBridge() {
-  resetConsole();
+function installGlobals(native) {
+  resetConsole(native);
   globalThis.location = { href: "https://app.example/" };
   globalThis.XMLHttpRequest = function () {};
   globalThis.XMLHttpRequest.prototype.open = function () {};
@@ -77,7 +79,10 @@ function loadBridge() {
     location: globalThis.location,
     addEventListener() {},
   };
+}
 
+function loadBridge(native) {
+  installGlobals(native);
   (0, eval)(BRIDGE_SRC);
   return globalThis.window.__PILOT__;
 }
@@ -140,8 +145,9 @@ test("two stacked wrappers both run and capture still works", () => {
   assert.deepEqual(messages(pilot), ["stacked"]);
 });
 
-test("restoring a saved console.log keeps capture alive", () => {
-  const pilot = loadBridge();
+test("restoring a saved console.log puts the real console back", () => {
+  const printed = [];
+  const pilot = loadBridge({ log: (...args) => { printed.push(args[0]); } });
   const saved = console.log;
   console.log = () => {};
   console.log = saved;
@@ -149,6 +155,53 @@ test("restoring a saved console.log keeps capture alive", () => {
   console.log("restored");
 
   assert.deepEqual(messages(pilot), ["restored"]);
+  assert.deepEqual(printed, ["restored"], "the muting replacement must be gone");
+  assert.equal(console.log, saved, "the restored reference reads back");
+});
+
+test("a wrapper installed and removed repeatedly leaves nothing running", () => {
+  const printed = [];
+  const pilot = loadBridge({ log: (...args) => { printed.push(args[0]); } });
+  let runs = 0;
+  // An HMR dispose hook or Sentry's consoleSandbox: wrap, then put the saved
+  // reference back. Ignoring the restore left every removed wrapper in the
+  // path of every later call.
+  for (let i = 0; i < 3; i++) {
+    const original = console.log;
+    console.log = (...args) => { runs += 1; original.apply(console, args); };
+    console.log = original;
+  }
+
+  console.log("unwrapped");
+
+  assert.equal(runs, 0);
+  assert.deepEqual(printed, ["unwrapped"]);
+  assert.deepEqual(messages(pilot), ["unwrapped"]);
+});
+
+test("re-assigning the installed function does not stack it again", () => {
+  loadBridge();
+  const mine = () => {};
+  // An idempotency guard never matches: the getter hands back Pilot's entry
+  // point, not `mine`, so the page assigns again on every check.
+  console.log = mine;
+  const installed = console.log;
+  if (console.log !== mine) console.log = mine;
+
+  assert.equal(console.log, installed);
+});
+
+test("a reference saved before a later replacement is still captured", () => {
+  const pilot = loadBridge();
+  // loglevel, debug and pino's browser build keep `const log = console.log`
+  // from init, so that reference ends up below whatever the page installs
+  // later.
+  const early = console.log;
+  console.log = () => {};
+
+  early("from a logger");
+
+  assert.deepEqual(messages(pilot), ["from a logger"]);
 });
 
 test("assigning a non-function falls back to the original console", () => {
@@ -172,12 +225,11 @@ test("each level keeps its own downstream", () => {
   assert.deepEqual(pilot.consoleLogs({ level: "warn" }).map((e) => e.args[0]), ["to warn"]);
 });
 
-test("a replacement that defers to its saved console.log records once", async () => {
+test("a replacement that defers to its saved console.log terminates", async () => {
   const pilot = loadBridge();
   // The saved reference is called from a timer, long after the original call
-  // returned. A shared re-entry counter has unwound by then, so the deferred
-  // call looks like a fresh one and goes around the chain again -- recording
-  // the same line over and over until something stops it.
+  // returned. If it re-entered at the top of the chain, it would go around
+  // again -- recording the same line over and over until something stops it.
   const saved = console.log;
   let invocations = 0;
   console.log = (...args) => {
@@ -189,7 +241,10 @@ test("a replacement that defers to its saved console.log records once", async ()
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   assert.equal(invocations, 1, "the replacement must not be re-entered");
-  assert.deepEqual(messages(pilot), ["deferred"]);
+  // Recorded twice, on purpose. Called from a timer, the saved reference looks
+  // exactly like a logger's early-bound one, and those must record: dropping
+  // them would lose every line such a logger writes.
+  assert.deepEqual(messages(pilot), ["deferred", "deferred"]);
 });
 
 test("assigning another level's console does not record the call twice", () => {
@@ -213,6 +268,38 @@ test("assigning another level's console does not record the call twice", () => {
     ["redirected"],
     "the redirect still runs whatever the page installed on warn"
   );
+});
+
+test("a level that forwards to another is recorded once, under its own level", () => {
+  const pilot = loadBridge();
+  // A page function, not Pilot's view, so the setter cannot resolve it. The
+  // warn call happens inside the error call that was already recorded.
+  console.error = (...args) => console.warn(...args);
+
+  console.error("forwarded");
+
+  assert.deepEqual(
+    pilot.consoleLogs().map((e) => [e.level, e.args[0]]),
+    [["error", "forwarded"]]
+  );
+});
+
+test("assigning an older saved view of another level calls what that view called", () => {
+  const pilot = loadBridge();
+  const order = [];
+  const firstWarn = console.warn;
+  console.warn = (...args) => { order.push("wrapWarn"); firstWarn.apply(console, args); };
+  const staleWarn = console.warn;
+  console.warn = () => { order.push("laterWarn"); };
+  // staleWarn was saved while wrapWarn was installed, and calling it directly
+  // reaches wrapWarn. Taking warn's current function instead would swap in
+  // one the page never pointed log at.
+  console.log = staleWarn;
+
+  console.log("stale");
+
+  assert.deepEqual(order, ["wrapWarn"]);
+  assert.deepEqual(messages(pilot), ["stale"]);
 });
 
 test("console.log keeps a stable identity", () => {
@@ -245,20 +332,7 @@ test("two levels aliased to each other do not recurse", () => {
 });
 
 test("a frozen console does not stop the bridge from loading", () => {
-  resetConsole();
-  globalThis.location = { href: "https://app.example/" };
-  globalThis.XMLHttpRequest = function () {};
-  globalThis.XMLHttpRequest.prototype.open = function () {};
-  globalThis.XMLHttpRequest.prototype.send = function () {};
-  globalThis.XMLHttpRequest.prototype.addEventListener = function () {};
-  globalThis.XMLHttpRequest.prototype.removeEventListener = function () {};
-  globalThis.document = { querySelector() { return null; } };
-  globalThis.window = {
-    fetch() { return Promise.resolve({ status: 200, headers: { get() { return "0"; } } }); },
-    location: globalThis.location,
-    addEventListener() {},
-  };
-
+  installGlobals();
   // Freezing the real console cannot be undone, so stand a frozen one in its
   // place for the load. defineProperty throws on it, and so does the plain
   // assignment behind it, because bridge.js is strict. That aborted the IIFE
@@ -266,13 +340,83 @@ test("a frozen console does not stop the bridge from loading", () => {
   // losing the bridge takes every other pilot command with it.
   const realConsole = globalThis.console;
   globalThis.console = Object.freeze({ ...REAL_CONSOLE });
+  let errors;
   try {
     assert.doesNotThrow(() => (0, eval)(BRIDGE_SRC));
+    errors = globalThis.window.__PILOT__.consoleLogs({ level: "error" });
   } finally {
     globalThis.console = realConsole;
   }
 
-  assert.ok(globalThis.window.__PILOT__, "the rest of the bridge must still install");
+  // An empty buffer would read as a quiet page, the very silence #190 is
+  // about, so the loss has to show up under `logs --level error`.
+  assert.deepEqual(
+    errors.map((e) => e.args[0]),
+    ["log", "warn", "error", "info"].map(
+      (level) => `tauri-pilot: console.${level} capture unavailable (console is frozen)`
+    )
+  );
+});
+
+test("an unconfigurable but writable console is still captured", () => {
+  installGlobals();
+  // defineProperty throws on these, so the bridge falls back to a plain
+  // assignment: the only capture left on such a console.
+  const stub = {};
+  for (const level of Object.keys(REAL_CONSOLE)) {
+    Object.defineProperty(stub, level, {
+      value: REAL_CONSOLE[level],
+      writable: true,
+      configurable: false,
+      enumerable: true,
+    });
+  }
+  const realConsole = globalThis.console;
+  globalThis.console = stub;
+  let logged;
+  try {
+    (0, eval)(BRIDGE_SRC);
+    console.log("plain fallback");
+    logged = messages(globalThis.window.__PILOT__);
+  } finally {
+    globalThis.console = realConsole;
+  }
+
+  assert.deepEqual(logged, ["plain fallback"]);
+});
+
+test("capture recovers once the accessor has been redefined away", () => {
+  const pilot = loadBridge();
+  const seen = [];
+  // React's dev build swaps console.* for plain data properties while it
+  // builds a component stack, then puts back what it read. The accessor is
+  // gone afterwards, so the next plain assignment displaces capture as in #190.
+  const saved = console.log;
+  const plain = (value) => ({ value, writable: true, configurable: true, enumerable: true });
+  Object.defineProperty(console, "log", plain(() => {}));
+  Object.defineProperty(console, "log", plain(saved));
+  console.log = (...args) => { seen.push(args[0]); };
+
+  // Nothing fires on a redefine, so reading the buffer is where it heals.
+  pilot.consoleLogs();
+  console.log("recovered");
+
+  assert.deepEqual(messages(pilot), ["recovered"]);
+  assert.deepEqual(seen, ["recovered"], "the page's replacement still runs");
+});
+
+test("an entry names the page function that logged it, not a wrapper", () => {
+  const pilot = loadBridge();
+  function pageCallerPlain() { console.log("plain"); }
+  pageCallerPlain();
+  const previous = console.log;
+  console.log = (...args) => previous.apply(console, args);
+  function pageCallerChained() { console.log("chained"); }
+  pageCallerChained();
+
+  const [plain, chained] = pilot.consoleLogs({ level: "log" });
+  assert.match(plain.source, /pageCallerPlain/);
+  assert.match(chained.source, /pageCallerChained/);
 });
 
 test("a replacement that fakes the Pilot marker is still chained", () => {
