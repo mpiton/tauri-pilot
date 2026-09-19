@@ -277,7 +277,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency floors raised in `Cargo.toml`, the only pinning this repo commits
   (`Cargo.lock` is ignored, so a requirement is what actually reaches a
   consumer): `anyhow` 1 -> 1.0.104, `libc` 0.2.184 -> 0.2.189 in both crates,
-  `owo-colors` 4.3.0 -> 4.4.0, `rmcp` 3.1.4 -> 3.2.0, and the `tauri-plugin`
+  `owo-colors` 4.3.0 -> 4.4.0, `rmcp` 3.1.4 -> 3.4.0, and the `tauri-plugin`
   build dependency 2.6.1 -> 2.6.3. The `anyhow` floor is the one that matters:
   it clears RUSTSEC-2026-0190, an unsoundness in `Error::downcast_mut()`
   patched in 1.0.103.
