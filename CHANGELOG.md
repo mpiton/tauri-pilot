@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `check` now runs React's `onChange` on controlled checkboxes and radios.
+  It assigned `.checked` and dispatched a bare `change`, which also updated
+  React's value tracker, so React saw no change and the next render put the
+  old value back. It now clicks the input natively, so the browser flips it
+  and fires `click`, `input` and `change` as a user click does. An
+  already-selected radio is left alone and gets no event. [#212]
+
 - `logs` no longer goes silent once page code assigns its own `console.log`
   (or `warn`, `error`, `info`) without calling the previous one. Capture is
   an accessor on each method, so an assignment is chained behind it: the

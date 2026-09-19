@@ -1044,9 +1044,12 @@
     const el = resolveTarget(params);
     requireCheckable(el);
     const type = el && el.type != null ? String(el.type).toLowerCase() : "";
-    // Radios have no click-to-uncheck; toggling `.checked` can empty the group.
-    el.checked = type === "radio" ? true : !el.checked;
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+    // Radios have no click-to-uncheck; a selected one stays as it is.
+    if (type === "radio" && el.checked) return { ok: true };
+    // Assigning `.checked` also updates React's value tracker, so its
+    // onChange never runs. A native click changes the state behind the
+    // tracker and fires click, input and change like a user click (#212).
+    el.click();
     return { ok: true };
   }
 
