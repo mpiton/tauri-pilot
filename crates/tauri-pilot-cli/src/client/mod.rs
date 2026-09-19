@@ -46,15 +46,7 @@ impl Client {
         let id = self.next_id;
         self.next_id += 1;
 
-        let request = Request {
-            jsonrpc: "2.0".to_owned(),
-            id,
-            method: method.to_owned(),
-            params,
-        };
-
-        let mut bytes = serde_json::to_vec(&request)?;
-        bytes.push(b'\n');
+        let bytes = encode(id, method, params)?;
         if bytes.len() > MAX_REQUEST_LEN {
             bail!(
                 "{method} request is {} bytes; the plugin accepts at most {MAX_REQUEST_LEN} bytes",
@@ -121,6 +113,28 @@ impl Client {
         // and `set -e` keep working. See #48.
         Ok(response.result.unwrap_or(serde_json::Value::Null))
     }
+
+    /// Bytes the next `call` would write for this request, newline included.
+    pub(crate) fn request_len(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<usize> {
+        Ok(encode(self.next_id, method, params)?.len())
+    }
+}
+
+/// Serialize a request as one line, trailing newline included.
+fn encode(id: u64, method: &str, params: Option<serde_json::Value>) -> Result<Vec<u8>> {
+    let request = Request {
+        jsonrpc: "2.0".to_owned(),
+        id,
+        method: method.to_owned(),
+        params,
+    };
+    let mut bytes = serde_json::to_vec(&request)?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 #[cfg(unix)]

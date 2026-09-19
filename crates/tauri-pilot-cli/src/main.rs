@@ -585,7 +585,7 @@ async fn run_diff_command(
         // re-encoded, so `Client::call` checks the real request size.
         anyhow::ensure!(
             meta.len() < 50 * 1024 * 1024,
-            "Snapshot file too large (>50 MB): {} (requests can be at most {MAX_REQUEST_LEN} bytes)",
+            "Snapshot file too large (at least 50 MiB): {} (requests can be at most {MAX_REQUEST_LEN} bytes)",
             path.display()
         );
         let content = std::fs::read_to_string(&path)
@@ -982,34 +982,37 @@ pub(crate) async fn run_drop_command(
     file: Vec<std::path::PathBuf>,
     window: Option<&str>,
 ) -> Result<serde_json::Value> {
-    let mut p = target_params(target);
     // Files travel base64-encoded, 4 bytes per 3, in one request of at most
-    // `MAX_REQUEST_LEN` bytes. Size them from metadata before reading any;
-    // `Client::call` still checks the exact request.
+    // `MAX_REQUEST_LEN` bytes. Size that request before reading any file:
+    // base64 needs no JSON escaping, so each file adds exactly its encoded
+    // length to the request built with empty `data`.
     let mut encoded_len = 0u64;
+    let mut files = Vec::new();
     for path in &file {
         let meta = std::fs::metadata(path)
             .with_context(|| format!("Failed to stat file: {}", path.display()))?;
         anyhow::ensure!(meta.is_file(), "Not a regular file: {}", path.display());
         encoded_len = encoded_len.saturating_add(meta.len().div_ceil(3) * 4);
-    }
-    anyhow::ensure!(
-        encoded_len < MAX_REQUEST_LEN as u64,
-        "drop files are {encoded_len} bytes once base64-encoded; one request carries at most {MAX_REQUEST_LEN} bytes"
-    );
-    let mut files = Vec::new();
-    for path in &file {
-        let data = std::fs::read(path)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let mime = mime_from_ext(path);
-        files.push(json!({"name": name, "type": mime, "data": encoded}));
+        files.push(json!({"name": name, "type": mime_from_ext(path), "data": ""}));
     }
+    let mut p = target_params(target);
     p["files"] = json!(files);
+    let envelope = client.request_len("drop", with_window(Some(p.clone()), window))?;
+    let request_len = encoded_len.saturating_add(envelope as u64);
+    anyhow::ensure!(
+        request_len <= MAX_REQUEST_LEN as u64,
+        "drop request would be {request_len} bytes once the files are base64-encoded; the plugin accepts at most {MAX_REQUEST_LEN} bytes"
+    );
+    for (entry, path) in files.iter_mut().zip(&file) {
+        let data = std::fs::read(path)
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
+        entry["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&data));
+    }
+    p["files"] = Value::Array(files);
     client.call("drop", with_window(Some(p), window)).await
 }
 
@@ -1688,13 +1691,14 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn test_drop_refuses_files_that_fill_a_request() {
-        // 786,432 bytes encode to exactly 1 MiB, so with the request around
-        // them they cannot fit. The limit was 50 MB per file before #214.
+        // 786,429 bytes encode to 1,048,572, under 1 MiB on their own; the
+        // request around them pushes it over, and nothing reads the file.
+        // The limit was 50 MB per file before #214.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("big.bin");
         std::fs::File::create(&path)
             .expect("create file")
-            .set_len(786_432)
+            .set_len(786_429)
             .expect("size file");
         let socket = dir.path().join("pilot.sock");
         let _listener = tokio::net::UnixListener::bind(&socket).expect("bind socket");
@@ -1705,8 +1709,57 @@ mod tests {
             .expect_err("files fill the request");
         assert_eq!(
             err.to_string(),
-            "drop files are 1048576 bytes once base64-encoded; one request carries at most 1048576 bytes"
+            "drop request would be 1048716 bytes once the files are base64-encoded; the plugin accepts at most 1048576 bytes"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_drop_sends_request_of_exactly_the_limit() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir.path().join("pilot.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut line = String::new();
+            BufReader::new(reader)
+                .read_line(&mut line)
+                .await
+                .expect("read request");
+            writer
+                .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":null}\n")
+                .await
+                .expect("write response");
+            line.len()
+        });
+        let mut client = Client::connect(&socket).await.expect("connect");
+
+        // Base64 grows 4 bytes at a time, so pad the file name until the data
+        // can fill the request to the last byte.
+        let base = client
+            .request_len(
+                "drop",
+                Some(json!({
+                    "selector": "#zone",
+                    "files": [{"name": "a.txt", "type": "text/plain", "data": ""}],
+                })),
+            )
+            .expect("request length");
+        let pad = (MAX_REQUEST_LEN - base) % 4;
+        let data_len = MAX_REQUEST_LEN - base - pad;
+        let path = dir.path().join(format!("{}a.txt", "a".repeat(pad)));
+        std::fs::File::create(&path)
+            .expect("create file")
+            .set_len((data_len / 4 * 3) as u64)
+            .expect("size file");
+
+        run_drop_command(&mut client, "#zone", vec![path], None)
+            .await
+            .expect("a request of exactly the limit is sent");
+        assert_eq!(server.await.expect("server task"), MAX_REQUEST_LEN);
     }
 
     #[cfg(unix)]
@@ -1729,7 +1782,7 @@ mod tests {
         assert_eq!(
             err.to_string(),
             format!(
-                "Snapshot file too large (>50 MB): {} (requests can be at most 1048576 bytes)",
+                "Snapshot file too large (at least 50 MiB): {} (requests can be at most 1048576 bytes)",
                 path.display()
             )
         );
