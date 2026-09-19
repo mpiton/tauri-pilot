@@ -157,11 +157,13 @@
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       // V8 opens with "Name: message" (possibly multi-line); JavaScriptCore
-      // (WebKitGTK, WKWebView) starts at the throwing frame. Keep the first
-      // V8 `at ...` or JSC `@...` / `fn@...` line that carries :line:col.
-      // Anonymous JSC callbacks are `@url:line:col` (empty name). A message
-      // that merely ends in :line:col is not a frame.
-      if (!/^(?:at\s+.*|[^:]*@.*):\d+:\d+\)?$/.test(line)) continue;
+      // (WebKitGTK, WKWebView) starts at the throwing frame. V8 frames are
+      // indented (`    at ...`); an unindented `at fake.js:12:5` is message
+      // text. JSC is `@url:line:col` or `fn@url:line:col` (anonymous has no
+      // name). Match V8 on the raw line so trim cannot invent indentation.
+      const isV8Frame = /^\s+at\s+.*:\d+:\d+\)?$/.test(lines[i]);
+      const isJscFrame = /^(?:[^:]*@.*):\d+:\d+\)?$/.test(line);
+      if (!isV8Frame && !isJscFrame) continue;
       if (line.includes('__PILOT__')) continue;
       if (skipped < skipLocationFrames) {
         skipped++;

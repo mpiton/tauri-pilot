@@ -175,6 +175,27 @@ test("a V8 message that ends with :line:col is not treated as a frame", () => {
   assert.doesNotMatch(entry.source, /widget\.js/, "the V8 header is not a frame");
 });
 
+test("an unindented V8 message continuation starting with at is not a frame", () => {
+  // V8 frames are indented ("    at ..."). A message line that happens to
+  // read `at fake.js:12:5` with no leading whitespace is not a frame; after
+  // trim it currently matches the V8 `at` pattern and steals source.
+  const { pilot, win } = loadBridge();
+  const error = new Error("boom");
+  error.stack =
+    "Error: Invalid config:\nat fake.js:12:5\n    at handler (https://app.example/main.js:40:1)";
+  win.dispatch("error", {
+    message: "Uncaught Error: boom",
+    filename: "https://app.example/fake.js",
+    lineno: 12,
+    colno: 5,
+    error,
+  });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.match(entry.source, /main\.js:40:1/);
+  assert.doesNotMatch(entry.source, /fake\.js/, "unindented at-line is message text, not a frame");
+});
+
 test("a V8 stack with a multi-line message still names the throw site", () => {
   // V8 puts "Name: message" on line 0, but the message itself can contain
   // newlines. Skipping one line then records "expected foo" as source.
