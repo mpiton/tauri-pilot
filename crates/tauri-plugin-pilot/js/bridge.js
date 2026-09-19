@@ -158,8 +158,9 @@
       const line = lines[i].trim();
       // V8 opens with "Name: message" (possibly multi-line); JavaScriptCore
       // (WebKitGTK, WKWebView) starts at the throwing frame. Keep the first
-      // line that carries a :line:col location; header and message lines do not.
-      if (!/:\d+:\d+\)?$/.test(line)) continue;
+      // V8 `at ...` or JSC `fn@...` line that carries :line:col. A message
+      // that merely ends in :line:col is not a frame.
+      if (!/^(?:at\s+.*|[^:]+@.*):\d+:\d+\)?$/.test(line)) continue;
       if (line.includes('__PILOT__')) continue;
       if (skipped < skipLocationFrames) {
         skipped++;

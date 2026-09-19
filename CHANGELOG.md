@@ -900,5 +900,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#175]: https://github.com/mpiton/tauri-pilot/issues/175
 [#177]: https://github.com/mpiton/tauri-pilot/issues/177
 [#184]: https://github.com/mpiton/tauri-pilot/issues/184
+[#188]: https://github.com/mpiton/tauri-pilot/issues/188
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194
 [#195]: https://github.com/mpiton/tauri-pilot/issues/195

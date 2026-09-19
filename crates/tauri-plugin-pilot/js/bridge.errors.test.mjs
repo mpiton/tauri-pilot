@@ -140,6 +140,26 @@ test("a JavaScriptCore stack names the throwing frame, not the caller", () => {
   assert.doesNotMatch(entry.source, /main\.js/, "the throwing frame beats the caller and the event location");
 });
 
+test("a V8 message that ends with :line:col is not treated as a frame", () => {
+  // The location regex alone matches "Error: failed at url:12:5". That is the
+  // V8 header, not a frame; source must be the real `at` line below it.
+  const { pilot, win } = loadBridge();
+  const error = new Error("boom");
+  error.stack =
+    "Error: failed at https://app.example/widget.js:12:5\n    at handler (https://app.example/main.js:40:1)";
+  win.dispatch("error", {
+    message: "Uncaught Error: boom",
+    filename: "https://app.example/widget.js",
+    lineno: 12,
+    colno: 5,
+    error,
+  });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.match(entry.source, /main\.js:40:1/);
+  assert.doesNotMatch(entry.source, /widget\.js/, "the V8 header is not a frame");
+});
+
 test("a V8 stack with a multi-line message still names the throw site", () => {
   // V8 puts "Name: message" on line 0, but the message itself can contain
   // newlines. Skipping one line then records "expected foo" as source.
@@ -264,6 +284,24 @@ test("a rejection with a circular object is still recorded", () => {
   assert.equal(
     pilot.consoleLogs({ level: "error" })[0].args[0],
     "Unhandled rejection: [object Object]"
+  );
+});
+
+test("a rejection whose reason getter throws is still recorded as unprintable", () => {
+  // describeReason and stackSource swallow their own throws. The listener's
+  // outer catch is only reached when reading event.reason itself throws.
+  const { pilot, win } = loadBridge();
+  const event = {};
+  Object.defineProperty(event, "reason", {
+    get() {
+      throw new Error("reason getter");
+    },
+  });
+
+  win.dispatch("unhandledrejection", event);
+  assert.equal(
+    pilot.consoleLogs({ level: "error" })[0].args[0],
+    "Unhandled rejection: [unprintable]"
   );
 });
 
