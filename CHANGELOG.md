@@ -34,6 +34,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `logs` no longer goes silent once page code assigns its own `console.log`
+  (or `warn`, `error`, `info`) without calling the previous one. Capture is
+  an accessor on each method, so an assignment is chained behind it: the
+  page's function still runs, but reading `console.log` back returns the
+  bridge's entry point rather than that function. Restoring a saved
+  reference puts back exactly what it called, and a level that forwards to
+  another is recorded once, under the level the page called. A reference
+  saved earlier and called later from a timer records a second entry, since
+  it looks like a logger's early-bound `console.log`. Redefining the
+  property outright (React's dev build does while it builds a component
+  stack), or assigning to a method that cannot be redefined, where the
+  bridge could only install itself by plain assignment, drops capture until
+  the next `logs` call restores it; lines logged in between are lost. On a
+  frozen console, `logs --level error` says that capture is unavailable
+  instead of showing an empty buffer. [#190]
+
 - `logs --level error` now records uncaught exceptions and unhandled
   promise rejections, not only `console.*` calls. Rejections are prefixed
   `Unhandled rejection: `; the human-readable renderer prints `source`
@@ -901,5 +917,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#177]: https://github.com/mpiton/tauri-pilot/issues/177
 [#184]: https://github.com/mpiton/tauri-pilot/issues/184
 [#188]: https://github.com/mpiton/tauri-pilot/issues/188
+[#190]: https://github.com/mpiton/tauri-pilot/issues/190
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194
 [#195]: https://github.com/mpiton/tauri-pilot/issues/195

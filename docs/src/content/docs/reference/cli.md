@@ -1072,6 +1072,8 @@ Display or stream captured console logs (`console.log`, `console.warn`, `console
 
 The JS bridge monkey-patches the browser console methods, listens for `error` and `unhandledrejection`, and stores entries in a 500-entry ring buffer with timestamp, level, serialized arguments, and source location. The human-readable renderer prints `source` after the arguments when it is set.
 
+Console capture is an accessor on each method, so a page that assigns its own `console.log` is chained behind the bridge instead of replacing it: the page's function still runs, and reading `console.log` back returns the bridge's entry point rather than that function. Two cases drop capture until the next `logs` call restores it, and lines logged in between are lost: redefining the property outright (React's dev build does while it builds a component stack), and assigning to a method that cannot be redefined, where the bridge could only install itself by plain assignment.
+
 ```bash
 tauri-pilot logs [OPTIONS]
 ```

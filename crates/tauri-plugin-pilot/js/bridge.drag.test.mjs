@@ -79,7 +79,16 @@ function makeElement(initialRect, { visibleRect, cancelDrop = false, descendants
 // if `window.__PILOT__` already exists, so `window` must be new every time).
 // `elements` maps selectors to mocks; `elementFromPoint` resolves drop points.
 function loadBridge({ elements = {}, elementFromPoint, pointerEvents = true } = {}) {
-  Object.assign(console, REAL_CONSOLE);
+  // Object.assign would go through the previous bridge's console setter and
+  // stack this load on top of it; redefining restores a native console.
+  for (const level of Object.keys(REAL_CONSOLE)) {
+    Object.defineProperty(console, level, {
+      value: REAL_CONSOLE[level],
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
 
   globalThis.htmlToImage = {
     async toPng() {
