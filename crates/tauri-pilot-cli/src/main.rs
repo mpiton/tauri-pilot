@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use base64::Engine;
 use clap::Parser;
 use serde_json::{Value, json};
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read};
 #[cfg(unix)]
 use std::path::Path;
 use std::path::PathBuf;
@@ -1007,9 +1007,21 @@ pub(crate) async fn run_drop_command(
         request_len <= MAX_REQUEST_LEN as u64,
         "drop request would be {request_len} bytes once the files are base64-encoded; the plugin accepts at most {MAX_REQUEST_LEN} bytes"
     );
+    // Metadata can undercount a file still being written, or a /proc file
+    // that reports 0 bytes, so read no more than the room left can encode,
+    // plus one byte to tell a file that does not fit.
+    let mut room = MAX_REQUEST_LEN - envelope;
     for (entry, path) in files.iter_mut().zip(&file) {
-        let data = std::fs::read(path)
+        let mut data = Vec::new();
+        std::fs::File::open(path)
+            .and_then(|f| f.take((room / 4 * 3 + 1) as u64).read_to_end(&mut data))
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
+        room = room.checked_sub(data.len().div_ceil(3) * 4).with_context(|| {
+            format!(
+                "drop request would exceed {MAX_REQUEST_LEN} bytes: {} holds more than its reported size",
+                path.display()
+            )
+        })?;
         entry["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&data));
     }
     p["files"] = Value::Array(files);
@@ -1760,6 +1772,47 @@ mod tests {
             .await
             .expect("a request of exactly the limit is sent");
         assert_eq!(server.await.expect("server task"), MAX_REQUEST_LEN);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn test_drop_refuses_file_larger_than_reported() {
+        // /proc files report 0 bytes, so only the read shows this one does not
+        // fit: "big" leaves under 4 bytes, one base64 block, for it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir.path().join("pilot.sock");
+        let _listener = tokio::net::UnixListener::bind(&socket).expect("bind socket");
+        let mut client = Client::connect(&socket).await.expect("connect");
+        let base = client
+            .request_len(
+                "drop",
+                Some(json!({
+                    "selector": "#zone",
+                    "files": [
+                        {"name": "big", "type": "application/octet-stream", "data": ""},
+                        {"name": "status", "type": "application/octet-stream", "data": ""},
+                    ],
+                })),
+            )
+            .expect("request length");
+        let big = dir.path().join("big");
+        std::fs::File::create(&big)
+            .expect("create file")
+            .set_len(((MAX_REQUEST_LEN - base) / 4 * 3) as u64)
+            .expect("size file");
+
+        let files = vec![big, PathBuf::from("/proc/self/status")];
+        let err = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_drop_command(&mut client, "#zone", files, None),
+        )
+        .await
+        .expect("refused without waiting on the server")
+        .expect_err("the /proc file does not fit");
+        assert_eq!(
+            err.to_string(),
+            "drop request would exceed 1048576 bytes: /proc/self/status holds more than its reported size"
+        );
     }
 
     #[cfg(unix)]
