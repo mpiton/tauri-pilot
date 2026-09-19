@@ -78,7 +78,7 @@ jobs:
           cargo clippy -p tauri-plugin-pilot --target aarch64-apple-ios-sim --no-default-features -- -D warnings
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       # Release builds reduce the plugin to a no-op `init`: any module still
       # compiled there is dead code (#164). Turning debug assertions off for

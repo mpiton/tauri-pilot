@@ -415,7 +415,7 @@ pub(crate) mod fake {
 
     #[cfg(test)]
     mod tests {
-        use super::{Arc, FakeWebviews, Mutex, TargetWindow, Url, Webviews};
+        use super::{Arc, FakeWebviews, Mutex, Url, Webviews};
 
         fn with_windows(labels: &[&str]) -> FakeWebviews {
             let windows = labels
