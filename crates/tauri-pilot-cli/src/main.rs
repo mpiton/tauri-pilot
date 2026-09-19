@@ -585,7 +585,7 @@ async fn run_diff_command(
         // re-encoded, so `Client::call` checks the real request size.
         anyhow::ensure!(
             meta.len() < 50 * 1024 * 1024,
-            "Snapshot file too large: {} (a request can be at most {MAX_REQUEST_LEN} bytes)",
+            "Snapshot file too large (>50 MB): {} (requests can be at most {MAX_REQUEST_LEN} bytes)",
             path.display()
         );
         let content = std::fs::read_to_string(&path)
@@ -1706,6 +1706,32 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "drop files are 1048576 bytes once base64-encoded; one request carries at most 1048576 bytes"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_diff_refuses_snapshot_over_memory_guard() {
+        // The error names the 50 MB guard that fired, then the request limit.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("big.snap");
+        std::fs::File::create(&path)
+            .expect("create file")
+            .set_len(50 * 1024 * 1024)
+            .expect("size file");
+        let socket = dir.path().join("pilot.sock");
+        let _listener = tokio::net::UnixListener::bind(&socket).expect("bind socket");
+        let mut client = Client::connect(&socket).await.expect("connect");
+
+        let err = run_diff_command(&mut client, Some(path.clone()), false, None, None, None)
+            .await
+            .expect_err("snapshot over the guard");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Snapshot file too large (>50 MB): {} (requests can be at most 1048576 bytes)",
+                path.display()
+            )
         );
     }
 
