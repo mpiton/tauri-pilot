@@ -4,6 +4,13 @@ use anyhow::{Result, bail};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+/// Longest request line the plugin reads, trailing newline included.
+///
+/// Mirrors `MAX_LINE_LENGTH` in the plugin's `server/mod.rs`, which answers a
+/// longer line with an error and closes the connection, often while the CLI
+/// is still writing. The crates ship separately, so change both together.
+pub(crate) const MAX_REQUEST_LEN: usize = 1_048_576;
+
 /// JSON-RPC client over a platform-specific transport (Unix socket or Named Pipe).
 pub(crate) struct Client {
     #[cfg(unix)]
@@ -39,15 +46,13 @@ impl Client {
         let id = self.next_id;
         self.next_id += 1;
 
-        let request = Request {
-            jsonrpc: "2.0".to_owned(),
-            id,
-            method: method.to_owned(),
-            params,
-        };
-
-        let mut bytes = serde_json::to_vec(&request)?;
-        bytes.push(b'\n');
+        let bytes = encode(id, method, params)?;
+        if bytes.len() > MAX_REQUEST_LEN {
+            bail!(
+                "{method} request is {} bytes; the plugin accepts at most {MAX_REQUEST_LEN} bytes",
+                bytes.len()
+            );
+        }
         self.writer.write_all(&bytes).await?;
         self.writer.flush().await?;
 
@@ -59,7 +64,11 @@ impl Client {
 
         let response: Response = serde_json::from_str(line.trim())?;
 
-        if response.id != serde_json::Value::Number(id.into()) {
+        // JSON-RPC 2.0 answers with `"id": null` when it could not read the
+        // request id: an oversized line or a parse error. Only one request is
+        // in flight, so that error is ours; report it, not a mismatch (#214).
+        let unreadable_id = response.id.is_null() && response.error.is_some();
+        if !unreadable_id && response.id != serde_json::Value::Number(id.into()) {
             bail!("Response ID mismatch: expected {id}, got {}", response.id);
         }
 
@@ -104,6 +113,28 @@ impl Client {
         // and `set -e` keep working. See #48.
         Ok(response.result.unwrap_or(serde_json::Value::Null))
     }
+
+    /// Bytes the next `call` would write for this request, newline included.
+    pub(crate) fn request_len(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<usize> {
+        Ok(encode(self.next_id, method, params)?.len())
+    }
+}
+
+/// Serialize a request as one line, trailing newline included.
+fn encode(id: u64, method: &str, params: Option<serde_json::Value>) -> Result<Vec<u8>> {
+    let request = Request {
+        jsonrpc: "2.0".to_owned(),
+        id,
+        method: method.to_owned(),
+        params,
+    };
+    let mut bytes = serde_json::to_vec(&request)?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 #[cfg(unix)]
@@ -117,7 +148,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
 
     static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -135,7 +166,11 @@ mod tests {
         ))
     }
 
-    fn mock_server(path: &PathBuf) -> tokio::task::JoinHandle<()> {
+    /// Accept one connection and answer each request line with `reply(line)`.
+    fn mock_server_with(
+        path: &Path,
+        mut reply: impl FnMut(&str) -> String + Send + 'static,
+    ) -> tokio::task::JoinHandle<()> {
         let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path).expect("bind mock socket");
         tokio::spawn(async move {
@@ -144,22 +179,28 @@ mod tests {
             let mut reader = BufReader::new(reader);
             let mut line = String::new();
             while reader.read_line(&mut line).await.expect("read line") > 0 {
-                let req: Request = serde_json::from_str(line.trim()).expect("parse request");
-                let resp = if req.method == "ping" {
-                    Response::success(req.id, serde_json::json!({"status": "ok"}))
-                } else {
-                    Response::error(
-                        serde_json::Value::Number(req.id.into()),
-                        -32601,
-                        "Method not found",
-                    )
-                };
-                let mut bytes = serde_json::to_vec(&resp).expect("serialize response");
+                let mut bytes = reply(line.trim()).into_bytes();
                 bytes.push(b'\n');
                 writer.write_all(&bytes).await.expect("write bytes");
                 writer.flush().await.expect("flush");
                 line.clear();
             }
+        })
+    }
+
+    fn mock_server(path: &Path) -> tokio::task::JoinHandle<()> {
+        mock_server_with(path, |line| {
+            let req: Request = serde_json::from_str(line).expect("parse request");
+            let resp = if req.method == "ping" {
+                Response::success(req.id, serde_json::json!({"status": "ok"}))
+            } else {
+                Response::error(
+                    serde_json::Value::Number(req.id.into()),
+                    -32601,
+                    "Method not found",
+                )
+            };
+            serde_json::to_string(&resp).expect("serialize response")
         })
     }
 
@@ -196,20 +237,10 @@ mod tests {
         // eval'd JS expression legitimately returns `undefined` (e.g.,
         // `element.click()`, void functions). Regression test for #48.
         let socket = unique_socket_path("t05c");
-        let _ = std::fs::remove_file(&socket);
-        let listener = UnixListener::bind(&socket).expect("bind mock socket");
-        let handle = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("accept");
-            let (reader, mut writer) = stream.into_split();
-            let mut reader = BufReader::new(reader);
-            let mut line = String::new();
-            reader.read_line(&mut line).await.expect("read line");
-            let req: Request = serde_json::from_str(line.trim()).expect("parse request");
+        let handle = mock_server_with(&socket, |line| {
+            let req: Request = serde_json::from_str(line).expect("parse request");
             // Write `{"result": null}` explicitly to simulate a void JS expr.
-            let raw = format!(r#"{{"jsonrpc":"2.0","id":{},"result":null}}"#, req.id);
-            writer.write_all(raw.as_bytes()).await.expect("write raw");
-            writer.write_all(b"\n").await.expect("write newline");
-            writer.flush().await.expect("flush");
+            format!(r#"{{"jsonrpc":"2.0","id":{},"result":null}}"#, req.id)
         });
 
         let mut client = connect_with_retry(&socket).await;
@@ -229,25 +260,129 @@ mod tests {
         // the field is omitted entirely. Both end up as `Value::Null` via
         // `unwrap_or`.
         let socket = unique_socket_path("t05d");
-        let _ = std::fs::remove_file(&socket);
-        let listener = UnixListener::bind(&socket).expect("bind mock socket");
-        let handle = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("accept");
-            let (reader, mut writer) = stream.into_split();
-            let mut reader = BufReader::new(reader);
-            let mut line = String::new();
-            reader.read_line(&mut line).await.expect("read line");
-            let req: Request = serde_json::from_str(line.trim()).expect("parse request");
+        let handle = mock_server_with(&socket, |line| {
+            let req: Request = serde_json::from_str(line).expect("parse request");
             // Neither `result` nor `error` present
-            let raw = format!(r#"{{"jsonrpc":"2.0","id":{}}}"#, req.id);
-            writer.write_all(raw.as_bytes()).await.expect("write raw");
-            writer.write_all(b"\n").await.expect("write newline");
-            writer.flush().await.expect("flush");
+            format!(r#"{{"jsonrpc":"2.0","id":{}}}"#, req.id)
         });
 
         let mut client = connect_with_retry(&socket).await;
         let result = client.call("eval", None).await.expect("eval call");
         assert_eq!(result, serde_json::Value::Null);
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_client_null_id_error_is_reported_as_the_error() {
+        // JSON-RPC 2.0 answers with `"id": null` when the request id could not
+        // be read, as the plugin does for an oversized line. That error is the
+        // failure to report, not an id mismatch. Regression test for #214.
+        let socket = unique_socket_path("t05e");
+        let handle = mock_server_with(&socket, |_| {
+            r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Request line exceeds maximum length"}}"#.to_owned()
+        });
+
+        let mut client = connect_with_retry(&socket).await;
+        let err = client.call("eval", None).await.expect_err("server error");
+        assert_eq!(
+            err.to_string(),
+            "RPC error (-32700): Request line exceeds maximum length"
+        );
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_client_null_id_exemption_needs_an_error() {
+        // Only an error may come back with `"id": null` (#214): a null-id
+        // result, or an error for another id, is still a mismatch.
+        let socket = unique_socket_path("t05h");
+        let mut replies = [
+            r#"{"jsonrpc":"2.0","id":null,"result":42}"#,
+            r#"{"jsonrpc":"2.0","id":7,"error":{"code":-32601,"message":"Method not found"}}"#,
+        ]
+        .into_iter();
+        let handle = mock_server_with(&socket, move |_| {
+            replies.next().expect("one reply per call").to_owned()
+        });
+
+        let mut client = connect_with_retry(&socket).await;
+        let err = client.call("eval", None).await.expect_err("null-id result");
+        assert_eq!(
+            err.to_string(),
+            "Response ID mismatch: expected 1, got null"
+        );
+        let err = client.call("eval", None).await.expect_err("other id");
+        assert_eq!(err.to_string(), "Response ID mismatch: expected 2, got 7");
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    /// Bytes the first `call("eval", …)` of a connection sends around the
+    /// script, trailing newline included.
+    const EVAL_ENVELOPE: usize =
+        r#"{"jsonrpc":"2.0","id":1,"method":"eval","params":{"script":""}}"#.len() + 1;
+
+    #[tokio::test]
+    async fn test_client_refuses_request_over_plugin_limit_before_sending() {
+        // The plugin reads at most 1 MiB per line, newline included. Past that
+        // it answers with an error and hangs up, often while the CLI is still
+        // writing ("Broken pipe"). Refuse such a request up front (#214).
+        let socket = unique_socket_path("t05f");
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let handle = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut received = Vec::new();
+            stream
+                .read_to_end(&mut received)
+                .await
+                .expect("read to end");
+            received.len()
+        });
+
+        let mut client = connect_with_retry(&socket).await;
+        let script = "a".repeat(1_048_577 - EVAL_ENVELOPE);
+        let call = client.call("eval", Some(serde_json::json!({ "script": script })));
+        let err = tokio::time::timeout(Duration::from_secs(5), call)
+            .await
+            .expect("refused without waiting for the plugin")
+            .expect_err("oversized request");
+        assert_eq!(
+            err.to_string(),
+            "eval request is 1048577 bytes; the plugin accepts at most 1048576 bytes"
+        );
+
+        drop(client);
+        let received = handle.await.expect("mock server task");
+        assert_eq!(
+            received, 0,
+            "an oversized request must not reach the plugin"
+        );
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_client_sends_request_at_exactly_plugin_limit() {
+        // The plugin still reads a line of exactly 1 MiB, newline included,
+        // so that request must be sent: the mock answers `eval` with -32601.
+        let socket = unique_socket_path("t05g");
+        let handle = mock_server(&socket);
+
+        let mut client = connect_with_retry(&socket).await;
+        let script = "a".repeat(1_048_576 - EVAL_ENVELOPE);
+        let err = client
+            .call("eval", Some(serde_json::json!({ "script": script })))
+            .await
+            .expect_err("mock answers eval with Method not found");
+        assert!(
+            err.to_string().contains("-32601"),
+            "a 1048576-byte request must reach the plugin, got: {err}"
+        );
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);
