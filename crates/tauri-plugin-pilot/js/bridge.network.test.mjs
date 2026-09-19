@@ -61,7 +61,16 @@ function makeXhrClass() {
 }
 
 function loadBridge({ fetchImpl } = {}) {
-  Object.assign(console, REAL_CONSOLE);
+  // Object.assign would go through the previous bridge's console setter and
+  // stack this load on top of it; redefining restores a native console.
+  for (const level of Object.keys(REAL_CONSOLE)) {
+    Object.defineProperty(console, level, {
+      value: REAL_CONSOLE[level],
+      writable: true,
+      configurable: true,
+      enumerable: true,
+    });
+  }
 
   globalThis.location = { href: "https://app.example/" };
   globalThis.window = {
