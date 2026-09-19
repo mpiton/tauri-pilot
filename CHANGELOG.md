@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CLI no longer panics when its stdout is closed early, as in
+  `tauri-pilot snapshot | head -1`. Rust ignores `SIGPIPE`, so every write
+  after the reader left failed with `EPIPE` and `println!` aborted with
+  "failed printing to stdout: Broken pipe" and exit status 101. Output now
+  goes through one writer that exits with status 0 on a broken pipe, so
+  `set -o pipefail` scripts stay green. Other write errors still fail. [#213]
+
 - `check` now runs React's `onChange` on controlled checkboxes and radios.
   It assigned `.checked` and dispatched a bare `change`, which also updated
   React's value tracker, so React saw no change and the next render put the
@@ -934,3 +941,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#195]: https://github.com/mpiton/tauri-pilot/issues/195
 [#211]: https://github.com/mpiton/tauri-pilot/issues/211
 [#212]: https://github.com/mpiton/tauri-pilot/issues/212
+[#213]: https://github.com/mpiton/tauri-pilot/issues/213

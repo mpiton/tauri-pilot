@@ -3,9 +3,44 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+/// `println!` that exits quietly when stdout is a closed pipe (#213).
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        $crate::output::write_stdout(format_args!("{}\n", format_args!($($arg)*)))
+    };
+}
+
+/// `print!` that exits quietly when stdout is a closed pipe (#213).
+macro_rules! out {
+    ($($arg:tt)*) => {
+        $crate::output::write_stdout(format_args!($($arg)*))
+    };
+}
+
+pub(crate) use {out, outln};
+
+/// Writes to stdout, exiting with status 0 if stdout is a closed pipe.
+///
+/// Rust ignores `SIGPIPE`, so once the reader is gone (`tauri-pilot snapshot
+/// | head -1`) a write fails with `EPIPE` and `print!` panics. Exiting with 0
+/// rather than 141 keeps `set -o pipefail` scripts green, like ripgrep does.
+///
+/// # Panics
+///
+/// Panics on any other write error, as `print!` does, so a full disk or a
+/// revoked terminal still fails loudly instead of losing output silently.
+pub(crate) fn write_stdout(args: std::fmt::Arguments<'_>) {
+    if let Err(e) = std::io::Write::write_fmt(&mut std::io::stdout(), args) {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        panic!("failed printing to stdout: {e}");
+    }
+}
+
 /// Print a value as pretty JSON.
 pub(crate) fn format_json(value: &serde_json::Value) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
+    outln!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
 
@@ -26,30 +61,30 @@ pub(crate) fn format_text(value: &serde_json::Value) {
             .unwrap_or("unknown error");
         let code = err.get("code").and_then(serde_json::Value::as_i64);
         if let Some(c) = code {
-            println!("{}", crate::style::error(&format!("{msg} (code {c})")));
+            outln!("{}", crate::style::error(&format!("{msg} (code {c})")));
         } else {
-            println!("{}", crate::style::error(msg));
+            outln!("{}", crate::style::error(msg));
         }
         return;
     }
     // {ok: true} → "✓ ok", {gone: true} → "✓ gone", {found: true} → "✓ found"
     if let Some(key) = text_status_flag(value) {
-        println!("{}", crate::style::success(key));
+        outln!("{}", crate::style::success(key));
         return;
     }
     // {status: "ok"} → "✓ ok", {status: "error"} → "✗ error"
     if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
         if status == "ok" || status == "success" {
-            println!("{}", crate::style::success(status));
+            outln!("{}", crate::style::success(status));
         } else {
-            println!("{}", crate::style::error(status));
+            outln!("{}", crate::style::error(status));
         }
         return;
     }
     match value {
-        serde_json::Value::String(s) => println!("{s}"),
+        serde_json::Value::String(s) => outln!("{s}"),
         serde_json::Value::Null => {}
-        other => println!("{other}"),
+        other => outln!("{other}"),
     }
 }
 
@@ -64,12 +99,12 @@ fn text_status_flag(value: &serde_json::Value) -> Option<&'static str> {
 /// Format a snapshot result as an indented accessibility tree.
 pub(crate) fn format_snapshot(value: &serde_json::Value) {
     let Some(elements) = value.get("elements").and_then(|e| e.as_array()) else {
-        println!("(empty snapshot)");
+        outln!("(empty snapshot)");
         return;
     };
 
     if elements.is_empty() {
-        println!("(empty snapshot)");
+        outln!("(empty snapshot)");
         return;
     }
 
@@ -108,7 +143,7 @@ pub(crate) fn format_snapshot(value: &serde_json::Value) {
             let _ = write!(line, " {}", crate::style::dim("disabled"));
         }
 
-        println!("{line}");
+        outln!("{line}");
     }
 }
 
@@ -250,7 +285,7 @@ pub(crate) fn format_network(value: &serde_json::Value) -> String {
 pub(crate) fn format_storage_value(value: &serde_json::Value) {
     use owo_colors::{OwoColorize, Stream::Stderr};
     match value.get("value").and_then(serde_json::Value::as_str) {
-        Some(val) if value["found"] == true => println!("{}", strip_ansi(val)),
+        Some(val) if value["found"] == true => outln!("{}", strip_ansi(val)),
         _ => eprintln!(
             "{}",
             "(not found)".if_supports_color(Stderr, |t| t.dimmed())
@@ -263,11 +298,11 @@ pub(crate) fn format_storage_value(value: &serde_json::Value) {
 /// Expects `{entries: [{key, value}, ...], truncated: bool}` from `storageList`.
 pub(crate) fn format_storage(value: &serde_json::Value) {
     let Some(entries) = value.get("entries").and_then(|e| e.as_array()) else {
-        println!("{}", crate::style::dim("(empty storage)"));
+        outln!("{}", crate::style::dim("(empty storage)"));
         return;
     };
     if entries.is_empty() {
-        println!("{}", crate::style::dim("(empty storage)"));
+        outln!("{}", crate::style::dim("(empty storage)"));
         return;
     }
     for entry in entries {
@@ -278,7 +313,7 @@ pub(crate) fn format_storage(value: &serde_json::Value) {
             .unwrap_or("null");
         let key_safe = strip_ansi(key);
         let val_safe = strip_ansi(val);
-        println!(
+        outln!(
             "{} {} {}",
             crate::style::bold(&key_safe),
             crate::style::dim("="),
@@ -286,7 +321,7 @@ pub(crate) fn format_storage(value: &serde_json::Value) {
         );
     }
     if value.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
-        println!(
+        outln!(
             "{}",
             crate::style::warn("(output truncated — more entries exist)")
         );
@@ -352,7 +387,7 @@ fn format_form_field(field: &serde_json::Value) {
     } else {
         let _ = write!(line, " = \"{field_value}\"");
     }
-    println!("{line}");
+    outln!("{line}");
 }
 
 /// Format form fields dumped from the page.
@@ -360,11 +395,11 @@ fn format_form_field(field: &serde_json::Value) {
 /// Expects `{forms: [{id, name, action, method, fields: [{tag, type, name, value, checked}]}]}`
 pub(crate) fn format_forms(value: &serde_json::Value) {
     let Some(forms) = value.get("forms").and_then(|f| f.as_array()) else {
-        println!("{}", crate::style::dim("(no forms found)"));
+        outln!("{}", crate::style::dim("(no forms found)"));
         return;
     };
     if forms.is_empty() {
-        println!("{}", crate::style::dim("(no forms found)"));
+        outln!("{}", crate::style::dim("(no forms found)"));
         return;
     }
     for form in forms {
@@ -383,7 +418,7 @@ pub(crate) fn format_forms(value: &serde_json::Value) {
             let _ = write!(header, "[name=\"{}\"]", strip_ansi(name));
         }
         header.push(':');
-        println!("{}", crate::style::bold(&header));
+        outln!("{}", crate::style::bold(&header));
 
         if let Some(fields) = form.get("fields").and_then(|f| f.as_array()) {
             for field in fields {
@@ -394,7 +429,7 @@ pub(crate) fn format_forms(value: &serde_json::Value) {
                 .and_then(serde_json::Value::as_bool)
                 == Some(true)
             {
-                println!(
+                outln!(
                     "  {}",
                     crate::style::warn("(fields truncated — more fields exist)")
                 );
@@ -402,7 +437,7 @@ pub(crate) fn format_forms(value: &serde_json::Value) {
         }
     }
     if value.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
-        println!(
+        outln!(
             "{}",
             crate::style::warn("(output truncated — more forms exist)")
         );
@@ -420,32 +455,32 @@ pub(crate) fn format_watch(value: &serde_json::Value) {
         && modified.is_none_or(Vec::is_empty);
 
     if is_empty {
-        println!("{}", crate::style::dim("No DOM changes detected."));
+        outln!("{}", crate::style::dim("No DOM changes detected."));
         return;
     }
 
     if let Some(entries) = added
         && !entries.is_empty()
     {
-        println!("{}", crate::style::success("Added:"));
+        outln!("{}", crate::style::success("Added:"));
         for el in entries {
-            println!("  {}", format_mutation_entry(el));
+            outln!("  {}", format_mutation_entry(el));
         }
     }
 
     if let Some(entries) = removed
         && !entries.is_empty()
     {
-        println!("{}", crate::style::error("Removed:"));
+        outln!("{}", crate::style::error("Removed:"));
         for el in entries {
-            println!("  {}", format_mutation_entry(el));
+            outln!("  {}", format_mutation_entry(el));
         }
     }
 
     if let Some(entries) = modified
         && !entries.is_empty()
     {
-        println!("{}", crate::style::warn("Modified:"));
+        outln!("{}", crate::style::warn("Modified:"));
         for el in entries {
             let tag = strip_ansi(el.get("tag").and_then(|t| t.as_str()).unwrap_or("?"));
             if let Some(attr) = el.get("attribute").and_then(|a| a.as_str()) {
@@ -455,7 +490,7 @@ pub(crate) fn format_watch(value: &serde_json::Value) {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false);
                 if is_removed {
-                    println!(
+                    outln!(
                         "  {} {} {}",
                         crate::style::info(&tag),
                         attr_safe,
@@ -463,7 +498,7 @@ pub(crate) fn format_watch(value: &serde_json::Value) {
                     );
                 } else {
                     let val = strip_ansi(el.get("value").and_then(|v| v.as_str()).unwrap_or(""));
-                    println!(
+                    outln!(
                         "  {} {} = {}",
                         crate::style::info(&tag),
                         attr_safe,
@@ -472,13 +507,13 @@ pub(crate) fn format_watch(value: &serde_json::Value) {
                 }
             } else if let Some(text) = el.get("text").and_then(|t| t.as_str()) {
                 let text_safe = strip_ansi(text);
-                println!(
+                outln!(
                     "  {} {}",
                     crate::style::info(&tag),
                     crate::style::dim(format!("\"{text_safe}\""))
                 );
             } else {
-                println!(
+                outln!(
                     "  {} {}",
                     crate::style::info(&tag),
                     crate::style::dim("(unknown change)")
@@ -492,7 +527,7 @@ pub(crate) fn format_watch(value: &serde_json::Value) {
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false)
     {
-        println!(
+        outln!(
             "{}",
             crate::style::warn("(some entries truncated — mutation buffer limit reached)")
         );
@@ -529,19 +564,19 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
         && changed_entries.is_none_or(Vec::is_empty);
 
     if is_empty {
-        println!("{}", crate::style::dim("No changes detected."));
+        outln!("{}", crate::style::dim("No changes detected."));
         return;
     }
 
     if let Some(entries) = removed {
         for el in entries {
-            println!("{}", format_diff_entry("-", el, &crate::style::error));
+            outln!("{}", format_diff_entry("-", el, &crate::style::error));
         }
     }
 
     if let Some(entries) = added {
         for el in entries {
-            println!("{}", format_diff_entry("+", el, &crate::style::success));
+            outln!("{}", format_diff_entry("+", el, &crate::style::success));
         }
     }
 
@@ -599,7 +634,7 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
                         crate::style::dim(format!("\"{old_val}\"")),
                         crate::style::dim(format!("\"{new_val}\"")),
                     );
-                    println!("{line}");
+                    outln!("{line}");
                 }
             } else {
                 let mut line =
@@ -608,7 +643,7 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
                     let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
                 }
                 let _ = write!(line, "{}", crate::style::dim(format!("[ref={ref}]")));
-                println!("{line}");
+                outln!("{line}");
             }
         }
     }
@@ -653,11 +688,11 @@ fn format_diff_entry(
 /// Expects `{"windows": [{"label": "main", "url": "http://...", "title": "My App"}]}`
 pub(crate) fn format_windows(value: &serde_json::Value) {
     let Some(windows) = value.get("windows").and_then(|w| w.as_array()) else {
-        println!("{}", crate::style::dim("No windows found"));
+        outln!("{}", crate::style::dim("No windows found"));
         return;
     };
     if windows.is_empty() {
-        println!("{}", crate::style::dim("No windows found"));
+        outln!("{}", crate::style::dim("No windows found"));
         return;
     }
 
@@ -708,7 +743,7 @@ pub(crate) fn format_windows(value: &serde_json::Value) {
         );
         let padded_label = format!("{label:<max_label$}");
         let padded_url = format!("{url:<max_url$}");
-        println!(
+        outln!(
             "{}   {}   {}",
             crate::style::bold(&padded_label),
             crate::style::dim(&padded_url),
