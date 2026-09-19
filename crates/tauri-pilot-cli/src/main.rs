@@ -1773,14 +1773,14 @@ mod tests {
     fn test_resolve_socket_finds_socket_in_xdg_runtime_dir() {
         let dir = isolated_socket_dir("xdg");
         let sock = dir.join("tauri-pilot-myapp.sock");
-        let _listener = bind_live_socket(&sock);
+        let listener = bind_live_socket(&sock);
 
         // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
-        drop(_listener);
+        drop(listener);
         let _ = std::fs::remove_file(&sock);
         let _ = std::fs::remove_dir(&dir);
 
@@ -1798,16 +1798,16 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_file(&tmp_sock);
-        let _xdg_listener = bind_live_socket(&xdg_sock);
-        let _tmp_listener = bind_live_socket(&tmp_sock);
+        let xdg_listener = bind_live_socket(&xdg_sock);
+        let tmp_listener = bind_live_socket(&tmp_sock);
 
         // SAFETY: serial attribute serializes tests that touch XDG_RUNTIME_DIR.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
         let result = resolve_socket(None);
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
-        drop(_xdg_listener);
-        drop(_tmp_listener);
+        drop(xdg_listener);
+        drop(tmp_listener);
         let _ = std::fs::remove_file(&xdg_sock);
         let _ = std::fs::remove_file(&tmp_sock);
         let _ = std::fs::remove_dir(&dir);
@@ -1824,12 +1824,12 @@ mod tests {
             std::process::id()
         ));
         // Remove then recreate to ensure this file has the newest mtime.
-        let _listener = bind_live_socket(&tmp_sock);
+        let listener = bind_live_socket(&tmp_sock);
 
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
         let result = resolve_socket(None);
 
-        drop(_listener);
+        drop(listener);
         let _ = std::fs::remove_file(&tmp_sock);
 
         // Assert the result is a valid tauri-pilot socket path, not an exact path,

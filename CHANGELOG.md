@@ -253,7 +253,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cargo clippy --all-targets -- -D warnings` passes again. The new
   `manual_is_variant_and` lint rejects the `.ok().is_some_and(...)` in
   `dangerous_mcp_tools_enabled`; it reads `.is_ok_and(...)` now, same
-  behaviour.
+  behaviour. CI and release runs now pass `--all-targets` too, so test
+  modules are linted: that turned up an unused import in the plugin's
+  webview tests and `drop()` calls on `_`-prefixed bindings in the CLI's
+  socket tests. [#211]
 
 - `screenshot` no longer pins the webview for minutes on style-variable-heavy
   pages. html-to-image copies computed styles onto the clone, and whenever
@@ -920,3 +923,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#190]: https://github.com/mpiton/tauri-pilot/issues/190
 [#194]: https://github.com/mpiton/tauri-pilot/issues/194
 [#195]: https://github.com/mpiton/tauri-pilot/issues/195
+[#211]: https://github.com/mpiton/tauri-pilot/issues/211
