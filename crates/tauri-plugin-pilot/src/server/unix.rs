@@ -675,6 +675,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_server_reads_lines_up_to_one_mib() {
+        // The CLI mirrors this limit as `MAX_REQUEST_LEN` and refuses longer
+        // requests before sending them, so both sides must agree (#214).
+        let socket = unique_socket_path();
+        let handle = start_test_server(&socket).await;
+
+        let stream = UnixStream::connect(&socket)
+            .await
+            .expect("connect test socket");
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        // A ping padded with spaces, which the server trims, to `len` bytes.
+        let ping = |id: u32, len: usize| {
+            let req = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"ping"}}"#);
+            format!("{req}{}\n", " ".repeat(len - req.len() - 1))
+        };
+
+        writer
+            .write_all(ping(1, 1_048_576).as_bytes())
+            .await
+            .expect("write 1 MiB line");
+        writer.flush().await.expect("flush");
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("read response");
+        let resp: Response = serde_json::from_str(&line).expect("parse response");
+        assert_eq!(resp.id, serde_json::json!(1));
+        assert!(resp.error.is_none(), "a 1 MiB line is read");
+
+        writer
+            .write_all(ping(2, 1_048_577).as_bytes())
+            .await
+            .expect("write longer line");
+        writer.flush().await.expect("flush");
+        line.clear();
+        reader.read_line(&mut line).await.expect("read response");
+        let resp: Response = serde_json::from_str(&line).expect("parse response");
+        assert_eq!(resp.id, serde_json::Value::Null);
+        assert_eq!(resp.error.expect("error payload present").code, -32700);
+        line.clear();
+        let n = reader.read_line(&mut line).await.expect("read EOF");
+        assert_eq!(n, 0, "the server hangs up after a longer line");
+
+        handle.abort();
+        cleanup_bind_files(&socket);
+    }
+
+    #[tokio::test]
     async fn test_server_handles_multiple_requests() {
         let socket = unique_socket_path();
         let handle = start_test_server(&socket).await;

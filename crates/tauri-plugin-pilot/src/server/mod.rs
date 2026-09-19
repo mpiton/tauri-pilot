@@ -16,6 +16,10 @@ pub(crate) async fn handle_connection<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
+    // Longest request line, trailing newline included. The CLI mirrors it as
+    // `MAX_REQUEST_LEN` in `crates/tauri-pilot-cli/src/client/mod.rs` and
+    // refuses longer requests before sending them. The crates ship
+    // separately, so change both together.
     const MAX_LINE_LENGTH: usize = 1_048_576;
 
     let (mut reader, mut writer) = tokio::io::split(stream);

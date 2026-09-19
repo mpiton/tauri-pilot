@@ -26,7 +26,7 @@ use cli::{
     AssertKind, Cli, Command, FormsArgs, RecordAction, StorageAction, StorageArgs, Target,
     parse_target,
 };
-use client::Client;
+use client::{Client, MAX_REQUEST_LEN};
 use output::{out, outln};
 
 #[tokio::main]
@@ -581,9 +581,11 @@ async fn run_diff_command(
     if let Some(path) = ref_path {
         let meta = std::fs::metadata(&path)
             .with_context(|| format!("Failed to stat snapshot file: {}", path.display()))?;
+        // Memory guard only: a pretty-printed snapshot shrinks once
+        // re-encoded, so `Client::call` checks the real request size.
         anyhow::ensure!(
             meta.len() < 50 * 1024 * 1024,
-            "Snapshot file too large (>50 MB): {}",
+            "Snapshot file too large: {} (a request can be at most {MAX_REQUEST_LEN} bytes)",
             path.display()
         );
         let content = std::fs::read_to_string(&path)
@@ -974,9 +976,6 @@ async fn run_storage_command(
     }
 }
 
-const MAX_DROP_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB per file
-const MAX_TOTAL_DROP_SIZE: usize = 100 * 1024 * 1024; // 100 MB total base64 payload
-
 pub(crate) async fn run_drop_command(
     client: &mut Client,
     target: &str,
@@ -984,25 +983,25 @@ pub(crate) async fn run_drop_command(
     window: Option<&str>,
 ) -> Result<serde_json::Value> {
     let mut p = target_params(target);
-    let mut files = Vec::new();
-    let mut total_encoded = 0usize;
+    // Files travel base64-encoded, 4 bytes per 3, in one request of at most
+    // `MAX_REQUEST_LEN` bytes. Size them from metadata before reading any;
+    // `Client::call` still checks the exact request.
+    let mut encoded_len = 0u64;
     for path in &file {
         let meta = std::fs::metadata(path)
             .with_context(|| format!("Failed to stat file: {}", path.display()))?;
         anyhow::ensure!(meta.is_file(), "Not a regular file: {}", path.display());
-        anyhow::ensure!(
-            meta.len() <= MAX_DROP_FILE_SIZE,
-            "File too large (>50 MB): {}",
-            path.display()
-        );
+        encoded_len = encoded_len.saturating_add(meta.len().div_ceil(3) * 4);
+    }
+    anyhow::ensure!(
+        encoded_len < MAX_REQUEST_LEN as u64,
+        "drop files are {encoded_len} bytes once base64-encoded; one request carries at most {MAX_REQUEST_LEN} bytes"
+    );
+    let mut files = Vec::new();
+    for path in &file {
         let data = std::fs::read(path)
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-        total_encoded += encoded.len();
-        anyhow::ensure!(
-            total_encoded <= MAX_TOTAL_DROP_SIZE,
-            "Total drop payload exceeds 100 MB limit"
-        );
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -1685,6 +1684,30 @@ fn unix_connect_ready(path: &Path) -> bool {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_drop_refuses_files_that_fill_a_request() {
+        // 786,432 bytes encode to exactly 1 MiB, so with the request around
+        // them they cannot fit. The limit was 50 MB per file before #214.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("big.bin");
+        std::fs::File::create(&path)
+            .expect("create file")
+            .set_len(786_432)
+            .expect("size file");
+        let socket = dir.path().join("pilot.sock");
+        let _listener = tokio::net::UnixListener::bind(&socket).expect("bind socket");
+        let mut client = Client::connect(&socket).await.expect("connect");
+
+        let err = run_drop_command(&mut client, "#zone", vec![path], None)
+            .await
+            .expect_err("files fill the request");
+        assert_eq!(
+            err.to_string(),
+            "drop files are 1048576 bytes once base64-encoded; one request carries at most 1048576 bytes"
+        );
+    }
 
     #[test]
     fn test_diagnose_versions_match_has_no_warning() {

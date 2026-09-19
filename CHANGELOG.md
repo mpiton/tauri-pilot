@@ -36,12 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A request over the plugin's 1 MiB line limit, such as a React
   development build sent with `eval -`, now fails before it is sent, with
-  `eval request is N bytes; the plugin accepts at most 1048576 bytes (1 MiB)`.
+  `eval request is N bytes; the plugin accepts at most 1048576 bytes`.
   The plugin answered it with an error carrying `"id": null` and hung up,
   so the CLI printed `Response ID mismatch: expected 1, got null`, or
   `Broken pipe` when the hang-up came first. An error with `"id": null`,
   which JSON-RPC 2.0 sends when the request id cannot be read, is now
-  reported as that error instead of an id mismatch. [#214]
+  reported as that error instead of an id mismatch. `drop` checks its files
+  against the same limit before reading them: they travel base64-encoded,
+  so one drop carries a little under 768 KiB, not the 50 MB per file the
+  docs promised. [#214]
 
 - The CLI no longer panics when its stdout is closed early, as in
   `tauri-pilot snapshot | head -1`. Rust ignores `SIGPIPE`, so every write
