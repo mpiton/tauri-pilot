@@ -1049,7 +1049,11 @@
     // Assigning `.checked` also updates React's value tracker, so its
     // onChange never runs. A native click changes the state behind the
     // tracker and fires click, input and change like a user click (#212).
+    const before = el.checked;
     el.click();
+    if (el.checked === before) {
+      throw new Error("check did not change the target; it may be disabled or the page cancelled the click");
+    }
     return { ok: true };
   }
 

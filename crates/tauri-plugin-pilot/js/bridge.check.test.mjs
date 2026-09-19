@@ -28,7 +28,7 @@ const REAL_CONSOLE = {
 // `checked` setter, so a script write updates the tracker as well and React
 // sees no change. A native click flips the state behind the tracker and fires
 // click, input, change; React compares state with the tracker on `click` and
-// runs onChange when they differ.
+// runs onChange when they differ. A disabled input ignores the click.
 function makeInput(type, checked = false) {
   let state = checked;
   return {
@@ -36,6 +36,7 @@ function makeInput(type, checked = false) {
     type,
     tracker: checked,
     reactChanges: 0,
+    disabled: false,
     events: [],
     get checked() {
       return state;
@@ -46,6 +47,7 @@ function makeInput(type, checked = false) {
     },
     focus() {},
     click() {
+      if (this.disabled) return;
       const before = state;
       if (!(type === "radio" && state)) state = type === "radio" ? true : !state;
       this.dispatchEvent({ type: "click" });
@@ -123,6 +125,15 @@ test("check on an already-selected radio fires no event", () => {
   const pilot = loadBridge(el);
   assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
   assert.equal(el.checked, true);
+  assert.deepEqual(el.events, []);
+});
+
+test("check throws when the click leaves the input unchanged", () => {
+  const el = makeInput("checkbox", false);
+  el.disabled = true;
+  const pilot = loadBridge(el);
+  assert.throws(() => pilot.check({ selector: "input" }), /did not change/);
+  assert.equal(el.checked, false);
   assert.deepEqual(el.events, []);
 });
 
