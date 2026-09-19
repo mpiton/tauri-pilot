@@ -1068,9 +1068,9 @@ tauri-pilot wait --selector ".toast-success" --timeout 5000
 
 ### `logs`
 
-Display or stream captured console logs (`console.log`, `console.warn`, `console.error`, `console.info`).
+Display or stream captured console logs (`console.log`, `console.warn`, `console.error`, `console.info`), plus uncaught exceptions and unhandled promise rejections (prefixed `Unhandled rejection: `) at level `error`. Failed resource loads (`<img>` / `<script>` 404) are not recorded.
 
-The JS bridge monkey-patches the browser console methods and stores entries in a 500-entry ring buffer with timestamp, level, serialized arguments, and source location.
+The JS bridge monkey-patches the browser console methods, listens for `error` and `unhandledrejection`, and stores entries in a 500-entry ring buffer with timestamp, level, serialized arguments, and source location. The human-readable renderer prints `source` after the arguments when it is set.
 
 ```bash
 tauri-pilot logs [OPTIONS]

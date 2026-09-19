@@ -165,7 +165,19 @@ pub(crate) fn format_logs(value: &serde_json::Value) -> String {
             _ => crate::style::dim(level),
         };
 
-        let _ = writeln!(output, "[{time_str}] {level_display} {args_str}");
+        let source = entry
+            .get("source")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(strip_ansi);
+        match source {
+            Some(src) => {
+                let _ = writeln!(output, "[{time_str}] {level_display} {args_str} ({src})");
+            }
+            None => {
+                let _ = writeln!(output, "[{time_str}] {level_display} {args_str}");
+            }
+        }
     }
     output
 }
@@ -908,6 +920,24 @@ mod tests {
         assert!(output.contains("01:01:01.123"));
         assert!(output.contains("fail"));
         assert!(output.contains("ok 42"));
+    }
+
+    #[test]
+    fn test_format_logs_appends_source() {
+        let logs = json!([
+            {
+                "id": 1,
+                "timestamp": 3_661_123_u64,
+                "level": "error",
+                "args": ["Uncaught TypeError: x is not a function"],
+                "source": "at handler (https://app.example/widget.js:12:5)"
+            },
+        ]);
+        let output = format_logs(&logs);
+        assert!(
+            output.contains("Uncaught TypeError: x is not a function (at handler (https://app.example/widget.js:12:5))"),
+            "uncaught errors only carry location in source: {output}"
+        );
     }
 
     #[test]

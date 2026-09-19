@@ -69,13 +69,9 @@
     try {
       const stack = new Error().stack;
       if (!stack) return null;
-      // Skip frames: Error constructor, extractSource, console[level] wrapper
-      const lines = stack.split('\n');
-      for (let i = 3; i < lines.length; i++) {
-        const line = lines[i];
-        if (line && !line.includes('__PILOT__')) return line.trim();
-      }
-      return null;
+      // Skip the two location-bearing frames that are always ours:
+      // extractSource itself and the console[level] wrapper.
+      return firstAppFrame(stack, 2);
     } catch (_) { return null; }
   }
 
@@ -86,20 +82,141 @@
     info: console.info.bind(console),
   };
 
+  function pushLog(level, args, source) {
+    const entry = {
+      id: ++_logIdCounter,
+      timestamp: Date.now(),
+      level: level,
+      args: args.map(serializeArg),
+      source: source || null,
+    };
+    _logs.push(entry);
+    if (_logs.length > MAX_LOGS) _logs.shift();
+    return entry;
+  }
+
   ['log', 'warn', 'error', 'info'].forEach(level => {
     console[level] = function(...args) {
-      const entry = {
-        id: ++_logIdCounter,
-        timestamp: Date.now(),
-        level: level,
-        args: args.map(serializeArg),
-        source: extractSource(),
-      };
-      _logs.push(entry);
-      if (_logs.length > MAX_LOGS) _logs.shift();
+      // extractSource() must be called from this frame: it skips the two
+      // location-bearing frames that are always ours (itself and this wrapper).
+      pushLog(level, args, extractSource());
       _originalConsole[level].apply(console, args);
     };
   });
+
+  function isError(value) {
+    // instanceof is realm-bound, so an Error thrown from an iframe fails it.
+    // The brand check catches those; Error subclasses keep the same tag.
+    try {
+      if (value instanceof Error) return true;
+    } catch (_) {
+      return false;
+    }
+    try {
+      return Object.prototype.toString.call(value) === '[object Error]';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function describeReason(reason) {
+    try {
+      // Errors carry nothing enumerable, so JSON.stringify would render even a
+      // perfectly readable one as "{}".
+      if (isError(reason)) {
+        const name = reason.name;
+        const message = reason.message;
+        // Symbol.toStringTag is writable, so the brand check alone would
+        // promote any object wearing the tag to "undefined: undefined". Take
+        // the shortcut only when the fields exist — not when they are strings:
+        // a subclass is free to put a number in `message`.
+        if (name !== undefined || message !== undefined) {
+          const label = name === undefined ? 'Error' : String(name);
+          const text = message === undefined ? '' : String(message);
+          return text ? label + ': ' + text : label;
+        }
+      }
+      if (typeof reason === 'string') return reason;
+      // JSON.stringify answers undefined for a symbol, function or undefined,
+      // and "null" for NaN and Infinity. String() keeps all of those legible.
+      if (reason === null || typeof reason !== 'object') return String(reason);
+      try {
+        const json = JSON.stringify(reason);
+        return typeof json === 'string' ? json : String(reason);
+      } catch (_) {
+        return String(reason);
+      }
+    } catch (_) {
+      return '[unprintable]';
+    }
+  }
+
+  function firstAppFrame(stack, skipLocationFrames) {
+    const lines = stack.split('\n');
+    let skipped = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      // V8 opens with "Name: message" (possibly multi-line); JavaScriptCore
+      // (WebKitGTK, WKWebView) starts at the throwing frame. V8 frames are
+      // indented (`    at ...`); an unindented `at fake.js:12:5` is message
+      // text. JSC is `@url:line:col` or `fn@url:line:col` (anonymous has no
+      // name). Match V8 on the raw line so trim cannot invent indentation.
+      const isV8Frame = /^\s+at\s+.*:\d+:\d+\)?$/.test(lines[i]);
+      const isJscFrame = /^(?:[^:]*@.*):\d+:\d+\)?$/.test(line);
+      if (!isV8Frame && !isJscFrame) continue;
+      if (line.includes('__PILOT__')) continue;
+      if (skipped < skipLocationFrames) {
+        skipped++;
+        continue;
+      }
+      return line;
+    }
+    return null;
+  }
+
+  function stackSource(error) {
+    if (!error) return null;
+    try {
+      const stack = error.stack;
+      if (typeof stack !== 'string') return null;
+      return firstAppFrame(stack, 0);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Uncaught errors and unhandled rejections never pass through console.* --
+  // the browser prints those itself. Without these listeners the documented
+  // `logs --level error` workflow cannot see the failures it exists to find.
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('error', event => {
+      try {
+        // Only script errors carry a message. A failed image or script
+        // resource load (HTTP 404) raises a bare Event that does not bubble
+        // to window, but guard anyway rather than logging an empty entry.
+        if (!event || typeof event.message !== 'string') return;
+        const where = event.filename
+          ? event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0)
+          : null;
+        pushLog('error', [event.message], stackSource(event.error) || where);
+      } catch (_) {
+        if (event && typeof event.message === 'string') {
+          pushLog('error', [event.message], null);
+        }
+      }
+    });
+
+    window.addEventListener('unhandledrejection', event => {
+      let message = 'Unhandled rejection: [unprintable]';
+      let source = null;
+      try {
+        const reason = event && event.reason;
+        message = 'Unhandled rejection: ' + describeReason(reason);
+        source = stackSource(reason);
+      } catch (_) {}
+      pushLog('error', [message], source);
+    });
+  }
 
   function consoleLogs(options) {
     let result = _logs.slice();
