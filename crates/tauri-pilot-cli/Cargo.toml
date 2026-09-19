@@ -30,7 +30,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.23.1"
 owo-colors = { version = "4.4.0", features = ["supports-colors"] }
 indicatif = "0.18"
-rmcp = { version = "3.2.0", default-features = false, features = ["server", "transport-io"] }
+rmcp = { version = "3.4.0", default-features = false, features = ["server", "transport-io"] }
 quick-xml = "0.42"
 toml = "1"
 
