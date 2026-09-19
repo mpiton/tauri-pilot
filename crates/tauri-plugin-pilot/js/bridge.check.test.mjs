@@ -1,9 +1,11 @@
-// Dependency-free behavioural tests for the bridge `check` action (#154, #177).
+// Dependency-free behavioural tests for the bridge `check` action (#154, #177,
+// #212).
 //
 // `check` used to assign `el.checked = !el.checked` on any target. On a <div>
 // that creates an expando and reports ok. It must accept only checkbox and
 // radio inputs, using a realm-safe tag+type guard (not `instanceof`).
 // Checkboxes toggle. Radios select and stay selected (no click-to-uncheck).
+// The change must go through a native click so React's onChange runs (#212).
 //
 // Run: node --test crates/tauri-plugin-pilot/js/bridge.check.test.mjs
 
@@ -22,15 +24,44 @@ const REAL_CONSOLE = {
   info: console.info.bind(console),
 };
 
+// Models the browser and React's value tracker. React wraps the instance
+// `checked` setter, so a script write updates the tracker as well and React
+// sees no change. A native click flips the state behind the tracker and fires
+// click, input, change; React compares state with the tracker on `click` and
+// runs onChange when they differ. A disabled input ignores the click.
 function makeInput(type, checked = false) {
+  let state = checked;
   return {
     tagName: "INPUT",
     type,
-    checked,
+    tracker: checked,
+    reactChanges: 0,
+    disabled: false,
     events: [],
+    get checked() {
+      return state;
+    },
+    set checked(value) {
+      state = Boolean(value);
+      this.tracker = state;
+    },
     focus() {},
+    click() {
+      if (this.disabled) return;
+      const before = state;
+      if (!(type === "radio" && state)) state = type === "radio" ? true : !state;
+      this.dispatchEvent({ type: "click" });
+      if (state !== before) {
+        this.dispatchEvent({ type: "input" });
+        this.dispatchEvent({ type: "change" });
+      }
+    },
     dispatchEvent(event) {
       this.events.push(event.type);
+      if (event.type === "click" && state !== this.tracker) {
+        this.tracker = state;
+        this.reactChanges += 1;
+      }
       return true;
     },
   };
@@ -64,24 +95,46 @@ function loadBridge(queryResult) {
   return globalThis.window.__PILOT__;
 }
 
-test("check toggles a checkbox", () => {
+test("check toggles a checkbox with a click React sees", () => {
   const el = makeInput("checkbox", false);
   const pilot = loadBridge(el);
   assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
   assert.equal(el.checked, true);
-  assert.ok(el.events.includes("change"));
+  assert.equal(el.reactChanges, 1);
+  assert.deepEqual(el.events, ["click", "input", "change"]);
   assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
   assert.equal(el.checked, false);
+  assert.equal(el.reactChanges, 2);
 });
 
-test("check selects a radio and leaves it selected", () => {
+test("check selects a radio with a click React sees and leaves it selected", () => {
   const el = makeInput("radio", false);
   const pilot = loadBridge(el);
   assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
   assert.equal(el.checked, true);
-  assert.ok(el.events.includes("change"));
+  assert.equal(el.reactChanges, 1);
+  assert.deepEqual(el.events, ["click", "input", "change"]);
   assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
   assert.equal(el.checked, true);
+  assert.equal(el.reactChanges, 1);
+  assert.deepEqual(el.events, ["click", "input", "change"]);
+});
+
+test("check on an already-selected radio fires no event", () => {
+  const el = makeInput("radio", true);
+  const pilot = loadBridge(el);
+  assert.deepEqual(pilot.check({ selector: "input" }), { ok: true });
+  assert.equal(el.checked, true);
+  assert.deepEqual(el.events, []);
+});
+
+test("check throws when the click leaves the input unchanged", () => {
+  const el = makeInput("checkbox", false);
+  el.disabled = true;
+  const pilot = loadBridge(el);
+  assert.throws(() => pilot.check({ selector: "input" }), /did not change/);
+  assert.equal(el.checked, false);
+  assert.deepEqual(el.events, []);
 });
 
 test("check throws on a non-input target", () => {
