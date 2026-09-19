@@ -191,9 +191,9 @@
   if (typeof window.addEventListener === 'function') {
     window.addEventListener('error', event => {
       try {
-        // Only script errors carry a message. Failed resource loads (<img>,
-        // <script> 404) raise a bare Event that does not bubble to window, but
-        // guard anyway rather than logging an empty entry.
+        // Only script errors carry a message. A failed image or script
+        // resource load (HTTP 404) raises a bare Event that does not bubble
+        // to window, but guard anyway rather than logging an empty entry.
         if (!event || typeof event.message !== 'string') return;
         const where = event.filename
           ? event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0)
