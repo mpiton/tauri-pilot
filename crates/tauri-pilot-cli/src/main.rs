@@ -1,3 +1,7 @@
+// Every stdout write must go through `out!`/`outln!`, which exit quietly on a
+// closed pipe; a bare `println!` panics there again (#213).
+#![deny(clippy::print_stdout)]
+
 mod cli;
 mod client;
 mod mcp;
@@ -141,8 +145,19 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    format_result(output_kind, &result, args.json)?;
-    if matches!(output_kind, OutputKind::StorageGet) && result["found"] == false {
+    print_result(output_kind, &result, args.json)
+}
+
+/// Prints `result`, exiting 1 when `storage get` found no key (#160).
+///
+/// The status is set before printing so a closed stdout pipe keeps it (#213).
+fn print_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) -> Result<()> {
+    let missing_key = matches!(kind, OutputKind::StorageGet) && result["found"] == false;
+    if missing_key {
+        output::set_broken_pipe_exit(1);
+    }
+    format_result(kind, result, emit_json)?;
+    if missing_key {
         std::process::exit(1);
     }
     Ok(())

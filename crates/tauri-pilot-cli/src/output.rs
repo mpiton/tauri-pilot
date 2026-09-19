@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -19,20 +20,41 @@ macro_rules! out {
 
 pub(crate) use {out, outln};
 
-/// Writes to stdout, exiting with status 0 if stdout is a closed pipe.
+/// Exit status used when stdout turns out to be a closed pipe.
+static BROKEN_PIPE_EXIT: AtomicI32 = AtomicI32::new(0);
+
+/// Sets the status `write_stdout` exits with on a closed pipe.
+///
+/// A command that has already decided to fail (e.g. `storage get` on a
+/// missing key) calls this before printing, so a reader that hangs up early
+/// cannot turn that failure into a success.
+pub(crate) fn set_broken_pipe_exit(code: i32) {
+    BROKEN_PIPE_EXIT.store(code, Ordering::Relaxed);
+}
+
+/// Writes to stdout, exiting quietly if stdout is a closed pipe.
 ///
 /// Rust ignores `SIGPIPE`, so once the reader is gone (`tauri-pilot snapshot
 /// | head -1`) a write fails with `EPIPE` and `print!` panics. Exiting with 0
-/// rather than 141 keeps `set -o pipefail` scripts green, like ripgrep does.
+/// rather than 141 keeps `set -o pipefail` scripts green, like ripgrep does,
+/// unless `set_broken_pipe_exit` picked another status.
 ///
 /// # Panics
 ///
 /// Panics on any other write error, as `print!` does, so a full disk or a
 /// revoked terminal still fails loudly instead of losing output silently.
+#[expect(
+    clippy::print_stdout,
+    reason = "libtest only captures print!, so unit tests keep their output quiet"
+)]
 pub(crate) fn write_stdout(args: std::fmt::Arguments<'_>) {
+    if cfg!(test) {
+        print!("{args}");
+        return;
+    }
     if let Err(e) = std::io::Write::write_fmt(&mut std::io::stdout(), args) {
         if e.kind() == std::io::ErrorKind::BrokenPipe {
-            std::process::exit(0);
+            std::process::exit(BROKEN_PIPE_EXIT.load(Ordering::Relaxed));
         }
         panic!("failed printing to stdout: {e}");
     }

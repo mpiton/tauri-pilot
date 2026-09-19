@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the reader left failed with `EPIPE` and `println!` aborted with
   "failed printing to stdout: Broken pipe" and exit status 101. Output now
   goes through one writer that exits with status 0 on a broken pipe, so
-  `set -o pipefail` scripts stay green. Other write errors still fail. [#213]
+  `set -o pipefail` scripts stay green. `storage get` on a missing key still
+  exits 1. Other write errors still fail. [#213]
 
 - `check` now runs React's `onChange` on controlled checkboxes and radios.
   It assigned `.checked` and dispatched a bare `change`, which also updated

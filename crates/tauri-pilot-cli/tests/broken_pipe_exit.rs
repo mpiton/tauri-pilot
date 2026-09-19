@@ -1,80 +1,131 @@
 //! Regression test for issue #213: when stdout is a closed pipe (e.g.
-//! `tauri-pilot snapshot | head -1`), the CLI must exit quietly with status 0
-//! instead of panicking with "failed printing to stdout: Broken pipe".
+//! `tauri-pilot snapshot | head -1`), the CLI must exit quietly instead of
+//! panicking with "failed printing to stdout: Broken pipe".
 
 #![cfg(unix)]
 
+mod common;
+
 // Rust guideline compliant 2026-08-29
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::process::{Command, Output, Stdio};
 use std::thread;
+use std::time::{Duration, Instant};
 
-#[test]
-fn snapshot_into_closed_pipe_exits_quietly() {
-    let socket = PathBuf::from(format!(
-        "/tmp/tauri-pilot-it-epipe-{}.sock",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket).expect("bind mock socket");
-    let (closed_tx, closed_rx) = mpsc::channel::<()>();
-    let server = thread::spawn(move || {
-        let (stream, _) = listener.accept().expect("accept");
-        let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
-        let mut writer = stream;
-        let mut line = String::new();
-        reader.read_line(&mut line).expect("read line");
-        let req: serde_json::Value = serde_json::from_str(line.trim()).expect("parse request");
-        // Answer only once the test has closed the read end of stdout, so the
-        // CLI's first write is guaranteed to hit a closed pipe.
-        closed_rx.recv().expect("stdout closed signal");
-        let resp = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": req.get("id").cloned().unwrap_or(serde_json::Value::Null),
-            "result": {
-                "elements": [
-                    {"depth": 0, "role": "heading", "name": "Pilot Test App", "ref": "e1"},
-                    {"depth": 0, "role": "button", "name": "Click", "ref": "e2"}
-                ]
-            }
-        });
-        let mut bytes = serde_json::to_vec(&resp).expect("serialize");
-        bytes.push(b'\n');
-        writer.write_all(&bytes).expect("write");
-        writer.flush().expect("flush");
-    });
+use common::SERVER_DONE_TIMEOUT;
 
+/// Runs `tauri-pilot <args>` against a mock server answering `result`, with
+/// stdout wired to `stdout`.
+///
+/// Both the binary and the mock server are bounded by `SERVER_DONE_TIMEOUT`,
+/// so a binary that hangs, or exits without connecting, fails the test
+/// instead of hanging the suite.
+fn run(args: &[&str], result: serde_json::Value, stdout: Stdio) -> Output {
+    let socket = common::unique_socket_path("epipe");
+    let done = common::spawn_mock_server(&socket, result);
     let mut child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
-        .args([
-            "--socket",
-            socket.to_str().expect("socket path is UTF-8"),
-            "snapshot",
-        ])
-        .stdout(Stdio::piped())
+        .arg("--socket")
+        .arg(&socket)
+        .args(args)
+        .stdout(stdout)
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tauri-pilot");
-    drop(child.stdout.take());
-    let _ = closed_tx.send(());
-    let output = child.wait_with_output().expect("wait for tauri-pilot");
-    let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Fail fast before join() so a binary that exits before connecting cannot
-    // leave the mock server blocked on accept() and hang the test.
-    if !output.status.success() {
-        let _ = std::fs::remove_file(&socket);
+    let deadline = Instant::now() + SERVER_DONE_TIMEOUT;
+    while child.try_wait().expect("poll tauri-pilot").is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = std::fs::remove_file(&socket);
+            panic!("tauri-pilot did not exit within {SERVER_DONE_TIMEOUT:?}");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let output = child.wait_with_output().expect("wait for tauri-pilot");
+
+    // Disconnected means the server panicked; timeout means the binary never
+    // connected.
+    let served = done.recv_timeout(SERVER_DONE_TIMEOUT);
+    let _ = std::fs::remove_file(&socket);
+    if let Err(err) = served {
         panic!(
-            "expected exit 0 on a closed stdout pipe, got {:?}: stderr={stderr}",
-            output.status.code()
+            "mock server did not answer: {err}\n--- stderr ---\n{}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
-    server.join().expect("mock server join");
-    let _ = std::fs::remove_file(&socket);
+    output
+}
+
+/// Returns a stdout whose reader is already gone, so the first write fails
+/// with `EPIPE`.
+fn closed_pipe() -> Stdio {
+    let (reader, writer) = std::io::pipe().expect("create pipe");
+    drop(reader);
+    writer.into()
+}
+
+fn snapshot_result() -> serde_json::Value {
+    serde_json::json!({
+        "elements": [
+            {"depth": 0, "role": "heading", "name": "Pilot Test App", "ref": "e1"},
+            {"depth": 0, "role": "button", "name": "Click", "ref": "e2"}
+        ]
+    })
+}
+
+#[test]
+fn snapshot_into_closed_pipe_exits_quietly() {
+    let output = run(&["snapshot"], snapshot_result(), closed_pipe());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "expected exit 0 on a closed stdout pipe, got {:?}: stderr={stderr}",
+        output.status.code()
+    );
     assert!(
         !stderr.contains("panicked") && !stderr.contains("Broken pipe"),
         "closed stdout pipe must not print a panic: stderr={stderr}"
+    );
+}
+
+#[test]
+fn storage_get_missing_key_into_closed_pipe_keeps_exit_1() {
+    let output = run(
+        &["storage", "get", "some-key", "--json"],
+        serde_json::json!({"found": false}),
+        closed_pipe(),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a missing key must exit 1 even when stdout is closed: stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "closed stdout pipe must not print a panic: stderr={stderr}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn snapshot_into_full_device_still_panics() {
+    // Writes to /dev/full fail with ENOSPC, not EPIPE.
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("open /dev/full");
+    let output = run(&["snapshot"], snapshot_result(), full.into());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(101),
+        "write errors other than a broken pipe must still panic: stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("failed printing to stdout"),
+        "panic message must name the stdout write: stderr={stderr}"
     );
 }
