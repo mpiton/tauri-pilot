@@ -87,7 +87,7 @@ jobs:
       # the plugin alone lints it as release compiles it, and reuses the
       # dependencies the Clippy step above already checked.
       - name: Clippy plugin (debug assertions off)
-        run: cargo clippy --workspace --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings
+        run: cargo clippy --workspace --all-targets --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings
 
       - name: Test
         run: cargo test --workspace

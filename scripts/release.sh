@@ -89,8 +89,8 @@ echo "Running cargo check..."
 cargo check --workspace
 
 echo "Running cargo clippy..."
-cargo clippy --workspace -- -D warnings
-cargo clippy --workspace --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings
 
 echo "Running cargo test..."
 cargo test --workspace

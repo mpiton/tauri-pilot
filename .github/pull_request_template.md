@@ -16,7 +16,7 @@
 
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes
-- [ ] `cargo clippy --workspace --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings` passes
+- [ ] `cargo clippy --workspace --all-targets --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings` passes
 - [ ] Tested manually with a Tauri app (if applicable)
 
 ## Checklist

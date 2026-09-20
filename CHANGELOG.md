@@ -73,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The second Clippy pass, the one that lints the plugin with debug
+  assertions off as release builds compile it, now takes `--all-targets`
+  too. Without it that pass skipped every `#[cfg(test)]` module, so a
+  test-only lint could only be caught by the first pass, and never under
+  the release cfg. CI, the release workflow, `scripts/release.sh`, the PR
+  template and both contributing guides pass the flag on every workspace
+  Clippy invocation. [#220]
+
 - `logs` no longer prints a raw JavaScriptCore frame as the source. An
   anonymous JSC frame is written `@url:line:col`, and the `@` that separates
   the (empty) function name from the location survived into the output as
@@ -1056,6 +1064,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#215]: https://github.com/mpiton/tauri-pilot/issues/215
 [#216]: https://github.com/mpiton/tauri-pilot/issues/216
 [#217]: https://github.com/mpiton/tauri-pilot/issues/217
+[#220]: https://github.com/mpiton/tauri-pilot/issues/220
 [#231]: https://github.com/mpiton/tauri-pilot/issues/231
 [#232]: https://github.com/mpiton/tauri-pilot/issues/232
 [#233]: https://github.com/mpiton/tauri-pilot/issues/233
