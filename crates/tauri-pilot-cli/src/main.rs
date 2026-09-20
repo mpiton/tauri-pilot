@@ -1042,15 +1042,15 @@ pub(crate) fn target_params(raw: &str) -> serde_json::Value {
 /// Build params for the `scroll` RPC call.
 ///
 /// `target` is optional: omit it to scroll the page. When present it is parsed
-/// through [`target_params`] so `@e12`, a CSS selector, and `x,y` all work,
-/// matching click/fill/text (#157).
+/// through [`target_params`] so `e12`, `@e12`, a CSS selector, and `x,y` all
+/// work, matching click/fill/text (#157).
 pub(crate) fn build_scroll_params(
     direction: &str,
     amount: Option<i32>,
     target: Option<&str>,
 ) -> serde_json::Value {
     let mut params = match target {
-        Some(raw) => target_params(&normalize_scroll_target(raw)),
+        Some(raw) => target_params(raw),
         None => json!({}),
     };
     params["direction"] = json!(direction);
@@ -1058,31 +1058,12 @@ pub(crate) fn build_scroll_params(
     params
 }
 
-/// Prefix `@` on bare snapshot ids (`e12`) so they stay refs.
-///
-/// MCP used to advertise "with or without @" and the CLI passed `--ref e12`
-/// straight to `requireEl`. Selectors and coordinates are unchanged.
-fn normalize_scroll_target(raw: &str) -> String {
-    let stripped = raw.strip_prefix('@').unwrap_or(raw);
-    if is_snapshot_ref_id(stripped) {
-        format!("@{stripped}")
-    } else {
-        raw.to_owned()
-    }
-}
-
-fn is_snapshot_ref_id(s: &str) -> bool {
-    let Some(digits) = s.strip_prefix('e') else {
-        return false;
-    };
-    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
-}
-
 /// Build params for the `wait` RPC call.
 ///
 /// Routing precedence:
 /// - `--selector` flag wins over positional target.
-/// - Positional target is parsed via [`parse_target`] (`@x` ref, else selector).
+/// - Positional target is parsed via [`parse_target`] (`@e1` or `e1` ref, else
+///   selector).
 ///   Coords are not meaningful for `wait`, so they pass through as a selector
 ///   so the bridge surfaces a `SyntaxError` from `document.querySelector`
 ///   instead of silently timing out.

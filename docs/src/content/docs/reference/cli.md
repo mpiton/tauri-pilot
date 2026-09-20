@@ -41,7 +41,7 @@ Many commands accept a `<target>` argument that identifies a DOM element. Three 
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| Element ref | `@e1` | Reference from the last `snapshot` call |
+| Element ref | `@e1` or `e1` | Reference from the last `snapshot` call; the `@` is optional |
 | CSS selector | `#submit-btn` or `.class` | Standard CSS selector |
 | Coordinates | `100,200` | Raw x,y screen coordinates |
 
@@ -528,7 +528,7 @@ tauri-pilot scroll <direction> [amount] [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--target <target>` | Element to scroll: `@ref`, CSS selector, or `x,y`. Defaults to the page. `--ref` is an alias. |
+| `--target <target>` | Element to scroll: `@ref` (or bare `e3`), CSS selector, or `x,y`. Defaults to the page. `--ref` is an alias. |
 
 `top` jumps to `scrollY = 0`; `bottom` jumps to the maximum scroll position (`scrollHeight - innerHeight` for the page, `scrollHeight - clientHeight` for an element). Unknown directions raise an error instead of silently no-op.
 

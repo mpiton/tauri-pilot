@@ -51,7 +51,7 @@ Three target formats, auto-detected:
 
 | Format | Example | Usage |
 |--------|---------|-------|
-| `@ref` | `@e3` | Element ref from last snapshot |
+| `@ref` | `@e3`, `e3` | Element ref from last snapshot, `@` optional |
 | CSS selector | `#login-btn`, `.card` | Direct DOM query |
 | Coordinates | `100,200` | Click at x,y position |
 

@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A bare snapshot id (`e12`) is now a ref for every target-taking command, not
+  only `scroll`. `snapshot` prints `[ref=e12]`, so `click e12` and
+  `value e12` were read as CSS selectors and failed with
+  `No element matches selector: e12`. The normalization moved from the scroll
+  path into `parse_target`, which the CLI, MCP and TOML scenario steps all
+  share. `@e12` keeps working; a custom element name must contain a hyphen, so
+  no real element is called `e12`. **Breaking:** MCP tools no longer take the
+  element through a `ref` property. `pilot.scroll` was the only one that
+  advertised it, and `{"ref": "e12"}` must become `{"target": "e12"}`. The CLI
+  `scroll --ref` flag is unchanged. Every MCP `target`/`source` description is
+  now worded the same and names all three accepted shapes. [#216]
+
 - A bridge command on a page whose origin never said hello no longer runs its
   script before it fails, so a `click` there no longer clicks. `navigate` still
   runs, since it is the way back to the app origin.
@@ -974,3 +986,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#213]: https://github.com/mpiton/tauri-pilot/issues/213
 [#214]: https://github.com/mpiton/tauri-pilot/issues/214
 [#215]: https://github.com/mpiton/tauri-pilot/issues/215
+[#216]: https://github.com/mpiton/tauri-pilot/issues/216
