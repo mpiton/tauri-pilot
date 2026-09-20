@@ -139,9 +139,11 @@ test("select throws when no option matches value or label", () => {
   ]);
   const pilot = loadBridge({ queryResult: el });
 
+  // The prefix names the command the user ran; `fill` shares this matcher
+  // and used to report "select:" (#232).
   assert.throws(
     () => pilot.select({ selector: "select[name=role]", value: "zzz" }),
-    /no option/i,
+    /^Error: select: no option matches "zzz"$/,
   );
   // The selection must be left untouched, never silently cleared to -1.
   assert.equal(el.selectedIndex, -1);
@@ -175,7 +177,7 @@ test("fill on select uses option matching and throws when nothing matches", () =
   const fillPilot = loadBridge({ queryResult: unmatched });
   assert.throws(
     () => fillPilot.fill({ selector: "select[name=role]", value: "zzz" }),
-    /no option/i,
+    /^Error: fill: no option matches "zzz"$/,
   );
   assert.equal(unmatched.selectedIndex, -1);
 });
@@ -192,27 +194,4 @@ test("type rejects a select target", () => {
     /select/i,
   );
   assert.equal(el.selectedIndex, -1);
-});
-
-test("an unmatched option names the command the user ran", () => {
-  // `fill` delegates to the same option matcher, so a hardcoded "select:"
-  // prefix pointed at a command the user never typed (#232).
-  const options = [
-    { value: "user", text: "User" },
-    { value: "admin", text: "Admin" },
-  ];
-
-  const filled = makeSelect(options);
-  const fillPilot = loadBridge({ queryResult: filled });
-  assert.throws(
-    () => fillPilot.fill({ selector: "select[name=role]", value: "nope" }),
-    /^Error: fill: no option matches "nope"$/,
-  );
-
-  const selected = makeSelect(options);
-  const selectPilot = loadBridge({ queryResult: selected });
-  assert.throws(
-    () => selectPilot.select({ selector: "select[name=role]", value: "nope" }),
-    /^Error: select: no option matches "nope"$/,
-  );
 });

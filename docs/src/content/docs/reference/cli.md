@@ -1208,6 +1208,30 @@ $ tauri-pilot network --clear
 ✓ cleared
 ```
 
+**JSON output format:**
+
+```json
+[
+  {
+    "id": 1,
+    "timestamp": 1712073600000,
+    "method": "GET",
+    "url": "https://api.github.com/repos",
+    "status": 200,
+    "duration_ms": 125,
+    "error": null,
+    "request_size": 0,
+    "response_size": 1024
+  }
+]
+```
+
+`response_size` is `number | null`: `null` means the size is unknown, not
+zero. A response carries no size when it has no `Content-Length` (`tauri://`
+never sends one), when the body is of a type the bridge cannot measure
+without buffering it, or when no response arrived at all (network error,
+timeout, abort). An explicit `Content-Length: 0` reports `0`.
+
 **JSON-RPC examples:**
 
 ```json

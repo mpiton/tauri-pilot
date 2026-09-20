@@ -49,8 +49,10 @@ function makeXhrClass() {
     if (!list) return;
     this._listeners[type] = list.filter((listener) => listener !== fn);
   };
+  // The real API answers null for a header the response does not carry —
+  // `tauri://` never sends Content-Length.
   XMLHttpRequestStub.prototype.getResponseHeader = function () {
-    return "0";
+    return this._contentLength === undefined ? null : this._contentLength;
   };
   XMLHttpRequestStub.prototype.dispatchEvent = function (event) {
     const list = this._listeners[event.type] || [];
@@ -89,12 +91,13 @@ function loadBridge({ fetchImpl } = {}) {
   return globalThis.window.__PILOT__;
 }
 
-function sendXhr(url, { status = 200, errorEvent } = {}) {
+function sendXhr(url, { status = 200, errorEvent, responseType = "", response = "", contentLength } = {}) {
   const xhr = new XMLHttpRequest();
   xhr.open("POST", url);
   xhr.status = status;
-  xhr.responseType = "";
-  xhr.response = "";
+  xhr.responseType = responseType;
+  xhr.response = response;
+  xhr._contentLength = contentLength;
   xhr.send();
   xhr.dispatchEvent({ type: errorEvent || "load" });
   return xhr;
@@ -244,4 +247,76 @@ test("a fetch response with Content-Length still reports the byte count", async 
 
   const [entry] = pilot.networkRequests();
   assert.equal(entry.response_size, 1380);
+});
+
+test("an explicit Content-Length of 0 is a measured zero, not an unknown size", () => {
+  // The whole point of the null convention is that 0 still means "empty
+  // body". A `contentLength || null` shortcut would erase that.
+  const pilot = loadBridge({
+    fetchImpl() {
+      return Promise.resolve({ status: 200, headers: { get() { return "0"; } } });
+    },
+  });
+  return window.fetch("https://app.example/empty").then(() => {
+    const [entry] = pilot.networkRequests();
+    assert.equal(entry.response_size, 0);
+  });
+});
+
+test("a malformed Content-Length reports an unknown size", async () => {
+  // parseInt("1380bytes") answers 1380, which would report a byte count the
+  // response never claimed.
+  const pilot = loadBridge({
+    fetchImpl() {
+      return Promise.resolve({ status: 200, headers: { get() { return "1380bytes"; } } });
+    },
+  });
+  await window.fetch("https://app.example/api");
+
+  const [entry] = pilot.networkRequests();
+  assert.equal(entry.response_size, null);
+});
+
+test("a failed fetch reports an unknown response size", async () => {
+  const pilot = loadBridge({
+    fetchImpl() {
+      return Promise.reject(new Error("denied"));
+    },
+  });
+  await window.fetch("https://app.example/api").catch(() => {});
+
+  const [entry] = pilot.networkRequests();
+  assert.equal(entry.response_size, null);
+});
+
+test("an XHR with no Content-Length and an unmeasurable body reports an unknown size", () => {
+  // responseType "json" hands back a plain object, so neither the ArrayBuffer
+  // nor the Blob branch measures it. The old `|| 0` made that a confident
+  // zero on the very transport #232 reports.
+  const pilot = loadBridge();
+  sendXhr("tauri://localhost/data.json", { responseType: "json", response: { a: 1 } });
+
+  const [entry] = pilot.networkRequests();
+  assert.equal(entry.response_size, null);
+});
+
+test("an XHR falls back to Content-Length when the body is unmeasurable", () => {
+  const pilot = loadBridge();
+  sendXhr("https://app.example/api", {
+    responseType: "json",
+    response: { a: 1 },
+    contentLength: "1380",
+  });
+
+  const [entry] = pilot.networkRequests();
+  assert.equal(entry.response_size, 1380);
+});
+
+test("an XHR that never got a response reports an unknown size", () => {
+  const pilot = loadBridge();
+  sendXhr("https://app.example/api", { errorEvent: "timeout" });
+
+  const [entry] = pilot.networkRequests();
+  assert.equal(entry.response_size, null);
+  assert.equal(entry.error, "Timeout");
 });

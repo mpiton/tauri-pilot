@@ -186,6 +186,40 @@ test("an uncaught error with no location at all has a null source", () => {
   assert.equal(entry.source, null);
 });
 
+test("an uncaught error with a location but no filename reports line:col", () => {
+  const { pilot, win } = loadBridge();
+  win.dispatch("error", { message: "Error: boom", lineno: 12, colno: 3 });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, "12:3");
+});
+
+test("a \"undefined\" filename with no line or column has a null source", () => {
+  const { pilot, win } = loadBridge();
+  win.dispatch("error", { message: "Error: boom", filename: "undefined" });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, null);
+});
+
+test("an anonymous JavaScriptCore frame from eval'd code drops the missing file", () => {
+  // WebKitGTK writes the url of an eval'd frame as `undefined`, or leaves it
+  // out entirely, so the stack path needs the same filter as the event path
+  // or `logs` shows `undefined:1:91` / `:1:91` (#232).
+  for (const [stack, expected] of [
+    ["@undefined:1:91", "1:91"],
+    ["@:1:91", "1:91"],
+  ]) {
+    const { pilot, win } = loadBridge();
+    const error = new Error("rej");
+    error.stack = stack;
+    win.dispatch("unhandledrejection", { reason: error });
+
+    const [entry] = pilot.consoleLogs({ level: "error" });
+    assert.equal(entry.source, expected, stack);
+  }
+});
+
 test("an anonymous JavaScriptCore frame is still the throw site", () => {
   // JSC writes `@url:line:col` for anonymous callbacks (no function name).
   // `[^:]+@` required a name, so this line was skipped and source became the

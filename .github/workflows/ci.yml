@@ -7,6 +7,7 @@ on:
       - '**/*.rs'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+      - 'crates/tauri-plugin-pilot/js/**'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - '**/*.rs'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+      - 'crates/tauri-plugin-pilot/js/**'
       - '.github/workflows/ci.yml'
 
 permissions:
@@ -89,6 +91,12 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      # The injected bridge ships as plain JS with its own node:test suite.
+      # `node --test <dir>` cannot resolve the files, so pass the glob.
+      - name: Test JS bridge
+        if: runner.os == 'Linux'
+        run: node --test 'crates/tauri-plugin-pilot/js/*.test.mjs'
 
       - name: Check formatting
         run: cargo fmt --all -- --check

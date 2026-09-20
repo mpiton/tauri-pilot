@@ -303,8 +303,10 @@
         continue;
       }
       // An anonymous JSC frame is `@url:line:col`. The empty function name
-      // leaves a leading `@` that reads as noise in `logs` output.
-      return line.charAt(0) === '@' ? line.slice(1) : line;
+      // leaves a leading `@` that reads as noise in `logs` output, and an
+      // eval'd frame carries no url at all — WebKitGTK writes `@undefined:1:91`
+      // or `@:1:91` there. Both report `line:col`, like `eventSource` does.
+      return line.charAt(0) === '@' ? line.slice(1).replace(/^(?:undefined)?:/, '') : line;
     }
     return null;
   }
@@ -395,6 +397,15 @@
     return 0;
   }
 
+  // The one unknown-size convention for `response_size`: a size nobody
+  // measured is `null`, never a confident 0 (#232). `parseInt` would accept
+  // "1380bytes", so the whole header has to be digits.
+  function headerSize(raw) {
+    if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
+    const n = Number(raw);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+
   // Tauri convertFileSrc(cmd, "ipc") produces `ipc://localhost/<cmd>` on
   // Unix/macOS and `http(s)://ipc.localhost/<cmd>` on Windows/Android.
   // WebKit treats `ipc:` as a non-special scheme, so URL.pathname is
@@ -446,8 +457,7 @@
       // tauri:// responses carry no Content-Length. Reading the real size
       // would mean cloning and buffering every body, so report null — an
       // unknown size, not a confident 0 (#232).
-      const contentLength = parseInt(response.headers.get("Content-Length"), 10);
-      const responseSize = Number.isFinite(contentLength) ? contentLength : null;
+      const responseSize = headerSize(response.headers.get("Content-Length"));
       const entry = {
         id: ++_netIdCounter,
         timestamp: timestamp,
@@ -473,7 +483,7 @@
         duration_ms: duration_ms,
         error: err ? err.message : "Network error",
         request_size: requestSize,
-        response_size: 0,
+        response_size: null,
       };
       _networkRequests.push(entry);
       if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
@@ -525,16 +535,19 @@
         if (_networkRequests.length > MAX_REQUESTS) _networkRequests.shift();
       };
       onLoad = () => {
-        const cl = parseInt(this.getResponseHeader("Content-Length") || "0", 10) || 0;
+        // A responseType of "json" or "document" hands back a plain object,
+        // so neither branch below measures it — fall back to the header, and
+        // to null when it is missing, like the fetch wrapper does (#232).
+        const cl = headerSize(this.getResponseHeader("Content-Length"));
         const r = this.response;
         const responseSize = (this.responseType === "" || this.responseType === "text")
-          ? ((r && r.length) || cl)
+          ? (typeof r === "string" ? r.length : cl)
           : (r instanceof ArrayBuffer ? r.byteLength : (r instanceof Blob ? r.size : cl));
         pushEntry(this.status, null, responseSize);
       };
-      onError = () => { pushEntry(0, "Network error", 0); };
-      onTimeout = () => { pushEntry(0, "Timeout", 0); };
-      onAbort = () => { pushEntry(0, "Aborted", 0); };
+      onError = () => { pushEntry(0, "Network error", null); };
+      onTimeout = () => { pushEntry(0, "Timeout", null); };
+      onAbort = () => { pushEntry(0, "Aborted", null); };
       this.addEventListener("load", onLoad);
       this.addEventListener("error", onError);
       this.addEventListener("timeout", onTimeout);

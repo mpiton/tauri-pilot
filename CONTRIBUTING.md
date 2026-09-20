@@ -15,7 +15,11 @@ git clone https://github.com/mpiton/tauri-pilot.git
 cd tauri-pilot
 cargo build --workspace
 cargo test --workspace
+node --test 'crates/tauri-plugin-pilot/js/*.test.mjs'
 ```
+
+The injected bridge is plain JS with its own `node:test` suite. Pass the glob:
+`node --test crates/tauri-plugin-pilot/js/` cannot resolve the files.
 
 ## Code Standards
 
@@ -29,7 +33,7 @@ cargo test --workspace
 1. Fork the repo and create a feature branch from `main`
 2. Write tests first (TDD: RED → GREEN → REFACTOR)
 3. Implement the minimum to pass tests
-4. Run `cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
+4. Run `cargo test --workspace && node --test 'crates/tauri-plugin-pilot/js/*.test.mjs' && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
 5. Commit with conventional messages: `feat(plugin): ...`, `fix(cli): ...`
 6. Open a PR against `main`
 
