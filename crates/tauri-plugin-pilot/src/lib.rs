@@ -119,6 +119,52 @@ fn release_slot<T>(slot: &std::sync::Mutex<GuardSlot<T>>) {
     }
 }
 
+/// Unlinks the socket when the app is killed with Ctrl+C or `kill` (#217).
+///
+/// SIGINT and SIGTERM end the process before tao emits `RunEvent::Exit`, so the
+/// guard in plugin state never drops and the socket file stays behind. Watching
+/// the signals suppresses their default kill, hence the re-raise.
+#[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+fn spawn_signal_cleanup(guard: PilotGuard) {
+    tauri::async_runtime::spawn(async move {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let (Ok(mut interrupt), Ok(mut terminate)) = (
+            signal(SignalKind::interrupt()),
+            signal(SignalKind::terminate()),
+        ) else {
+            tracing::warn!(
+                "tauri-pilot cannot watch SIGINT/SIGTERM, a signal leaves the socket behind"
+            );
+            return;
+        };
+        let signum = tokio::select! {
+            _ = interrupt.recv() => libc::SIGINT,
+            _ = terminate.recv() => libc::SIGTERM,
+        };
+        guard.release();
+        re_raise(signum);
+    });
+}
+
+/// Restores the default disposition and re-raises `signum`.
+///
+/// The host app then dies from the signal it was sent, with the usual 128+n
+/// status, instead of ignoring it because the plugin installed a handler.
+#[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+fn re_raise(signum: i32) {
+    // `cargo test` builds every mock app in one process, each with its own
+    // watcher: re-raising there kills the whole test run.
+    if cfg!(test) {
+        return;
+    }
+    // SAFETY: `signal` and `raise` are libc entry points with no preconditions.
+    unsafe {
+        libc::signal(signum, libc::SIG_DFL);
+        libc::raise(signum);
+    }
+}
+
 #[cfg(all(any(unix, windows), debug_assertions))]
 fn on_pilot_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::RunEvent) {
     use tauri::Manager;
@@ -202,6 +248,9 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     };
                     // Keep the guard in plugin state, not the server task (#194).
                     cleanup.hold_unix(guard);
+                    // A signal never reaches RunEvent::Exit (#217).
+                    #[cfg(not(target_os = "android"))]
+                    spawn_signal_cleanup(cleanup.clone());
                     tauri::async_runtime::spawn(server::run(
                         listener,
                         None,
@@ -704,6 +753,58 @@ mod tests {
         let left = path.exists();
         super::server::unix::cleanup_bind_files(&path);
         assert!(!left, "RunEvent::Exit must unlink the socket (#194)");
+    }
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    #[test]
+    fn sigterm_unlinks_socket_file() {
+        // #217: SIGINT and SIGTERM never reach RunEvent::Exit, so the plugin's
+        // own watcher is the only thing that can unlink the pathname socket.
+        use std::time::{Duration, Instant};
+
+        let identifier = format!("com.pilot.issue217-{}", std::process::id());
+        let address = super::server::socket_address(&super::sanitize_identifier(&identifier))
+            .expect("socket address");
+        let path = address
+            .as_pathname()
+            .expect("pathname socket")
+            .to_path_buf();
+        super::server::unix::cleanup_bind_files(&path);
+
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = identifier;
+        let _app = tauri::test::mock_builder()
+            .plugin(super::init())
+            .build(context)
+            .expect("app starts");
+
+        assert!(path.exists(), "plugin must bind a pathname socket");
+
+        // Registered before the first raise so SIGTERM cannot kill the test
+        // process, and kept alive for the whole loop.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let _watcher = runtime.block_on(async {
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .expect("watch SIGTERM")
+        });
+
+        // The plugin watcher registers from a task on Tauri's runtime, so the
+        // first raise can land before it is listening. Retry until it does.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && path.exists() {
+            // SAFETY: `raise` is a libc entry point with no preconditions.
+            unsafe {
+                libc::raise(libc::SIGTERM);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let left = path.exists();
+        super::server::unix::cleanup_bind_files(&path);
+        assert!(!left, "SIGTERM must unlink the socket (#217)");
     }
 
     #[cfg(all(any(unix, windows), debug_assertions))]
