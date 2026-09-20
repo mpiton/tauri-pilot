@@ -50,6 +50,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script before it fails, so a `click` there no longer clicks. `navigate` still
   runs, since it is the way back to the app origin.
 
+- `url` is answered by the plugin instead of the bridge, so it reports the
+  current page even where no bridge can call back — a foreign origin the ACL
+  denies, which is exactly when you need to know where you are. `windows`
+  already read the URL that way. [#233]
+
+- An unknown `--window` label is now answered the way an unknown
+  `screenshot_native` window id already is: code `-32602`,
+  `error.data.error = "WINDOW_NOT_FOUND"`, and the windows that do exist under
+  `error.data.available_windows` — `{label, url, title}` rows here, against
+  the `{window_id, owner, title, layer}` ones native capture reports. A typo
+  therefore costs no `windows` round-trip, and a caller that is not the CLI can
+  tell it from a plugin failure without reading the message. The `press`
+  message for that mistake drops its `cannot focus target window:` prefix and
+  reads `Window 'nope' not found` like every other command. [#233]
+
 - `logs` and `network` mark their timestamps with a `Z` suffix
   (`[14:23:07.350Z]`). The clock reading has always been UTC, built from the
   epoch without a timezone, so on a machine that is not on UTC it read as a
@@ -1043,3 +1058,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#217]: https://github.com/mpiton/tauri-pilot/issues/217
 [#231]: https://github.com/mpiton/tauri-pilot/issues/231
 [#232]: https://github.com/mpiton/tauri-pilot/issues/232
+[#233]: https://github.com/mpiton/tauri-pilot/issues/233
