@@ -365,8 +365,12 @@ pub(crate) fn parse_target(s: &str) -> Target {
 
 /// Returns `true` for a bare snapshot id: `e` followed by at least one digit.
 ///
-/// Claiming this shape costs nothing as a selector: a custom element name must
-/// contain a hyphen, so no real element is named `e12`.
+/// Claiming this shape costs a narrow slice of the selector space. A
+/// *registered* custom element must contain a hyphen in its name, so no
+/// component can be called `e12`; an unknown tag `<e12>` is still parsed into
+/// an `HTMLUnknownElement` that `querySelector("e12")` matches. A page that
+/// builds such tags must now write the type selector another way, e.g.
+/// `:is(e12)` or `wait --selector e12`.
 fn is_snapshot_ref_id(s: &str) -> bool {
     let Some(digits) = s.strip_prefix('e') else {
         return false;
@@ -428,13 +432,22 @@ mod tests {
 
     /// A bare snapshot id (`e1`) is a ref, not a CSS selector (#216).
     ///
-    /// `snapshot` prints `[ref=e1]`, so agents copy `e1` verbatim. A custom
-    /// element name must contain a hyphen, so no real element is called
-    /// `e12` and nothing useful is lost by claiming that shape.
+    /// `snapshot` prints `[ref=e1]`, so agents copy `e1` verbatim. No
+    /// registered custom element can be called `e12`, so the shape only
+    /// costs the type selector for an unknown `<e12>` tag.
     #[test]
     fn bare_snapshot_ref_parses_as_a_ref() {
         assert_eq!(parse_target("e1"), Target::Ref("e1".to_owned()));
         assert_eq!(parse_target("e42"), Target::Ref("e42".to_owned()));
+    }
+
+    /// A page that really has an `<e12>` tag can still select it (#216).
+    #[test]
+    fn a_wrapped_type_selector_escapes_the_ref_shape() {
+        assert_eq!(
+            parse_target(":is(e12)"),
+            Target::Selector(":is(e12)".to_owned())
+        );
     }
 
     /// Anything that is not `e` followed by digits stays a selector.

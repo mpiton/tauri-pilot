@@ -33,12 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `value e12` were read as CSS selectors and failed with
   `No element matches selector: e12`. The normalization moved from the scroll
   path into `parse_target`, which the CLI, MCP and TOML scenario steps all
-  share. `@e12` keeps working; a custom element name must contain a hyphen, so
-  no real element is called `e12`. **Breaking:** MCP tools no longer take the
-  element through a `ref` property. `pilot.scroll` was the only one that
-  advertised it, and `{"ref": "e12"}` must become `{"target": "e12"}`. The CLI
-  `scroll --ref` flag is unchanged. Every MCP `target`/`source` description is
-  now worded the same and names all three accepted shapes. [#216]
+  share. `@e12` keeps working. **Breaking:** a bare `e12` is no longer read as
+  a CSS selector. No *registered* custom element can be named `e12` (the name
+  must contain a hyphen), but a page that builds an unknown `<e12>` tag must
+  now write that type selector another way — `:is(e12)`, or
+  `wait --selector e12`. **Breaking:** MCP tools no longer take the element
+  through a `ref` property. `pilot.scroll` was the only one that advertised
+  it, and `{"ref": "e12"}` must become `{"target": "e12"}`; sending `ref` now
+  fails with an error instead of silently scrolling the page. TOML scenario
+  steps drop `ref` for the same reason, so `ref = "e1"` becomes
+  `target = "e1"`. The CLI `scroll --ref` flag is unchanged. Every MCP
+  `target`/`source` description is now worded the same; `wait` and `html` say
+  so without coordinates, which neither ever supported. [#216]
 
 - A bridge command on a page whose origin never said hello no longer runs its
   script before it fails, so a `click` there no longer clicks. `navigate` still
