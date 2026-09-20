@@ -471,6 +471,8 @@ impl PilotMcpServer {
         let path = optional_string(&args, "path")?;
         let content = optional_string(&args, "content")?;
         let fail_fast = optional_bool(&args, "fail_fast")?;
+        let screenshots_dir = optional_string(&args, "screenshots_dir")?
+            .map_or_else(default_screenshots_dir, PathBuf::from);
         let scenario = match (path, content) {
             (Some(_), Some(_)) => {
                 return Err(invalid_params(
@@ -498,7 +500,14 @@ impl PilotMcpServer {
             Err(err) => return Ok(tool_error(format!("{err:#}"))),
         };
         Ok(
-            match scenario::run_scenario(&mut client, &scenario, window.as_deref(), fail_fast).await
+            match scenario::run_scenario(
+                &mut client,
+                &scenario,
+                window.as_deref(),
+                fail_fast,
+                &screenshots_dir,
+            )
+            .await
             {
                 Ok(report) => tool_success(scenario::report_to_json(&report)),
                 Err(err) => tool_error(format!("{err:#}")),
@@ -1757,6 +1766,15 @@ fn replay_schema() -> Arc<JsonObject> {
     )
 }
 
+/// Failure screenshot directory used when the caller passes none.
+///
+/// The MCP server inherits its working directory from the client that spawned
+/// it, so the CLI default (`./tauri-pilot-failures`) would land anywhere. The
+/// temp directory is writable and predictable instead.
+fn default_screenshots_dir() -> PathBuf {
+    std::env::temp_dir().join(scenario::DEFAULT_SCREENSHOT_DIR)
+}
+
 fn run_schema() -> Arc<JsonObject> {
     object_schema(
         props([
@@ -1769,6 +1787,12 @@ fn run_schema() -> Arc<JsonObject> {
                 "fail_fast",
                 bool_prop(
                     "Override the scenario file fail_fast setting. When omitted, the TOML value is used (default true).",
+                ),
+            ),
+            (
+                "screenshots_dir",
+                string_prop(
+                    "Directory for failure screenshots. Defaults to a tauri-pilot-failures directory under the system temp directory. Failed steps report the file as 'screenshot', or the reason as 'screenshot_error'.",
                 ),
             ),
         ]),
@@ -1948,13 +1972,13 @@ mod tests {
     }
 
     #[test]
-    fn run_schema_properties_include_path_content_fail_fast_and_window() {
+    fn run_schema_properties_include_run_options_and_window() {
         let schema = run_schema();
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
             .expect("schema has properties");
-        for key in ["path", "content", "fail_fast", "window"] {
+        for key in ["path", "content", "fail_fast", "screenshots_dir", "window"] {
             assert!(
                 properties.contains_key(key),
                 "run schema must advertise `{key}`"
@@ -3007,7 +3031,8 @@ target = "#btn"
             std::process::id()
         ));
         let methods = spawn_failing_click_server(&socket);
-        let report = call_run_two_clicks(&socket, None).await;
+        let shots = tempfile::tempdir().expect("temp dir");
+        let report = call_run_two_clicks(&socket, None, shots.path()).await;
         assert_eq!(report["ok"], false);
         assert_eq!(report["steps"][0]["status"], "failed");
         assert_eq!(report["steps"][1]["status"], "skipped");
@@ -3016,7 +3041,6 @@ target = "#btn"
             recorded.iter().filter(|method| *method == "click").count(),
             1
         );
-        let _ = std::fs::remove_dir("tauri-pilot-failures");
     }
 
     #[tokio::test]
@@ -3027,7 +3051,8 @@ target = "#btn"
             std::process::id()
         ));
         let methods = spawn_failing_click_server(&socket);
-        let report = call_run_two_clicks(&socket, Some(false)).await;
+        let shots = tempfile::tempdir().expect("temp dir");
+        let report = call_run_two_clicks(&socket, Some(false), shots.path()).await;
         assert_eq!(report["ok"], false);
         assert_eq!(report["passed"], 1);
         assert_eq!(report["failed"], 1);
@@ -3039,11 +3064,58 @@ target = "#btn"
             recorded.iter().filter(|method| *method == "click").count(),
             2
         );
-        let _ = std::fs::remove_dir("tauri-pilot-failures");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_reports_failure_screenshot_path() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-shot-{}.sock",
+            std::process::id()
+        ));
+        let _methods = spawn_failing_click_server(&socket);
+        let shots = tempfile::tempdir().expect("temp dir");
+        let report = call_run_two_clicks(&socket, None, shots.path()).await;
+        let saved = report["steps"][0]["screenshot"]
+            .as_str()
+            .expect("failed step reports a screenshot path");
+        assert!(
+            Path::new(saved).starts_with(shots.path()),
+            "screenshot {saved} is not under the requested directory"
+        );
+        assert!(Path::new(saved).is_file(), "screenshot {saved} is missing");
+        assert!(report["steps"][0].get("screenshot_error").is_none());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_reports_why_screenshot_was_not_saved() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-noshot-{}.sock",
+            std::process::id()
+        ));
+        let _methods = spawn_failing_click_server(&socket);
+        let dir = tempfile::tempdir().expect("temp dir");
+        // A regular file where the directory should be: create_dir_all fails.
+        let blocked = dir.path().join("blocked");
+        std::fs::write(&blocked, b"not a directory").expect("write blocker");
+        let report = call_run_two_clicks(&socket, None, &blocked).await;
+        let reason = report["steps"][0]["screenshot_error"]
+            .as_str()
+            .expect("failed step reports why the screenshot is missing");
+        assert!(
+            reason.contains("failed to save screenshot to"),
+            "unexpected reason: {reason}"
+        );
+        assert!(report["steps"][0].get("screenshot").is_none());
     }
 
     #[cfg(unix)]
-    async fn call_run_two_clicks(socket: &Path, fail_fast: Option<bool>) -> Value {
+    async fn call_run_two_clicks(
+        socket: &Path,
+        fail_fast: Option<bool>,
+        screenshots_dir: &Path,
+    ) -> Value {
         let pilot = PilotMcpServer::new(Some(socket.to_path_buf()), None);
         let mut args = Map::new();
         args.insert(
@@ -3066,6 +3138,10 @@ target = "#btn"
         if let Some(fail_fast) = fail_fast {
             args.insert("fail_fast".to_owned(), json!(fail_fast));
         }
+        args.insert(
+            "screenshots_dir".to_owned(),
+            json!(screenshots_dir.display().to_string()),
+        );
         let result = pilot
             .call_tool_by_name("run", args)
             .await
@@ -3111,10 +3187,12 @@ target = "#btn"
                             Response::success(request.id, json!({"ok": true}))
                         }
                     }
-                    "screenshot" => Response::error(
-                        serde_json::Value::Number(request.id.into()),
-                        -32_000,
-                        "screenshot failed",
+                    // 1x1 transparent PNG, enough for the save path to run.
+                    "screenshot" => Response::success(
+                        request.id,
+                        json!(
+                            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                        ),
                     ),
                     _ => Response::error(
                         serde_json::Value::Number(request.id.into()),

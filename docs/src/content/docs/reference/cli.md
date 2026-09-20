@@ -112,7 +112,12 @@ The MCP server exposes tools for the CLI's app-facing commands, including
 
 `pilot.run` executes a declarative TOML scenario. Pass `path` to a `.toml` file
 or inline `content` (not both), optionally set `fail_fast` to override the file,
-and read the JSON report (`ok`, counts, `summary`, `steps`). A finished run
+and read the JSON report (`ok`, counts, `summary`, `steps`). A failed step also
+carries the absolute failure screenshot as `screenshot`, or the reason it could
+not be written as `screenshot_error`. Screenshots go to `tauri-pilot-failures`
+under the system temp directory unless `screenshots_dir` says otherwise — the
+MCP server's working directory belongs to whichever client spawned it, so it is
+not a useful default. A finished run
 including failed steps is a successful tool result with `ok` false; only parse,
 I/O, connect, and timeout failures are tool errors. The tool also returns
 `INVALID_PARAMS` for an empty `[[step]]` list, `eval`/`drop`/`ipc` steps unless

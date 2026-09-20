@@ -242,6 +242,9 @@ pub(crate) enum Command {
         /// Override `fail_fast` setting from the scenario file.
         #[arg(long)]
         no_fail_fast: bool,
+        /// Directory for failure screenshots (default: ./tauri-pilot-failures).
+        #[arg(long, value_name = "DIR")]
+        screenshots_dir: Option<PathBuf>,
     },
 }
 
