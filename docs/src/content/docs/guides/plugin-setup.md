@@ -47,7 +47,15 @@ SIGHUP. Those signals end the process before Tauri emits `RunEvent::Exit`, so
 the plugin removes the socket file itself, restores the default handler and
 re-raises the signal: the app still exits with the usual 128+n status. If your
 app installs its own handler for those signals, it still runs, but the re-raise
-can cut a long graceful shutdown short. Release builds never see any of this.
+can cut a long graceful shutdown short.
+
+On Windows, a debug build watches the console control events instead: Ctrl+C,
+Ctrl+Break, console close and system shutdown. The plugin removes
+`instances\{identifier}.json`, then exits with `STATUS_CONTROL_C_EXIT`
+(`0xC000013A`), the status the default handler gives. The same caveat applies
+to an app with its own console handler. This needs `tokio` 1.44 or newer.
+
+Release builds never see any of this.
 
 ## 4. Socket path
 

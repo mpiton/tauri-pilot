@@ -90,6 +90,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On Windows, quitting the app with Ctrl+C or Ctrl+Break, or by closing the
+  console running `cargo tauri dev`, now removes
+  `%LOCALAPPDATA%\tauri-pilot\instances\{identifier}.json`. Those console
+  control events end the process before Tauri emits `RunEvent::Exit`, so the
+  registry guard never dropped and the CLI kept listing an app that was gone.
+  Debug builds now watch Ctrl+C, Ctrl+Break, console close and system
+  shutdown, remove the instance file, then exit with `STATUS_CONTROL_C_EXIT`,
+  the status the default handler gives. An integration test sends Ctrl+Break
+  to a child app and asserts both. The `tokio` floor moves from 1.37 to 1.44:
+  before that release a watched close or shutdown event killed the process
+  before the watcher could run. [#229]
+
 - The signal watcher's exit half is under test. Nothing covered the part that
   actually kills the app, because every mock app shares the test process and
   the re-raise there ends the whole run: a plugin that swallowed Ctrl+C and
@@ -148,8 +160,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   app. Debug builds on Unix now watch all three signals, unlink the socket,
   then re-raise with the default handler so the app still dies with its usual
   128+n status. A crash or `SIGKILL` still leaves the file; the next bind
-  treats it as stale. Windows is unchanged and still leaves
-  `instances/{identifier}.json` behind on Ctrl+C. [#217]
+  treats it as stale. Windows gets the same treatment in #229. [#217]
 
 - Failure screenshots from `run` and MCP `pilot.run` are now reported, and
   `pilot.run` no longer drops them wherever the server process happened to
@@ -1095,6 +1106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#217]: https://github.com/mpiton/tauri-pilot/issues/217
 [#220]: https://github.com/mpiton/tauri-pilot/issues/220
 [#221]: https://github.com/mpiton/tauri-pilot/issues/221
+[#229]: https://github.com/mpiton/tauri-pilot/issues/229
 [#230]: https://github.com/mpiton/tauri-pilot/issues/230
 [#231]: https://github.com/mpiton/tauri-pilot/issues/231
 [#232]: https://github.com/mpiton/tauri-pilot/issues/232
