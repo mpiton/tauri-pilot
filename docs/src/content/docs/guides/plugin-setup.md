@@ -42,6 +42,13 @@ The `#[cfg(debug_assertions)]` guard is intentional and important:
 - There is zero runtime overhead or binary size impact in production
 - No need to strip or disable the plugin before shipping
 
+On Unix (Android excepted), a debug build also watches SIGINT, SIGTERM and
+SIGHUP. Those signals end the process before Tauri emits `RunEvent::Exit`, so
+the plugin removes the socket file itself, restores the default handler and
+re-raises the signal: the app still exits with the usual 128+n status. If your
+app installs its own handler for those signals, it still runs, but the re-raise
+can cut a long graceful shutdown short. Release builds never see any of this.
+
 ## 4. Socket path
 
 Once your app starts in dev mode, the plugin creates a Unix socket at:
