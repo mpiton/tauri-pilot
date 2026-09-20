@@ -1,5 +1,6 @@
 //! Shared harness for CLI integration tests: a one-shot mock JSON-RPC server
-//! on a unix socket.
+//! on a unix socket, plus the process helpers that drive the binary against
+//! it.
 
 // Each test binary compiles this module on its own and uses a different
 // subset of it, so `expect` would fire "unfulfilled expectation" in the
@@ -10,10 +11,11 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long to wait for the mock server, or the binary, to finish.
 ///
@@ -63,4 +65,34 @@ pub fn spawn_mock_server(socket: &Path, result: serde_json::Value) -> mpsc::Rece
         let _ = done_tx.send(());
     });
     done_rx
+}
+
+/// Returns a stdout whose reader is already gone, so the first write fails
+/// with `EPIPE`.
+///
+/// # Panics
+///
+/// Panics if the pipe cannot be created.
+pub fn closed_pipe() -> Stdio {
+    let (reader, writer) = std::io::pipe().expect("create pipe");
+    drop(reader);
+    writer.into()
+}
+
+/// Waits for `child` to exit within `SERVER_DONE_TIMEOUT`, then collects it.
+///
+/// # Panics
+///
+/// Panics if the child is still running at the deadline: a binary that hangs
+/// on a closed stdout then fails its own test instead of the whole suite.
+pub fn wait_bounded(mut child: Child) -> Output {
+    let deadline = Instant::now() + SERVER_DONE_TIMEOUT;
+    while child.try_wait().expect("poll tauri-pilot").is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("tauri-pilot did not exit within {SERVER_DONE_TIMEOUT:?}");
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    child.wait_with_output().expect("wait for tauri-pilot")
 }

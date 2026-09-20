@@ -45,8 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pilot.run` now defaults to an owner-only per-user
   `tauri-pilot-failures-<uid>` directory under `$XDG_RUNTIME_DIR` or the
   system temp directory, because the server's working directory belongs to
-  whichever client spawned it, and the old fixed `/tmp` path was writable
-  and readable by every user on the host. `run --json` prints the report as
+  whichever client spawned it. The old `/tmp/tauri-pilot-failures` was
+  world-readable, and since the name was predictable in a world-writable
+  `/tmp`, any local user could pre-create it as a directory or a symlink and
+  collect or redirect the screenshots. `run --json` prints the report as
   JSON; the flag was accepted and ignored before. [#215]
 
 - A request over the plugin's 1 MiB line limit, such as a React

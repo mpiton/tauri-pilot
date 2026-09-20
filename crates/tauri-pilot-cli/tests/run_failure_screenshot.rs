@@ -16,7 +16,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-use common::{SERVER_DONE_TIMEOUT, unique_socket_path};
+use common::{SERVER_DONE_TIMEOUT, closed_pipe, unique_socket_path, wait_bounded};
 
 /// Runs a one-step scenario whose `click` fails, with extra CLI arguments.
 ///
@@ -96,15 +96,14 @@ target = "#nope"
         scenario_path.to_str().expect("scenario path is UTF-8"),
     ];
     args.extend_from_slice(extra_args);
-    let output = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
+    let child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
         .current_dir(cwd)
         .args(args)
         .stdout(stdout)
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn tauri-pilot")
-        .wait_with_output()
-        .expect("wait for tauri-pilot");
+        .expect("spawn tauri-pilot");
+    let output = wait_bounded(child);
 
     let done = done_rx.recv_timeout(SERVER_DONE_TIMEOUT);
     let _ = std::fs::remove_file(&socket);
@@ -198,14 +197,6 @@ fn run_json_reports_absolute_path_under_the_default_directory() {
         expected.display()
     );
     assert!(saved.is_file(), "screenshot {} is missing", saved.display());
-}
-
-/// Returns a stdout whose reader is already gone, so the first write fails
-/// with `EPIPE`.
-fn closed_pipe() -> Stdio {
-    let (reader, writer) = std::io::pipe().expect("create pipe");
-    drop(reader);
-    writer.into()
 }
 
 /// `run --json | head -1` must not turn a failing scenario into a 0, and the
