@@ -140,6 +140,86 @@ test("a JavaScriptCore stack names the throwing frame, not the caller", () => {
   assert.doesNotMatch(entry.source, /main\.js/, "the throwing frame beats the caller and the event location");
 });
 
+test("an anonymous JavaScriptCore frame drops its leading @ in source", () => {
+  // JSC writes an anonymous frame as `@url:line:col`. The `@` separates the
+  // function name from the location, so an empty name leaves it dangling and
+  // `logs` printed `(@tauri://localhost:1:143)` (#232).
+  const { pilot, win } = loadBridge();
+  const error = new Error("rej");
+  error.stack = "@tauri://localhost:1:143";
+  win.dispatch("unhandledrejection", { reason: error });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, "tauri://localhost:1:143");
+});
+
+test("a named JavaScriptCore frame keeps its function name", () => {
+  const { pilot, win } = loadBridge();
+  const error = new Error("boom");
+  error.stack = "handler@https://app.example/widget.js:12:5";
+  win.dispatch("unhandledrejection", { reason: error });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, "handler@https://app.example/widget.js:12:5");
+});
+
+test("an uncaught error from eval'd code reports line:col without \"undefined\"", () => {
+  // WebKitGTK sets `filename` to the *string* "undefined" for code that came
+  // from eval; the truthiness guard let it through as `undefined:1:91` (#232).
+  const { pilot, win } = loadBridge();
+  win.dispatch("error", {
+    message: "Error: boom",
+    filename: "undefined",
+    lineno: 1,
+    colno: 91,
+  });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, "1:91");
+});
+
+test("an uncaught error with no location at all has a null source", () => {
+  const { pilot, win } = loadBridge();
+  win.dispatch("error", { message: "Error: boom" });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, null);
+});
+
+test("an uncaught error with a location but no filename reports line:col", () => {
+  const { pilot, win } = loadBridge();
+  win.dispatch("error", { message: "Error: boom", lineno: 12, colno: 3 });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, "12:3");
+});
+
+test("a \"undefined\" filename with no line or column has a null source", () => {
+  const { pilot, win } = loadBridge();
+  win.dispatch("error", { message: "Error: boom", filename: "undefined" });
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.equal(entry.source, null);
+});
+
+test("an anonymous JavaScriptCore frame from eval'd code drops the missing file", () => {
+  // WebKitGTK writes the url of an eval'd frame as `undefined`, or leaves it
+  // out entirely, so the stack path needs the same filter as the event path
+  // or `logs` shows `undefined:1:91` / `:1:91` (#232).
+  for (const [stack, expected] of [
+    ["@undefined:1:91", "1:91"],
+    ["@:1:91", "1:91"],
+  ]) {
+    const { pilot, win } = loadBridge();
+    const error = new Error("rej");
+    error.stack = stack;
+    win.dispatch("unhandledrejection", { reason: error });
+
+    const [entry] = pilot.consoleLogs({ level: "error" });
+    assert.equal(entry.source, expected, stack);
+  }
+});
+
 test("an anonymous JavaScriptCore frame is still the throw site", () => {
   // JSC writes `@url:line:col` for anonymous callbacks (no function name).
   // `[^:]+@` required a name, so this line was skipped and source became the

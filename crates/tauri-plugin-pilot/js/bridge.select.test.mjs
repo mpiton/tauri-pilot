@@ -139,9 +139,11 @@ test("select throws when no option matches value or label", () => {
   ]);
   const pilot = loadBridge({ queryResult: el });
 
+  // The prefix names the command the user ran; `fill` shares this matcher
+  // and used to report "select:" (#232).
   assert.throws(
     () => pilot.select({ selector: "select[name=role]", value: "zzz" }),
-    /no option/i,
+    /^Error: select: no option matches "zzz"$/,
   );
   // The selection must be left untouched, never silently cleared to -1.
   assert.equal(el.selectedIndex, -1);
@@ -175,7 +177,7 @@ test("fill on select uses option matching and throws when nothing matches", () =
   const fillPilot = loadBridge({ queryResult: unmatched });
   assert.throws(
     () => fillPilot.fill({ selector: "select[name=role]", value: "zzz" }),
-    /no option/i,
+    /^Error: fill: no option matches "zzz"$/,
   );
   assert.equal(unmatched.selectedIndex, -1);
 });
