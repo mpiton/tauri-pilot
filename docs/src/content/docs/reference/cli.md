@@ -1010,7 +1010,9 @@ tauri-pilot url
 
 The plugin answers this one from the webview itself, not from the injected
 bridge, so it still works on a page the bridge cannot drive — a foreign origin
-missing from `remote.urls`, where every other command fails.
+missing from `remote.urls`, where the bridge commands fail. `windows`,
+`navigate` and `press` do not go through the bridge either and keep working
+there; `navigate` to an app URL is the way back.
 
 **Example:**
 

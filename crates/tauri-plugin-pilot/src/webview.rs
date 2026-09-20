@@ -6,6 +6,9 @@
 use tauri::{Manager, Url};
 
 /// Metadata of one window, as `windows.list` reports it.
+///
+/// Also the row shape of `error.data.available_windows`, which names the valid
+/// labels when a request targets one that does not exist.
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct WindowInfo {
     pub(crate) label: String,

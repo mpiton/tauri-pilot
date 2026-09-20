@@ -827,31 +827,51 @@ fn origin_moved_error(checked: &tauri::Url, now: &tauri::Url) -> RpcError {
 
 /// Resolve the window a request targets.
 ///
-/// A resolution failure carries the window list under `data.available_windows`,
-/// the way `screenshot_native` reports an unknown window id (#149), so a typo
-/// in `--window` does not cost a `windows` round-trip (#233).
+/// # Errors
+///
+/// A label that names no window is the caller's mistake, so it gets the
+/// envelope an unknown `screenshot_native` window id already gets (#149):
+/// `RPC_INVALID_PARAMS`, `data.error = WINDOW_NOT_FOUND`, and the windows that
+/// do exist under `data.available_windows`, so a typo in `--window` costs no
+/// `windows` round-trip (#233). Those rows are `{label, url, title}`, where
+/// `screenshot_native` reports `{window_id, owner, title, layer}`; only the
+/// envelope is shared. Having no window at all is the app's state, not a bad
+/// request, and stays `RPC_INTERNAL_ERROR`.
 fn target<'a>(
     webviews: &'a dyn Webviews,
     window: Option<&str>,
 ) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
-    webviews.target(window).map_err(|e| {
-        let available = webviews.list();
-        RpcError {
-            code: -32603,
+    webviews.target(window).map_err(|e| match window {
+        Some(_) => RpcError {
+            code: RPC_INVALID_PARAMS,
+            data: Some(serde_json::json!({
+                "error": screenshot::ipc::codes::WINDOW_NOT_FOUND,
+                "message": e,
+                "available_windows": webviews.list(),
+            })),
             message: e,
-            data: (!available.is_empty())
-                .then(|| serde_json::json!({"available_windows": available})),
-        }
+        },
+        None => RpcError {
+            code: RPC_INTERNAL_ERROR,
+            message: e,
+            data: None,
+        },
     })
 }
 
 /// Answer `url` from the runtime, without asking the page.
+///
+/// # Errors
+///
+/// Fails when the window cannot be resolved (see [`target`]), or when the
+/// runtime reports no URL for it — a failure the bridge route never produced,
+/// since a page that answers at all knows its own `location`.
 fn handle_url(
     webviews: &dyn Webviews,
     window: Option<&str>,
 ) -> Result<serde_json::Value, RpcError> {
     let url = target(webviews, window)?.url().ok_or_else(|| RpcError {
-        code: -32603,
+        code: RPC_INTERNAL_ERROR,
         message: "the runtime cannot report the URL of the current page".to_owned(),
         data: None,
     })?;
@@ -1116,7 +1136,7 @@ mod tests {
         )
         .await;
         let err = result.expect_err("dispatch returns Err");
-        assert_eq!(err.code, -32603);
+        assert_eq!(err.code, -32602);
         assert_eq!(err.message, "Window 'settings' not found");
     }
 
@@ -2310,14 +2330,63 @@ mod tests {
         .await
         .expect_err("unknown label");
 
+        // Same envelope as an unknown `screenshot_native` window id, so a
+        // consumer that is not this CLI can tell a typo from a plugin failure
+        // without parsing the message.
+        assert_eq!(err.code, -32602);
         assert_eq!(err.message, "Window 'nope' not found");
-        let labels = err.data.expect("available windows")["available_windows"]
+        let data = err.data.expect("available windows");
+        assert_eq!(data["error"], json!("WINDOW_NOT_FOUND"));
+        assert_eq!(data["message"], json!("Window 'nope' not found"));
+        let labels = data["available_windows"]
             .as_array()
             .expect("a list")
             .iter()
             .map(|w| w["label"].as_str().expect("a label").to_owned())
             .collect::<Vec<_>>();
         assert_eq!(labels, ["main", "settings"]);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_url_errors_when_the_runtime_reports_no_url() {
+        // `TargetWindow::url` is `None` whenever the runtime call fails or its
+        // `catch_unwind` trips. Answering an empty string there would tell the
+        // caller it is on a page called "", so it has to be an error (#233).
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", None);
+
+        let err = dispatch("url", None, &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("no URL to report");
+
+        assert_eq!(err.code, -32603);
+        assert_eq!(
+            err.message,
+            "the runtime cannot report the URL of the current page"
+        );
+        assert!(err.data.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_unknown_window_lists_nothing_when_the_app_has_none() {
+        // An app with no window still answers the envelope, with an empty
+        // list: an absent key would read as "the plugin did not look".
+        let engine = EvalEngine::new();
+
+        let err = dispatch(
+            "url",
+            Some(&json!({"window": "nope"})),
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("unknown label");
+
+        assert_eq!(err.code, -32602);
+        let data = err.data.expect("the WINDOW_NOT_FOUND envelope");
+        assert_eq!(data["error"], json!("WINDOW_NOT_FOUND"));
+        assert_eq!(data["available_windows"], json!([]));
     }
 
     const APP_PAGE: &str = "tauri://localhost/";

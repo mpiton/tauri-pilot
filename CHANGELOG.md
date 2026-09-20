@@ -55,9 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   denies, which is exactly when you need to know where you are. `windows`
   already read the URL that way. [#233]
 
-- An unknown `--window` label now lists the valid ones under
-  `error.data.available_windows`, the way an unknown `screenshot_native`
-  window id already does, so a typo costs no `windows` round-trip. The `press`
+- An unknown `--window` label is now answered the way an unknown
+  `screenshot_native` window id already is: code `-32602`,
+  `error.data.error = "WINDOW_NOT_FOUND"`, and the windows that do exist under
+  `error.data.available_windows` — `{label, url, title}` rows here, against
+  the `{window_id, owner, title, layer}` ones native capture reports. A typo
+  therefore costs no `windows` round-trip, and a caller that is not the CLI can
+  tell it from a plugin failure without reading the message. The `press`
   message for that mistake drops its `cannot focus target window:` prefix and
   reads `Window 'nope' not found` like every other command. [#233]
 
