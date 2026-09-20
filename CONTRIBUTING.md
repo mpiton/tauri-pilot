@@ -24,7 +24,7 @@ The injected bridge is plain JS with its own `node:test` suite. Pass the glob:
 ## Code Standards
 
 - **No `.unwrap()`** outside of tests — use `thiserror` (plugin) or `anyhow` (CLI)
-- **Clippy strict**: `cargo clippy --workspace --all-targets -- -D warnings`, then again with the plugin's debug assertions off, as release builds compile it: `cargo clippy --workspace --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
+- **Clippy strict**: `cargo clippy --workspace --all-targets -- -D warnings`, then again with the plugin's debug assertions off, as release builds compile it: `cargo clippy --workspace --all-targets --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
 - **Modules < 150 lines**, functions < 50 lines
 - **Edition 2024**, rust-version 1.95.0
 
@@ -33,7 +33,7 @@ The injected bridge is plain JS with its own `node:test` suite. Pass the glob:
 1. Fork the repo and create a feature branch from `main`
 2. Write tests first (TDD: RED → GREEN → REFACTOR)
 3. Implement the minimum to pass tests
-4. Run `cargo test --workspace && node --test 'crates/tauri-plugin-pilot/js/*.test.mjs' && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
+4. Run `cargo test --workspace && node --test 'crates/tauri-plugin-pilot/js/*.test.mjs' && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --all-targets --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
 5. Commit with conventional messages: `feat(plugin): ...`, `fix(cli): ...`
 6. Open a PR against `main`
 
