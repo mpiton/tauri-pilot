@@ -94,13 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   console running `cargo tauri dev`, now removes
   `%LOCALAPPDATA%\tauri-pilot\instances\{identifier}.json`. Those console
   control events end the process before Tauri emits `RunEvent::Exit`, so the
-  registry guard never dropped and the CLI kept listing an app that was gone.
-  Debug builds now watch Ctrl+C, Ctrl+Break, console close and system
-  shutdown, remove the instance file, then exit with `STATUS_CONTROL_C_EXIT`,
-  the status the default handler gives. An integration test sends Ctrl+Break
-  to a child app and asserts both. The `tokio` floor moves from 1.37 to 1.44:
-  before that release a watched close or shutdown event killed the process
-  before the watcher could run. [#229]
+  registry guard never dropped and the file stayed behind. The CLI skips an
+  entry whose pid is dead, so the leftover only bit once another process drew
+  that pid: the CLI could then resolve to the dead pipe. Debug builds now watch
+  Ctrl+C, Ctrl+Break and console close, remove the instance file, then exit
+  with `STATUS_CONTROL_C_EXIT`, the status the default handler gives. A console
+  handler your app registered before the plugin's `setup` is no longer called
+  in debug builds, since the plugin's claims the event first. System shutdown
+  and logoff still leave the file: Windows delivers neither to a console
+  handler in a process that has loaded user32.dll, as every Tauri app has. An
+  integration test sends Ctrl+Break to a child app and asserts both. The
+  `tokio` floor moves from 1.37 to 1.44: before that release a watched close
+  event killed the process before the watcher could run. [#229]
 
 - The signal watcher's exit half is under test. Nothing covered the part that
   actually kills the app, because every mock app shares the test process and

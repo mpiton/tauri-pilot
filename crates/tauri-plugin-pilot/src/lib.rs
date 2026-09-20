@@ -21,6 +21,9 @@ pub(crate) mod recorder;
 pub(crate) mod screenshot;
 #[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod server;
+// Android excepted: its abstract-namespace socket leaves no file to clean up.
+#[cfg(all(any(unix, windows), not(target_os = "android"), debug_assertions))]
+mod signal;
 #[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod webview;
 
@@ -119,145 +122,6 @@ fn release_slot<T>(slot: &std::sync::Mutex<GuardSlot<T>>) {
     }
 }
 
-/// Unlinks the socket when a signal kills the app before `RunEvent::Exit` (#217).
-///
-/// SIGINT, SIGTERM and SIGHUP end the process before tao emits `RunEvent::Exit`,
-/// so the guard in plugin state never drops and the socket file stays behind.
-/// Watching the signals suppresses their default kill, hence the re-raise.
-#[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-fn spawn_signal_cleanup(guard: &PilotGuard) {
-    use tokio::signal::unix::{SignalKind, signal};
-
-    for (kind, signum) in [
-        (SignalKind::interrupt(), libc::SIGINT),
-        (SignalKind::terminate(), libc::SIGTERM),
-        // Closing the terminal running `cargo tauri dev` sends SIGHUP, whose
-        // default disposition kills just as silently as the other two.
-        (SignalKind::hangup(), libc::SIGHUP),
-    ] {
-        // Registered here, not inside the task: between `setup` returning and
-        // the task's first poll the default disposition is still in force and a
-        // signal in that window leaks the socket. `signal` needs a runtime
-        // context and `setup` runs outside one (#115), hence `block_on`.
-        //
-        // One stream and one task per signal rather than a single `select!`:
-        // a kind that fails to register then costs only itself, instead of
-        // dropping a stream tokio has already hooked and leaving that signal
-        // handled by nobody, which would make the app ignore Ctrl+C outright.
-        let opened = tauri::async_runtime::block_on(async { signal(kind) });
-        let Ok(mut stream) = opened.inspect_err(|e| {
-            tracing::warn!(
-                signum,
-                "tauri-pilot cannot watch this signal, it leaves the socket behind: {e}"
-            );
-        }) else {
-            continue;
-        };
-        let guard = guard.clone();
-        tauri::async_runtime::spawn(async move {
-            stream.recv().await;
-            guard.release();
-            re_raise(signum);
-        });
-    }
-}
-
-/// Restores the default disposition and re-raises `signum`.
-///
-/// The host app then dies from the signal it was sent, with the usual 128+n
-/// status, instead of ignoring it because the plugin installed a handler.
-#[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-fn re_raise(signum: i32) {
-    // SAFETY: `signal` and `raise` are libc entry points with no preconditions.
-    unsafe {
-        // Restored first: tokio keeps its handler installed for the life of the
-        // process, so the raise below would land back in the watcher instead
-        // of killing the app.
-        libc::signal(signum, libc::SIG_DFL);
-        // No `cfg!(test)` guard here: a watcher firing inside the test binary
-        // ends the whole run, so the signal path is covered out of process in
-        // tests/signal_exit.rs (#230) rather than by skipping the raise.
-        libc::raise(signum);
-    }
-}
-
-/// Removes the instance file when a console event kills the app before `RunEvent::Exit` (#229).
-///
-/// Ctrl+C, Ctrl+Break, closing the console and system shutdown end the process
-/// before tao emits `RunEvent::Exit`, so the registry guard in plugin state never
-/// drops and `instances/{identifier}.json` keeps listing an app that is gone.
-#[cfg(all(windows, debug_assertions))]
-fn spawn_signal_cleanup(guard: &PilotGuard) {
-    use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close, ctrl_shutdown};
-
-    // Registered here, not inside the tasks: between `setup` returning and a
-    // task's first poll the default handler is still in force and an event in
-    // that window leaks the instance file. Unlike `signal` on Unix these need
-    // no runtime context, so no `block_on`.
-    //
-    // One stream and one task per event, for the reason the Unix watcher gives:
-    // a kind that fails to register then costs only itself. The four streams
-    // are distinct types with no shared trait, hence the `map` to a future.
-    release_on(
-        guard,
-        "ctrl_c",
-        ctrl_c().map(|mut s| async move {
-            s.recv().await;
-        }),
-    );
-    release_on(
-        guard,
-        "ctrl_break",
-        ctrl_break().map(|mut s| async move {
-            s.recv().await;
-        }),
-    );
-    release_on(
-        guard,
-        "ctrl_close",
-        ctrl_close().map(|mut s| async move {
-            s.recv().await;
-        }),
-    );
-    release_on(
-        guard,
-        "ctrl_shutdown",
-        ctrl_shutdown().map(|mut s| async move {
-            s.recv().await;
-        }),
-    );
-}
-
-/// Releases `guard` once `fired` resolves, then ends the process.
-///
-/// Watching a console event makes tokio's handler claim it, which suppresses
-/// the default handler's `ExitProcess`. The exit here stands in for it, with
-/// the status the default gives, so the app still dies of its Ctrl+C.
-#[cfg(all(windows, debug_assertions))]
-fn release_on<F>(guard: &PilotGuard, event: &'static str, fired: std::io::Result<F>)
-where
-    F: Future<Output = ()> + Send + 'static,
-{
-    use windows::Win32::Foundation::STATUS_CONTROL_C_EXIT;
-
-    let Ok(fired) = fired.inspect_err(|e| {
-        tracing::warn!(
-            event,
-            "tauri-pilot cannot watch this console event, it leaves the instance file behind: {e}"
-        );
-    }) else {
-        return;
-    };
-    let guard = guard.clone();
-    tauri::async_runtime::spawn(async move {
-        fired.await;
-        // The release is the only work done here: on close and shutdown
-        // Windows kills the process a few seconds after the event.
-        guard.release();
-        std::process::exit(STATUS_CONTROL_C_EXIT.0);
-    });
-}
-
 #[cfg(all(any(unix, windows), debug_assertions))]
 fn on_pilot_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::RunEvent) {
     use tauri::Manager;
@@ -292,10 +156,20 @@ fn on_pilot_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::R
 /// signals still runs it, but the re-raise cuts a long graceful shutdown short.
 ///
 /// On Windows, debug builds watch the console control events instead: Ctrl+C,
-/// Ctrl+Break, console close and system shutdown. The plugin removes
+/// Ctrl+Break and console close. The plugin removes
 /// `instances/{identifier}.json`, then exits with `STATUS_CONTROL_C_EXIT`, the
-/// status the default handler gives. The same caveat applies to an app with its
-/// own console handler: it still runs, but the exit cuts it short.
+/// status the default handler gives. Windows calls console handlers last
+/// registered first and stops at the first one that claims the event, which
+/// the plugin's does: a handler the app registered before the plugin's `setup`
+/// (`ctrlc::set_handler` in `main`, say) is no longer called in debug builds.
+/// One registered after it runs first, and the plugin sees the event only if
+/// that handler passes it on. A `tokio::signal` listener in the app runs
+/// alongside the plugin's, but the exit cuts it short.
+///
+/// System shutdown and logoff still leave the instance file: Windows delivers
+/// neither to a console handler once the process has loaded user32.dll, which
+/// every Tauri app has. The CLI skips an entry whose pid is dead.
+///
 /// Release builds are unaffected: the whole plugin is compiled out.
 #[must_use]
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
@@ -358,7 +232,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     cleanup.hold_unix(guard);
                     // A signal never reaches RunEvent::Exit (#217).
                     #[cfg(not(target_os = "android"))]
-                    spawn_signal_cleanup(&cleanup);
+                    signal::spawn_cleanup(&cleanup);
                     tauri::async_runtime::spawn(server::run(
                         listener,
                         None,
@@ -375,10 +249,16 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 // the context of a Tokio 1.x runtime" (#115).
                 //
                 // A console control event never reaches RunEvent::Exit (#229).
-                // Armed before the bind: a release that wins the race leaves
-                // the slot `Released`, and the late guard drops on arrival.
+                // Armed before the bind, so no event goes unwatched. One window
+                // stays open: an event between `register_instance` and
+                // `hold_windows` finds the slot empty, and the watcher exits
+                // before the late guard arrives to drop. Unregistering by
+                // identifier would close it, but would also let a second
+                // instance whose bind failed (#152) remove the first one's live
+                // entry. The CLI skips a dead pid, so the leftover is harmless
+                // until that pid is reused.
                 #[cfg(windows)]
-                spawn_signal_cleanup(&cleanup);
+                signal::spawn_cleanup(&cleanup);
                 #[cfg(windows)]
                 tauri::async_runtime::spawn(server::run(
                     server::socket_path(&identifier),

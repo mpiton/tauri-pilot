@@ -50,10 +50,22 @@ app installs its own handler for those signals, it still runs, but the re-raise
 can cut a long graceful shutdown short.
 
 On Windows, a debug build watches the console control events instead: Ctrl+C,
-Ctrl+Break, console close and system shutdown. The plugin removes
-`instances\{identifier}.json`, then exits with `STATUS_CONTROL_C_EXIT`
-(`0xC000013A`), the status the default handler gives. The same caveat applies
-to an app with its own console handler. This needs `tokio` 1.44 or newer.
+Ctrl+Break and console close. The plugin removes
+`%LOCALAPPDATA%\tauri-pilot\instances\{identifier}.json`, then exits with `STATUS_CONTROL_C_EXIT`
+(`0xC000013A`), the status the default handler gives. This needs `tokio` 1.44
+or newer.
+
+Windows calls console handlers last registered first and stops at the first
+one that claims the event, which the plugin's does. A handler your app
+registered before the plugin's `setup`, for example `ctrlc::set_handler` in
+`main`, is therefore not called in a debug build, so cleanup it does (killing
+a sidecar, say) does not run. A handler registered later runs first. A
+`tokio::signal` listener runs alongside the plugin's, but the exit cuts it
+short.
+
+System shutdown and logoff still leave the instance file: Windows delivers
+neither to a console handler once the process has loaded `user32.dll`, which
+every Tauri app has. The CLI skips an entry whose process is gone.
 
 Release builds never see any of this.
 

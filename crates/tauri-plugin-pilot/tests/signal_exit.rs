@@ -107,10 +107,12 @@ fn signal_ends_the_app(signum: i32, tag: &str) {
 
 /// Ctrl+Break must end a child app and remove its instance file (#229).
 ///
-/// Ctrl+Break stands for all four watched events. It is the only one that can
-/// be aimed at one process group: Ctrl+C with a group id is delivered to
-/// nobody, and with none it reaches this test binary and cargo too. Close and
-/// shutdown cannot be generated at all.
+/// Ctrl+Break is the only watched event that can be aimed at one process
+/// group: Ctrl+C with a group id is delivered to nobody, and with none it
+/// reaches this test binary and cargo too. It stands for Ctrl+C, which takes
+/// the same branch of tokio's handler. Console close takes the other one, where
+/// the handler parks so the watcher can run (the reason for the tokio 1.44
+/// floor), and cannot be generated at all: it is only checked by hand.
 #[cfg(windows)]
 #[test]
 fn ctrl_break_ends_the_app_and_removes_the_instance_file() {
@@ -120,14 +122,19 @@ fn ctrl_break_ends_the_app_and_removes_the_instance_file() {
     // A private LOCALAPPDATA of our own keeps the child out of the real
     // instance registry and makes its instance file predictable here.
     let dir = std::env::temp_dir().join(format!("tp229-{}", std::process::id()));
+    // An interrupted run whose pid this one drew may have left its instance
+    // file here, which would pass for the child's registration below.
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create private LOCALAPPDATA");
-    let identifier = "tp229-break";
+    // The pid again: the named pipe is machine-wide, unlike LOCALAPPDATA, so a
+    // fixed name collides with a second `cargo test` or a stranded child.
+    let identifier = format!("tp229-break-{}", std::process::id());
     let instance = dir
         .join("tauri-pilot")
         .join("instances")
         .join(format!("{identifier}.json"));
 
-    let mut child = spawn_child_app("LOCALAPPDATA", &dir, identifier);
+    let mut child = spawn_child_app("LOCALAPPDATA", &dir, &identifier);
     let ready = wait_for_ready(&mut child, EXIT_TIMEOUT);
     // The Windows bind runs on the server task (#115), after `build` returns,
     // so the ready line can come before the instance file does.

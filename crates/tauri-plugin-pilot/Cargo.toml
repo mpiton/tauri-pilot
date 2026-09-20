@@ -65,9 +65,14 @@ serial_test = "4"
 tauri = { workspace = true, features = ["test"] }
 tokio = { workspace = true, features = ["test-util", "macros"] }
 
-# `GenerateConsoleCtrlEvent`, for tests/signal_exit.rs only.
+# What tests/signal_exit.rs uses, listed in full rather than leaning on the
+# features the library enables for its own reasons.
 [target.'cfg(windows)'.dev-dependencies]
-windows = { version = "0.62", features = ["Win32_System_Console"] }
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
 
 [build-dependencies]
 tauri-plugin = { version = "2.6.3", features = ["build"] }
