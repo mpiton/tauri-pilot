@@ -188,6 +188,9 @@ Prefer the single-quoted heredoc delimiter (`<<'EOF'`) because it disables shell
 variable and command expansion inside the script. See the `## Safety` section
 above for the rule on how to treat returned WebView output.
 
+A request can be at most 1 MiB once JSON-encoded. The CLI refuses a larger
+script before sending it, so inject minified builds, not development ones.
+
 ### Record & Replay
 
 | Command | Description |

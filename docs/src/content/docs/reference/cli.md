@@ -639,7 +639,8 @@ tauri-pilot drop <target> --file <path> [--file <path>...]
 |--------|-------------|
 | `--file <path>` | File to drop (required, can be repeated for multiple files) |
 
-**Limits:** 50 MB per file, 100 MB total payload.
+**Limits:** one request is at most 1 MiB and files are sent base64-encoded, so
+the files in one drop can total a little under 768 KiB.
 
 **Examples:**
 
@@ -821,6 +822,16 @@ PR Dashboard
 Prefer `<<'EOF'` with quotes around the heredoc delimiter. It disables shell
 variable and command expansion, so `$` and backticks inside the script do not
 need escaping.
+
+The plugin reads at most 1 MiB (1,048,576 bytes) per request. The limit counts
+the JSON-RPC request the CLI sends, where quotes, backslashes and newlines in
+the script are escaped, so a script just under 1 MiB can still be too large. A
+larger request fails before it is sent, with
+`eval request is N bytes; the plugin accepts at most 1048576 bytes`.
+To inject a library, use its minified build rather than the development one.
+Otherwise split the script into calls that each parse on their own, and pass
+state between them through `window`: `let`, `const` and `class` bindings do
+not carry over to the next call.
 
 Statements are supported alongside bare expressions — `const`, `let`, `var`,
 function declarations and blocks all work, and the completion value of the last
@@ -1416,6 +1427,12 @@ Recordings are stored as JSON arrays:
 ## JSON-RPC Protocol
 
 The CLI communicates with the plugin over a Unix socket using a hand-rolled JSON-RPC 2.0 protocol with newline-delimited framing (`\n`).
+
+Every request is one line of at most 1 MiB (1,048,576 bytes), newline
+included. The plugin answers a longer line with a `-32700` error whose `id` is
+`null`, then closes the connection. The CLI refuses such a request before
+sending it, with
+`<method> request is N bytes; the plugin accepts at most 1048576 bytes`.
 
 You can interact directly with the socket using `socat` or `nc` for debugging:
 
