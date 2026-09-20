@@ -58,6 +58,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `logs` no longer prints a raw JavaScriptCore frame as the source. An
+  anonymous JSC frame is written `@url:line:col`, and the `@` that separates
+  the (empty) function name from the location survived into the output as
+  `(@tauri://localhost:1:143)`. Named frames keep their `fn@url:line:col`
+  form. [#232]
+
+- An uncaught error from eval'd code no longer reports its source as
+  `undefined:1:91`. WebKitGTK sets the error event's `filename` to the string
+  `"undefined"` there, which the old truthiness check let through; the file
+  part is now dropped and only `line:col` is reported. An event with no
+  location at all still has no source. [#232]
+
+- `fill` on a `<select>` with no matching option now names `fill` in the
+  error instead of `select:`. Both commands share the option matcher, which
+  hardcoded the prefix of a command the user may never have typed. [#232]
+
+- `network` reports `response_size: null` instead of `0` when the size is
+  unknown. The `fetch` wrapper reads `Content-Length`, which `tauri://`
+  responses do not expose, and turned that miss into a confident zero for
+  bodies the same request reported in full over XHR. Reading the real size
+  would mean cloning and buffering every response body, so an unknown size is
+  now reported as unknown. [#232]
+
 - Quitting the app with Ctrl+C, `kill`, or by closing the terminal running
   `cargo tauri dev` now removes `tauri-pilot-{identifier}.sock`. SIGINT,
   SIGTERM and SIGHUP end the process before Tauri emits `RunEvent::Exit`, so
@@ -1012,3 +1035,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#216]: https://github.com/mpiton/tauri-pilot/issues/216
 [#217]: https://github.com/mpiton/tauri-pilot/issues/217
 [#231]: https://github.com/mpiton/tauri-pilot/issues/231
+[#232]: https://github.com/mpiton/tauri-pilot/issues/232

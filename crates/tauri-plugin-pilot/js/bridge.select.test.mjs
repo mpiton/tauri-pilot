@@ -193,3 +193,26 @@ test("type rejects a select target", () => {
   );
   assert.equal(el.selectedIndex, -1);
 });
+
+test("an unmatched option names the command the user ran", () => {
+  // `fill` delegates to the same option matcher, so a hardcoded "select:"
+  // prefix pointed at a command the user never typed (#232).
+  const options = [
+    { value: "user", text: "User" },
+    { value: "admin", text: "Admin" },
+  ];
+
+  const filled = makeSelect(options);
+  const fillPilot = loadBridge({ queryResult: filled });
+  assert.throws(
+    () => fillPilot.fill({ selector: "select[name=role]", value: "nope" }),
+    /^Error: fill: no option matches "nope"$/,
+  );
+
+  const selected = makeSelect(options);
+  const selectPilot = loadBridge({ queryResult: selected });
+  assert.throws(
+    () => selectPilot.select({ selector: "select[name=role]", value: "nope" }),
+    /^Error: select: no option matches "nope"$/,
+  );
+});

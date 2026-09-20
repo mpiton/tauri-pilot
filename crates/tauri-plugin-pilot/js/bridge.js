@@ -302,9 +302,22 @@
         skipped++;
         continue;
       }
-      return line;
+      // An anonymous JSC frame is `@url:line:col`. The empty function name
+      // leaves a leading `@` that reads as noise in `logs` output.
+      return line.charAt(0) === '@' ? line.slice(1) : line;
     }
     return null;
+  }
+
+  // WebKitGTK reports the *string* "undefined" as `filename` for code that
+  // came from eval, so a truthiness check lets `undefined:1:91` through.
+  function eventSource(event) {
+    const name = event.filename;
+    const file = (typeof name === 'string' && name && name !== 'undefined') ? name + ':' : '';
+    const lineno = event.lineno || 0;
+    const colno = event.colno || 0;
+    if (!file && !lineno && !colno) return null;
+    return file + lineno + ':' + colno;
   }
 
   function stackSource(error) {
@@ -328,10 +341,7 @@
         // resource load (HTTP 404) raises a bare Event that does not bubble
         // to window, but guard anyway rather than logging an empty entry.
         if (!event || typeof event.message !== 'string') return;
-        const where = event.filename
-          ? event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0)
-          : null;
-        pushLog('error', [event.message], stackSource(event.error) || where);
+        pushLog('error', [event.message], stackSource(event.error) || eventSource(event));
       } catch (_) {
         if (event && typeof event.message === 'string') {
           pushLog('error', [event.message], null);
@@ -433,7 +443,11 @@
     return _originalFetch(input, init).then(function(response) {
       const duration_ms = Date.now() - timestamp;
       const status = response.status;
-      const responseSize = parseInt(response.headers.get("Content-Length") || "0", 10) || 0;
+      // tauri:// responses carry no Content-Length. Reading the real size
+      // would mean cloning and buffering every body, so report null — an
+      // unknown size, not a confident 0 (#232).
+      const contentLength = parseInt(response.headers.get("Content-Length"), 10);
+      const responseSize = Number.isFinite(contentLength) ? contentLength : null;
       const entry = {
         id: ++_netIdCounter,
         timestamp: timestamp,
@@ -943,7 +957,7 @@
     }
   }
 
-  function applySelectOption(el, wantedRaw) {
+  function applySelectOption(el, wantedRaw, command) {
     // Resolve the target option before mutating anything. Setting
     // `HTMLSelectElement.value` to a string that matches no option `value`
     // silently yields `value=""` / `selectedIndex=-1` per the DOM spec, so
@@ -956,7 +970,9 @@
       options.find((o) => o.value === wanted) ||
       options.find((o) => (o.text || "").trim() === wanted.trim());
     if (!matched) {
-      throw new Error("select: no option matches " + JSON.stringify(wantedRaw));
+      // `fill` delegates here too, so the prefix names the command the user
+      // actually ran rather than always "select".
+      throw new Error(command + ": no option matches " + JSON.stringify(wantedRaw));
     }
     const setter = nativeValueSetter(el);
     if (setter) {
@@ -972,7 +988,7 @@
     el.focus();
     let wroteViaExec = false;
     if (elementTag(el) === "select") {
-      applySelectOption(el, params.value);
+      applySelectOption(el, params.value, "fill");
     } else if (isValueElement(el)) {
       const setter = nativeValueSetter(el);
       if (setter) {
@@ -1035,7 +1051,7 @@
       const reported = (tag || String(el)).slice(0, 64);
       throw new Error("select requires a <select> element, got: " + reported);
     }
-    applySelectOption(el, params.value);
+    applySelectOption(el, params.value, "select");
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
   }

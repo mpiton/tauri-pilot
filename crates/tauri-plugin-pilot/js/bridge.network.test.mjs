@@ -218,3 +218,30 @@ test("an app URL whose path is exactly the IPC command is still recorded", async
   const urls = pilot.networkRequests().map((e) => e.url);
   assert.deepEqual(urls, [app]);
 });
+
+test("a fetch response with no Content-Length reports an unknown size, not 0", async () => {
+  // tauri:// responses expose no Content-Length. `|| 0` turned that miss into
+  // a confident zero while the same request over XHR reported the real size
+  // from responseText (#232).
+  const pilot = loadBridge({
+    fetchImpl() {
+      return Promise.resolve({ status: 200, headers: { get() { return null; } } });
+    },
+  });
+  await window.fetch("tauri://localhost/settings.html");
+
+  const [entry] = pilot.networkRequests();
+  assert.equal(entry.response_size, null);
+});
+
+test("a fetch response with Content-Length still reports the byte count", async () => {
+  const pilot = loadBridge({
+    fetchImpl() {
+      return Promise.resolve({ status: 200, headers: { get() { return "1380"; } } });
+    },
+  });
+  await window.fetch("https://app.example/api");
+
+  const [entry] = pilot.networkRequests();
+  assert.equal(entry.response_size, 1380);
+});
