@@ -214,10 +214,14 @@ pub(crate) async fn dispatch(
             data: None,
         }),
         "click" | "fill" | "type" | "select" | "check" | "scroll" | "drop" | "text" | "html"
-        | "value" | "attrs" | "eval" | "ipc" | "url" | "title" | "visible" | "count"
-        | "checked" => {
+        | "value" | "attrs" | "eval" | "ipc" | "title" | "visible" | "count" | "checked" => {
             handle_eval_method(method, params, engine, webviews, win, DEFAULT_TIMEOUT).await
         }
+        // `url` comes from the runtime, not the bridge: the webview knows its
+        // own URL, so the answer survives a page whose bridge cannot call back
+        // (a foreign origin the ACL denies, #153) — exactly when the caller is
+        // lost and needs it (#233). `windows.list` already reads it this way.
+        "url" => handle_url(webviews, win),
         "navigate" => handle_navigate(params, engine, webviews, win).await,
         // `drag` spends `steps × stepDelayMs + settleMs` in JS timers before it
         // resolves, so the channel timeout has to cover the gesture the caller
@@ -487,11 +491,7 @@ async fn handle_press(
     let _order_guard = PRESS_ORDER_LOCK.lock().await;
 
     // With no window to focus, the key would land in whatever app has focus.
-    let target = webviews.target(window).map_err(|e| RpcError {
-        code: -32603,
-        message: format!("cannot focus target window: {e}"),
-        data: None,
-    })?;
+    let target = target(webviews, window)?;
     if let Err(e) = target.focus() {
         if let Some(label) = window {
             // The caller explicitly targeted a window; silently
@@ -826,15 +826,36 @@ fn origin_moved_error(checked: &tauri::Url, now: &tauri::Url) -> RpcError {
 }
 
 /// Resolve the window a request targets.
+///
+/// A resolution failure carries the window list under `data.available_windows`,
+/// the way `screenshot_native` reports an unknown window id (#149), so a typo
+/// in `--window` does not cost a `windows` round-trip (#233).
 fn target<'a>(
     webviews: &'a dyn Webviews,
     window: Option<&str>,
 ) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
-    webviews.target(window).map_err(|e| RpcError {
-        code: -32603,
-        message: e,
-        data: None,
+    webviews.target(window).map_err(|e| {
+        let available = webviews.list();
+        RpcError {
+            code: -32603,
+            message: e,
+            data: (!available.is_empty())
+                .then(|| serde_json::json!({"available_windows": available})),
+        }
     })
+}
+
+/// Answer `url` from the runtime, without asking the page.
+fn handle_url(
+    webviews: &dyn Webviews,
+    window: Option<&str>,
+) -> Result<serde_json::Value, RpcError> {
+    let url = target(webviews, window)?.url().ok_or_else(|| RpcError {
+        code: -32603,
+        message: "the runtime cannot report the URL of the current page".to_owned(),
+        data: None,
+    })?;
+    Ok(serde_json::Value::String(url.to_string()))
 }
 
 /// Register a callback, then eval `script` wrapped in the ADR-001 pattern.
@@ -1096,7 +1117,7 @@ mod tests {
         .await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
-        assert!(err.message.contains("focus"));
+        assert_eq!(err.message, "Window 'settings' not found");
     }
 
     #[cfg(feature = "press")]
@@ -2247,6 +2268,56 @@ mod tests {
         assert_eq!(result["url"], json!("http://localhost/"));
         assert_eq!(result["ready"], json!(true));
         assert_eq!(result["plugin_version"], json!(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_url_answers_without_the_bridge() {
+        // No responder, so no callback ever lands: a bridge-routed `url` would
+        // time out here, the way it does on a foreign origin whose `__callback`
+        // the ACL denies (issue #233).
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", Some("https://example.com/page"));
+
+        let result = dispatch("url", None, &engine, &webviews, &Recorder::new())
+            .await
+            .expect("url is answered by the runtime");
+
+        assert_eq!(result, json!("https://example.com/page"));
+        assert!(
+            webviews.scripts().is_empty(),
+            "url must not touch the page: {:?}",
+            webviews.scripts()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_unknown_window_lists_the_available_labels() {
+        // An unknown `--window` label must name the valid ones, the way
+        // `screenshot_native` answers an unknown window id (issues #149, #233).
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::windows(&[
+            ("main", Some("https://app.test/")),
+            ("settings", Some("https://app.test/settings")),
+        ]);
+
+        let err = dispatch(
+            "url",
+            Some(&json!({"window": "nope"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("unknown label");
+
+        assert_eq!(err.message, "Window 'nope' not found");
+        let labels = err.data.expect("available windows")["available_windows"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|w| w["label"].as_str().expect("a label").to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["main", "settings"]);
     }
 
     const APP_PAGE: &str = "tauri://localhost/";

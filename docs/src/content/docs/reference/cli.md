@@ -33,7 +33,7 @@ tauri-pilot click @e3 --window main       # click in the main window
 TAURI_PILOT_WINDOW=settings tauri-pilot snapshot
 ```
 
-If `--window` is not specified, the CLI targets the `main` window and falls back to the first window by label. If the specified window label does not exist, the command exits with an error.
+If `--window` is not specified, the CLI targets the `main` window and falls back to the first window by label. If the specified window label does not exist, the command exits with an error that lists the labels the app does have, so a typo does not cost a `windows` call.
 
 ## Target Syntax
 
@@ -1007,6 +1007,10 @@ Get the current page URL.
 ```bash
 tauri-pilot url
 ```
+
+The plugin answers this one from the webview itself, not from the injected
+bridge, so it still works on a page the bridge cannot drive — a foreign origin
+missing from `remote.urls`, where every other command fails.
 
 **Example:**
 
