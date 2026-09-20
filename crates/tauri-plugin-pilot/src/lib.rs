@@ -175,7 +175,8 @@ fn re_raise(signum: i32) {
         // the next Ctrl+C or SIGTERM and only SIGKILL stops a hung run.
         libc::signal(signum, libc::SIG_DFL);
         // `cargo test` builds every mock app in one process, each with its own
-        // watcher: re-raising there kills the whole test run.
+        // watcher: re-raising there kills the whole test run. The exit status
+        // this skips needs a child-process harness to cover, see #230.
         if !cfg!(test) {
             libc::raise(signum);
         }

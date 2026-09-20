@@ -37,7 +37,7 @@ enigo = { version = "0.6.1", optional = true }
 libc = "0.2.189"
 # Signal watching is Unix-only for now (#217). Windows has the same gap by
 # another name: Ctrl+C leaves instances/{identifier}.json behind, since
-# RegistryGuard's drop also hangs off RunEvent::Exit.
+# RegistryGuard's drop also hangs off RunEvent::Exit. Tracked in #229.
 tokio = { workspace = true, features = ["signal"] }
 
 [target.'cfg(windows)'.dependencies]
