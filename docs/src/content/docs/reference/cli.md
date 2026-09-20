@@ -1455,7 +1455,7 @@ tauri-pilot run <scenario.toml> [OPTIONS]
 | `--junit <FILE>` | Write a JUnit XML report to this path |
 | `--no-fail-fast` | Keep running the remaining steps after a failure |
 | `--screenshots-dir <DIR>` | Directory for failure screenshots. Default `./tauri-pilot-failures`, resolved against the working directory |
-| `--json` | Print the report as JSON instead of the text summary (global flag) |
+| `--json` | Print the JSON report on stdout. The text summary goes to stderr either way (global flag) |
 
 A failed step captures a screenshot and reports where it landed as
 `screenshot`, or why it could not be written as `screenshot_error` — in
