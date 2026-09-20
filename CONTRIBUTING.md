@@ -34,8 +34,14 @@ The injected bridge is plain JS with its own `node:test` suite. Pass the glob:
 2. Write tests first (TDD: RED → GREEN → REFACTOR)
 3. Implement the minimum to pass tests
 4. Run `cargo test --workspace && node --test 'crates/tauri-plugin-pilot/js/*.test.mjs' && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --all-targets --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
-5. Commit with conventional messages: `feat(plugin): ...`, `fix(cli): ...`
-6. Open a PR against `main`
+5. If you touched a `Cargo.toml` or called a newly added API, check the floors
+   too: `cargo +nightly update -Z direct-minimal-versions && cargo check --workspace --all-targets --locked`.
+   CI runs this as the required `Direct minimal versions` job. When it fails,
+   raise the floor in `Cargo.toml` for the crate cargo or rustc names. It
+   rewrites the local (gitignored) `Cargo.lock`, so run `cargo update`
+   afterwards to get back to the newest versions.
+6. Commit with conventional messages: `feat(plugin): ...`, `fix(cli): ...`
+7. Open a PR against `main`
 
 ## Commit Scopes
 

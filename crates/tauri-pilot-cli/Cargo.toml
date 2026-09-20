@@ -24,9 +24,12 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "time"] }
 tracing.workspace = true
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4.3.4", features = ["derive", "env"] }
 anyhow = "1.0.104"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# 0.3.20 is the RUSTSEC-2025-0055 patch: below it, the `fmt` layer writes
+# recorded fields unescaped, so a path carrying ANSI escapes reaches the
+# operator's terminal raw.
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 base64 = "0.23.1"
 owo-colors = { version = "4.4.0", features = ["supports-colors"] }
 indicatif = "0.18"
