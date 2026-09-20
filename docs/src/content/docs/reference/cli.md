@@ -1114,13 +1114,13 @@ tauri-pilot logs [OPTIONS]
 ```bash
 # Show all captured logs
 $ tauri-pilot logs
-[14:32:01.123] log App initialized
-[14:32:01.456] warn Deprecated API call
-[14:32:02.789] ✗ error Failed to fetch: NetworkError
+[14:32:01.123Z] log App initialized
+[14:32:01.456Z] warn Deprecated API call
+[14:32:02.789Z] ✗ error Failed to fetch: NetworkError
 
 # Filter by level
 $ tauri-pilot logs --level error
-[14:32:02.789] ✗ error Failed to fetch: NetworkError
+[14:32:02.789Z] ✗ error Failed to fetch: NetworkError
 
 # Last 5 entries
 $ tauri-pilot logs --last 5
@@ -1187,9 +1187,9 @@ tauri-pilot network [OPTIONS]
 ```bash
 # Show all captured requests
 $ tauri-pilot network
-[14:32:01.123] GET  https://api.github.com/repos  200  125ms
-[14:32:02.456] POST https://api.github.com/graphql  200  340ms
-[14:32:03.789] GET  https://api.github.com/rate_limit  403  12ms
+[14:32:01.123Z] GET  https://api.github.com/repos  200  125ms
+[14:32:02.456Z] POST https://api.github.com/graphql  200  340ms
+[14:32:03.789Z] GET  https://api.github.com/rate_limit  403  12ms
 
 # Filter by URL
 $ tauri-pilot network --filter graphql

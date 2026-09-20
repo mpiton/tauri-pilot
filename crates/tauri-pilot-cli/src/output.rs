@@ -169,14 +169,18 @@ pub(crate) fn format_snapshot(value: &serde_json::Value) {
     }
 }
 
-/// Format a millisecond timestamp as `HH:MM:SS.mmm`.
+/// Format a millisecond timestamp as `HH:MM:SS.mmmZ`.
+///
+/// The epoch is UTC and no timezone is applied, so the `Z` suffix keeps the
+/// reading from passing as local time on a machine that is not on UTC.
 fn format_timestamp(timestamp: u64) -> String {
+    // 86_400 seconds a day: drop whole days, keep the time of day.
     let secs = (timestamp / 1000) % 86400;
     let ms = timestamp % 1000;
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;
-    format!("{h:02}:{m:02}:{s:02}.{ms:03}")
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}Z")
 }
 
 /// Format console log entries for human-readable display.
@@ -968,13 +972,22 @@ mod tests {
     }
 
     #[test]
+    fn test_format_timestamp_marks_utc() {
+        // 3_661_123 ms after the epoch is 01:01:01.123 UTC. The suffix says so:
+        // the clock reading is not the reader's local time.
+        assert_eq!(format_timestamp(3_661_123), "01:01:01.123Z");
+        // A whole day later is the same time of day, still marked.
+        assert_eq!(format_timestamp(3_661_123 + 86_400_000), "01:01:01.123Z");
+    }
+
+    #[test]
     fn test_format_logs_with_entries() {
         let logs = json!([
             {"id": 1, "timestamp": 3_661_123_u64, "level": "error", "args": ["fail"], "source": null},
             {"id": 2, "timestamp": 3_661_500_u64, "level": "info", "args": ["ok", 42], "source": null},
         ]);
         let output = format_logs(&logs);
-        assert!(output.contains("01:01:01.123"));
+        assert!(output.contains("01:01:01.123Z"));
         assert!(output.contains("fail"));
         assert!(output.contains("ok 42"));
     }
@@ -1016,7 +1029,7 @@ mod tests {
             {"id": 2, "timestamp": 3_661_500_u64, "method": "POST", "url": "/api/login", "status": 500, "duration_ms": 2000, "error": "Internal Server Error", "request_size": 42, "response_size": 128},
         ]);
         let output = format_network(&requests);
-        assert!(output.contains("01:01:01.123"));
+        assert!(output.contains("01:01:01.123Z"));
         assert!(output.contains("GET"));
         assert!(output.contains("/api/users"));
         assert!(output.contains("150ms"));

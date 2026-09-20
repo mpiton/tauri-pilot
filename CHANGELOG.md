@@ -50,6 +50,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script before it fails, so a `click` there no longer clicks. `navigate` still
   runs, since it is the way back to the app origin.
 
+- `logs` and `network` mark their timestamps with a `Z` suffix
+  (`[14:23:07.350Z]`). The clock reading has always been UTC, built from the
+  epoch without a timezone, so on a machine that is not on UTC it read as a
+  clock skew against `date`. `--json` output is unchanged and still carries the
+  raw epoch. [#231]
+
 ### Fixed
 
 - Quitting the app with Ctrl+C, `kill`, or by closing the terminal running
@@ -1005,3 +1011,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#215]: https://github.com/mpiton/tauri-pilot/issues/215
 [#216]: https://github.com/mpiton/tauri-pilot/issues/216
 [#217]: https://github.com/mpiton/tauri-pilot/issues/217
+[#231]: https://github.com/mpiton/tauri-pilot/issues/231
