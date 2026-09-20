@@ -52,14 +52,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Quitting the app with Ctrl+C or `kill` now removes
-  `tauri-pilot-{identifier}.sock`. SIGINT and SIGTERM end the process before
-  Tauri emits `RunEvent::Exit`, so the plugin's socket guard never dropped and
-  the file piled up in `$XDG_RUNTIME_DIR`, where `ls` or other tooling could
-  take it for a running app. Debug builds on Unix now watch both signals,
-  unlink the socket, then re-raise with the default handler so the app still
-  dies with its usual 128+n status. A crash or `SIGKILL` still leaves the file;
-  the next bind treats it as stale. [#217]
+- Quitting the app with Ctrl+C, `kill`, or by closing the terminal running
+  `cargo tauri dev` now removes `tauri-pilot-{identifier}.sock`. SIGINT,
+  SIGTERM and SIGHUP end the process before Tauri emits `RunEvent::Exit`, so
+  the plugin's socket guard never dropped and the file piled up in
+  `$XDG_RUNTIME_DIR`, where `ls` or other tooling could take it for a running
+  app. Debug builds on Unix now watch all three signals, unlink the socket,
+  then re-raise with the default handler so the app still dies with its usual
+  128+n status. A crash or `SIGKILL` still leaves the file; the next bind
+  treats it as stale. Windows is unchanged and still leaves
+  `instances/{identifier}.json` behind on Ctrl+C. [#217]
 
 - Failure screenshots from `run` and MCP `pilot.run` are now reported, and
   `pilot.run` no longer drops them wherever the server process happened to

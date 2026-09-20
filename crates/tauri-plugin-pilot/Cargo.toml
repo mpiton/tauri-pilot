@@ -35,7 +35,9 @@ enigo = { version = "0.6.1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"
-# Signal watching is Unix-only (#217); Windows has no socket file to unlink.
+# Signal watching is Unix-only for now (#217). Windows has the same gap by
+# another name: Ctrl+C leaves instances/{identifier}.json behind, since
+# RegistryGuard's drop also hangs off RunEvent::Exit.
 tokio = { workspace = true, features = ["signal"] }
 
 [target.'cfg(windows)'.dependencies]
