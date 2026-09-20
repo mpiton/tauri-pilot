@@ -1,4 +1,6 @@
+use clap::builder::TypedValueParser;
 use clap::{Parser, Subcommand};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -242,7 +244,30 @@ pub(crate) enum Command {
         /// Override `fail_fast` setting from the scenario file.
         #[arg(long)]
         no_fail_fast: bool,
+        /// Directory for failure screenshots.
+        #[arg(
+            long,
+            value_name = "DIR",
+            default_value = crate::scenario::DEFAULT_SCREENSHOT_DIR,
+            value_parser = clap::builder::OsStringValueParser::new().map(screenshots_dir_value)
+        )]
+        screenshots_dir: PathBuf,
     },
+}
+
+/// Maps a blank `--screenshots-dir` back to the default, keeps the rest.
+///
+/// `--screenshots-dir ''` used to reach `Path::new("").join(name)`, which is a
+/// bare filename and resolves against the working directory — the placement
+/// #215 removes. The value arrives as an `OsString` so a Unix path that is not
+/// UTF-8 still parses; only ASCII whitespace counts as blank, and those bytes
+/// never appear inside a multi-byte sequence.
+fn screenshots_dir_value(raw: OsString) -> PathBuf {
+    if raw.as_encoded_bytes().iter().all(u8::is_ascii_whitespace) {
+        PathBuf::from(crate::scenario::DEFAULT_SCREENSHOT_DIR)
+    } else {
+        PathBuf::from(raw)
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -394,6 +419,49 @@ mod tests {
                 depth: None,
             }
         ));
+    }
+
+    /// A `--screenshots-dir` that is empty or blank falls back to the default
+    /// instead of `Path::new("").join(name)`, a bare filename (#215).
+    #[test]
+    fn blank_screenshots_dir_falls_back_to_the_default() {
+        for raw in ["", "   "] {
+            let cli = Cli::parse_from(["tauri-pilot", "run", "s.toml", "--screenshots-dir", raw]);
+            let Command::Run {
+                screenshots_dir, ..
+            } = cli.command
+            else {
+                panic!("expected a Run command");
+            };
+            assert_eq!(
+                screenshots_dir,
+                PathBuf::from(crate::scenario::DEFAULT_SCREENSHOT_DIR),
+                "--screenshots-dir {raw:?} must fall back to the default"
+            );
+        }
+    }
+
+    /// Unix paths are bytes, not UTF-8, so the parser must keep them verbatim.
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_screenshots_dir_is_kept_verbatim() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let raw = std::ffi::OsStr::from_bytes(b"/tmp/shots-\xff");
+        let cli = Cli::parse_from([
+            std::ffi::OsStr::new("tauri-pilot"),
+            std::ffi::OsStr::new("run"),
+            std::ffi::OsStr::new("s.toml"),
+            std::ffi::OsStr::new("--screenshots-dir"),
+            raw,
+        ]);
+        let Command::Run {
+            screenshots_dir, ..
+        } = cli.command
+        else {
+            panic!("expected a Run command");
+        };
+        assert_eq!(screenshots_dir, PathBuf::from(raw));
     }
 
     #[test]

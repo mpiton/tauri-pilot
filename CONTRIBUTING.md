@@ -52,7 +52,9 @@ tauri-pilot offers two complementary automation modes:
 
 **`run` (TOML scenario)** — define steps declaratively with action types, assertions, and
 timeouts. Exits 0 on success, 1 on any failure. Supports JUnit XML output (`--junit`).
-Automatically captures failure screenshots to `./tauri-pilot-failures/`.
+Automatically captures failure screenshots to `./tauri-pilot-failures/`, or to
+`--screenshots-dir <DIR>`. The failed step's result carries the absolute path as
+`screenshot`, or the reason the shot could not be written as `screenshot_error`.
 
 **`record` / `replay` (JSON session)** — record interactions as they happen, then replay
 the timing-accurate sequence. Useful for smoke tests derived from manual exploration.

@@ -208,6 +208,7 @@ script before sending it, so inject minified builds, not development ones.
 | `run <scenario.toml>` | Execute declarative TOML scenario with assertions and timeouts |
 | `run <file> --no-fail-fast` | Continue running remaining steps after a failure |
 | `run <file> --junit <out.xml>` | Emit JUnit XML report for CI integration |
+| `run <file> --screenshots-dir <dir>` | Where failure screenshots go (default `./tauri-pilot-failures`) |
 
 A `storage-get` step (`action = "storage-get"`) requires `key` and always
 reads localStorage. There is no `session` field, so a sessionStorage key
@@ -220,7 +221,7 @@ action = "storage-get"
 key = "theme"
 ```
 
-Failure screenshots auto-saved to `./tauri-pilot-failures/`. Exit code 0 on success, 1 on any failure. Use `run` for structured CI tests; use `record`/`replay` for capture-replay of manual interactions. Over MCP, `pilot.run` takes `path` or inline `content` plus optional `fail_fast` and returns a JSON report (`ok`, counts, `summary`, `steps`) instead of JUnit XML. A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.
+Failure screenshots auto-saved to `./tauri-pilot-failures/`, or to `run --screenshots-dir <DIR>`. A failed step reports the absolute file as `screenshot`, or why it could not be written as `screenshot_error`, in `run --json`, in the MCP report and as `<system-out>` in the JUnit XML. Exit code 0 on success, 1 on any failure. Use `run` for structured CI tests; use `record`/`replay` for capture-replay of manual interactions. Over MCP, `pilot.run` takes `path` or inline `content` plus optional `fail_fast` and `screenshots_dir` (default: an owner-only per-user `tauri-pilot-failures-<uid>` directory under `$XDG_RUNTIME_DIR`, or under the system temp directory when that is unavailable) and returns a JSON report (`ok`, counts, `summary`, `steps`) instead of JUnit XML. A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.
 
 ## Global Flags
 

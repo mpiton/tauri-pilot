@@ -52,14 +52,17 @@ async fn main() -> Result<()> {
         ref scenario,
         ref junit,
         no_fail_fast,
+        ref screenshots_dir,
     } = args.command
     {
         return run_scenario_command(
             scenario,
             junit.as_deref(),
             no_fail_fast,
+            screenshots_dir,
             args.socket,
             args.window.as_deref(),
+            args.json,
         )
         .await;
     }
@@ -1448,8 +1451,10 @@ async fn run_scenario_command(
     scenario_path: &std::path::Path,
     junit: Option<&std::path::Path>,
     no_fail_fast: bool,
+    screenshots_dir: &std::path::Path,
     explicit_socket: Option<PathBuf>,
     window: Option<&str>,
+    json: bool,
 ) -> Result<()> {
     let loaded = scenario::load_scenario(scenario_path)?;
 
@@ -1471,13 +1476,31 @@ async fn run_scenario_command(
     };
 
     let fail_fast_override = if no_fail_fast { Some(false) } else { None };
-    let report = scenario::run_scenario(&mut client, &loaded, window, fail_fast_override).await?;
+    let report = scenario::run_scenario(
+        &mut client,
+        &loaded,
+        window,
+        fail_fast_override,
+        screenshots_dir,
+    )
+    .await?;
 
     scenario::print_report(&report);
 
+    // Before the JSON goes out: a reader that hangs up early (`run --json |
+    // head -1`) makes `write_stdout` exit with this status, so a failing
+    // scenario cannot come back as 0, and the XML is already on disk (#213).
     if let Some(xml_path) = junit {
         scenario::write_junit_xml(&report, xml_path)?;
         eprintln!("JUnit XML written to {}", xml_path.display());
+    }
+
+    if !report.all_passed() {
+        output::set_broken_pipe_exit(1);
+    }
+
+    if json {
+        output::format_json(&scenario::report_to_json(&report))?;
     }
 
     if !report.all_passed() {

@@ -34,6 +34,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failure screenshots from `run` and MCP `pilot.run` are now reported, and
+  `pilot.run` no longer drops them wherever the server process happened to
+  start. A failed step carries the absolute file in its result
+  (`screenshot`), or the reason it could not be written
+  (`screenshot_error`), in the MCP report, in `run --json` and as
+  `<system-out>` in the JUnit XML. `run --screenshots-dir <DIR>` and the
+  `screenshots_dir` argument on `pilot.run` pick the directory. `run` keeps
+  its `./tauri-pilot-failures` default, relative to the working directory;
+  `pilot.run` now defaults to an owner-only per-user
+  `tauri-pilot-failures-<uid>` directory under `$XDG_RUNTIME_DIR` or the
+  system temp directory, because the server's working directory belongs to
+  whichever client spawned it. The old `/tmp/tauri-pilot-failures` was
+  world-readable, and since the name was predictable in a world-writable
+  `/tmp`, any local user could pre-create it as a directory or a symlink and
+  collect or redirect the screenshots. `run --json` prints the report as
+  JSON; the flag was accepted and ignored before. [#215]
+
 - A request over the plugin's 1 MiB line limit, such as a React
   development build sent with `eval -`, now fails before it is sent, with
   `eval request is N bytes; the plugin accepts at most 1048576 bytes`.
@@ -956,3 +973,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#212]: https://github.com/mpiton/tauri-pilot/issues/212
 [#213]: https://github.com/mpiton/tauri-pilot/issues/213
 [#214]: https://github.com/mpiton/tauri-pilot/issues/214
+[#215]: https://github.com/mpiton/tauri-pilot/issues/215

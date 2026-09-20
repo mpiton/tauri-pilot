@@ -471,6 +471,11 @@ impl PilotMcpServer {
         let path = optional_string(&args, "path")?;
         let content = optional_string(&args, "content")?;
         let fail_fast = optional_bool(&args, "fail_fast")?;
+        // An empty string is "not set", not "the server's working directory":
+        // `Path::new("").join(name)` is a bare filename (#215).
+        let screenshots_dir = optional_string(&args, "screenshots_dir")?
+            .filter(|dir| !dir.trim().is_empty())
+            .map_or_else(default_screenshots_dir, PathBuf::from);
         let scenario = match (path, content) {
             (Some(_), Some(_)) => {
                 return Err(invalid_params(
@@ -498,7 +503,14 @@ impl PilotMcpServer {
             Err(err) => return Ok(tool_error(format!("{err:#}"))),
         };
         Ok(
-            match scenario::run_scenario(&mut client, &scenario, window.as_deref(), fail_fast).await
+            match scenario::run_scenario(
+                &mut client,
+                &scenario,
+                window.as_deref(),
+                fail_fast,
+                &screenshots_dir,
+            )
+            .await
             {
                 Ok(report) => tool_success(scenario::report_to_json(&report)),
                 Err(err) => tool_error(format!("{err:#}")),
@@ -1757,6 +1769,86 @@ fn replay_schema() -> Arc<JsonObject> {
     )
 }
 
+/// Failure screenshot directory used when the caller passes none.
+///
+/// The MCP server inherits its working directory from the client that spawned
+/// it, so the CLI default (`./tauri-pilot-failures`) would land anywhere.
+///
+/// A fixed name in a world-writable temp directory is no better: the first
+/// user to create it owns it and everyone else gets `EACCES`, and a local
+/// user can pre-create the predictable name as a symlink and collect
+/// screenshots that routinely show login screens. On Unix the directory is
+/// therefore per-user and created `0700`, under `$XDG_RUNTIME_DIR` when that
+/// is private, falling back to the temp directory. Windows needs none of this:
+/// `temp_dir()` is already per-user there.
+fn default_screenshots_dir() -> PathBuf {
+    #[cfg(unix)]
+    {
+        private_screenshots_dir()
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join(scenario::DEFAULT_SCREENSHOT_DIR)
+    }
+}
+
+/// Returns true if `path` is a directory owned by us with no group/world bits.
+#[cfg(unix)]
+fn is_private_dir(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // `symlink_metadata` so a symlink pointing at a private directory of ours
+    // is rejected instead of vouching for the link's target.
+    match std::fs::symlink_metadata(path) {
+        // SAFETY: getuid() has no preconditions.
+        Ok(m) => {
+            m.is_dir() && m.uid() == unsafe { libc::getuid() } && m.mode().trailing_zeros() >= 6
+        }
+        Err(_) => false,
+    }
+}
+
+/// Creates (or reuses) an owner-only per-user screenshot directory.
+///
+/// Returns the path even when it could not be secured, so the caller reports
+/// the write failure as `screenshot_error` rather than silently writing
+/// somewhere world-readable.
+#[cfg(unix)]
+fn private_screenshots_dir() -> PathBuf {
+    use std::os::unix::fs::DirBuilderExt;
+
+    // SAFETY: getuid() has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .filter(|dir| is_private_dir(dir))
+        .unwrap_or_else(std::env::temp_dir);
+
+    // The uid keeps two users on the same host off each other's directory;
+    // the pid suffix is the escape hatch when the plain name is squatted.
+    let names = [
+        format!("{}-{uid}", scenario::DEFAULT_SCREENSHOT_DIR),
+        format!(
+            "{}-{uid}-{}",
+            scenario::DEFAULT_SCREENSHOT_DIR,
+            std::process::id()
+        ),
+    ];
+    let mut last = base.join(names[0].as_str());
+    for name in &names {
+        let candidate = base.join(name.as_str());
+        let _ = std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&candidate);
+        if is_private_dir(&candidate) {
+            return candidate;
+        }
+        last = candidate;
+    }
+    last
+}
+
 fn run_schema() -> Arc<JsonObject> {
     object_schema(
         props([
@@ -1769,6 +1861,12 @@ fn run_schema() -> Arc<JsonObject> {
                 "fail_fast",
                 bool_prop(
                     "Override the scenario file fail_fast setting. When omitted, the TOML value is used (default true).",
+                ),
+            ),
+            (
+                "screenshots_dir",
+                string_prop(
+                    "Directory for failure screenshots. Defaults to an owner-only per-user tauri-pilot-failures directory under $XDG_RUNTIME_DIR or the system temp directory. Failed steps report the file as 'screenshot', or the reason as 'screenshot_error'.",
                 ),
             ),
         ]),
@@ -1948,13 +2046,13 @@ mod tests {
     }
 
     #[test]
-    fn run_schema_properties_include_path_content_fail_fast_and_window() {
+    fn run_schema_properties_include_run_options_and_window() {
         let schema = run_schema();
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
             .expect("schema has properties");
-        for key in ["path", "content", "fail_fast", "window"] {
+        for key in ["path", "content", "fail_fast", "screenshots_dir", "window"] {
             assert!(
                 properties.contains_key(key),
                 "run schema must advertise `{key}`"
@@ -3007,7 +3105,8 @@ target = "#btn"
             std::process::id()
         ));
         let methods = spawn_failing_click_server(&socket);
-        let report = call_run_two_clicks(&socket, None).await;
+        let shots = tempfile::tempdir().expect("temp dir");
+        let report = call_run_two_clicks(&socket, None, Some(shots.path())).await;
         assert_eq!(report["ok"], false);
         assert_eq!(report["steps"][0]["status"], "failed");
         assert_eq!(report["steps"][1]["status"], "skipped");
@@ -3016,7 +3115,6 @@ target = "#btn"
             recorded.iter().filter(|method| *method == "click").count(),
             1
         );
-        let _ = std::fs::remove_dir("tauri-pilot-failures");
     }
 
     #[tokio::test]
@@ -3027,7 +3125,8 @@ target = "#btn"
             std::process::id()
         ));
         let methods = spawn_failing_click_server(&socket);
-        let report = call_run_two_clicks(&socket, Some(false)).await;
+        let shots = tempfile::tempdir().expect("temp dir");
+        let report = call_run_two_clicks(&socket, Some(false), Some(shots.path())).await;
         assert_eq!(report["ok"], false);
         assert_eq!(report["passed"], 1);
         assert_eq!(report["failed"], 1);
@@ -3039,11 +3138,60 @@ target = "#btn"
             recorded.iter().filter(|method| *method == "click").count(),
             2
         );
-        let _ = std::fs::remove_dir("tauri-pilot-failures");
     }
 
+    #[tokio::test]
     #[cfg(unix)]
-    async fn call_run_two_clicks(socket: &Path, fail_fast: Option<bool>) -> Value {
+    async fn run_tool_reports_failure_screenshot_path() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-shot-{}.sock",
+            std::process::id()
+        ));
+        let _methods = spawn_failing_click_server(&socket);
+        let shots = tempfile::tempdir().expect("temp dir");
+        let report = call_run_two_clicks(&socket, None, Some(shots.path())).await;
+        let saved = report["steps"][0]["screenshot"]
+            .as_str()
+            .expect("failed step reports a screenshot path");
+        assert!(
+            Path::new(saved).starts_with(shots.path()),
+            "screenshot {saved} is not under the requested directory"
+        );
+        assert!(Path::new(saved).is_file(), "screenshot {saved} is missing");
+        assert!(report["steps"][0].get("screenshot_error").is_none());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_reports_why_screenshot_was_not_saved() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-noshot-{}.sock",
+            std::process::id()
+        ));
+        let _methods = spawn_failing_click_server(&socket);
+        let dir = tempfile::tempdir().expect("temp dir");
+        // A regular file where the directory should be: create_dir_all fails.
+        let blocked = dir.path().join("blocked");
+        std::fs::write(&blocked, b"not a directory").expect("write blocker");
+        let report = call_run_two_clicks(&socket, None, Some(blocked.as_path())).await;
+        let reason = report["steps"][0]["screenshot_error"]
+            .as_str()
+            .expect("failed step reports why the screenshot is missing");
+        assert!(
+            reason.contains("failed to save screenshot to"),
+            "unexpected reason: {reason}"
+        );
+        assert!(report["steps"][0].get("screenshot").is_none());
+    }
+
+    /// Calls `pilot.run` on a two-click scenario, omitting `screenshots_dir`
+    /// when it is `None` so the server default is exercised too.
+    #[cfg(unix)]
+    async fn call_run_two_clicks(
+        socket: &Path,
+        fail_fast: Option<bool>,
+        screenshots_dir: Option<&Path>,
+    ) -> Value {
         let pilot = PilotMcpServer::new(Some(socket.to_path_buf()), None);
         let mut args = Map::new();
         args.insert(
@@ -3066,6 +3214,12 @@ target = "#btn"
         if let Some(fail_fast) = fail_fast {
             args.insert("fail_fast".to_owned(), json!(fail_fast));
         }
+        if let Some(dir) = screenshots_dir {
+            args.insert(
+                "screenshots_dir".to_owned(),
+                json!(dir.display().to_string()),
+            );
+        }
         let result = pilot
             .call_tool_by_name("run", args)
             .await
@@ -3080,8 +3234,25 @@ target = "#btn"
             .expect("structured result")
     }
 
+    /// Mock whose first `click` fails and whose `screenshot` succeeds.
     #[cfg(unix)]
     fn spawn_failing_click_server(socket: &Path) -> Arc<std::sync::Mutex<Vec<String>>> {
+        spawn_failing_click_server_with(socket, ScreenshotMock::Png)
+    }
+
+    /// How the mock answers the failure-capture `screenshot` call.
+    #[cfg(unix)]
+    #[derive(Copy, Clone)]
+    enum ScreenshotMock {
+        Png,
+        RpcError,
+    }
+
+    #[cfg(unix)]
+    fn spawn_failing_click_server_with(
+        socket: &Path,
+        screenshot: ScreenshotMock,
+    ) -> Arc<std::sync::Mutex<Vec<String>>> {
         let _ = std::fs::remove_file(socket);
         let listener = UnixListener::bind(socket).expect("bind mock socket");
         let methods = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -3111,11 +3282,20 @@ target = "#btn"
                             Response::success(request.id, json!({"ok": true}))
                         }
                     }
-                    "screenshot" => Response::error(
-                        serde_json::Value::Number(request.id.into()),
-                        -32_000,
-                        "screenshot failed",
-                    ),
+                    "screenshot" => match screenshot {
+                        // 1x1 transparent PNG, enough for the save path to run.
+                        ScreenshotMock::Png => Response::success(
+                            request.id,
+                            json!(
+                                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                            ),
+                        ),
+                        ScreenshotMock::RpcError => Response::error(
+                            serde_json::Value::Number(request.id.into()),
+                            -32_000,
+                            "window is gone",
+                        ),
+                    },
                     _ => Response::error(
                         serde_json::Value::Number(request.id.into()),
                         -32_601,
@@ -3130,6 +3310,54 @@ target = "#btn"
             }
         });
         methods
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_reports_the_rpc_error_that_blocked_the_screenshot() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-shot-rpc-{}.sock",
+            std::process::id()
+        ));
+        let _methods = spawn_failing_click_server_with(&socket, ScreenshotMock::RpcError);
+        let shots = tempfile::tempdir().expect("temp dir");
+        let report = call_run_two_clicks(&socket, None, Some(shots.path())).await;
+        let reason = report["steps"][0]["screenshot_error"]
+            .as_str()
+            .expect("failed step reports why the screenshot is missing");
+        assert!(
+            reason.contains("window is gone"),
+            "unexpected reason: {reason}"
+        );
+        assert!(report["steps"][0].get("screenshot").is_none());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn run_tool_without_screenshots_dir_uses_the_private_default() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-run-shot-default-{}.sock",
+            std::process::id()
+        ));
+        let _methods = spawn_failing_click_server(&socket);
+        let report = call_run_two_clicks(&socket, None, None).await;
+        let saved = report["steps"][0]["screenshot"]
+            .as_str()
+            .expect("failed step reports a screenshot path");
+        let expected = default_screenshots_dir();
+        assert!(
+            Path::new(saved).starts_with(&expected),
+            "screenshot {saved} is not under the default {}",
+            expected.display()
+        );
+        assert!(Path::new(saved).is_file(), "screenshot {saved} is missing");
+        assert!(
+            is_private_dir(&expected),
+            "default screenshot directory {} is not owner-only",
+            expected.display()
+        );
+        // The default outlives the test, so only the PNG goes.
+        let _ = std::fs::remove_file(saved);
     }
 
     #[cfg(unix)]

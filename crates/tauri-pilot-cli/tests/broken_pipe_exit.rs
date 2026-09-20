@@ -8,10 +8,8 @@ mod common;
 
 // Rust guideline compliant 2026-08-29
 use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
 
-use common::SERVER_DONE_TIMEOUT;
+use common::{SERVER_DONE_TIMEOUT, closed_pipe, wait_bounded};
 
 /// Runs `tauri-pilot <args>` against a mock server answering `result`, with
 /// stdout wired to `stdout`.
@@ -22,7 +20,7 @@ use common::SERVER_DONE_TIMEOUT;
 fn run(args: &[&str], result: serde_json::Value, stdout: Stdio) -> Output {
     let socket = common::unique_socket_path("epipe");
     let done = common::spawn_mock_server(&socket, result);
-    let mut child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
+    let child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
         .arg("--socket")
         .arg(&socket)
         .args(args)
@@ -30,17 +28,7 @@ fn run(args: &[&str], result: serde_json::Value, stdout: Stdio) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn tauri-pilot");
-
-    let deadline = Instant::now() + SERVER_DONE_TIMEOUT;
-    while child.try_wait().expect("poll tauri-pilot").is_none() {
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = std::fs::remove_file(&socket);
-            panic!("tauri-pilot did not exit within {SERVER_DONE_TIMEOUT:?}");
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-    let output = child.wait_with_output().expect("wait for tauri-pilot");
+    let output = wait_bounded(child);
 
     // Disconnected means the server panicked; timeout means the binary never
     // connected.
@@ -53,14 +41,6 @@ fn run(args: &[&str], result: serde_json::Value, stdout: Stdio) -> Output {
         );
     }
     output
-}
-
-/// Returns a stdout whose reader is already gone, so the first write fails
-/// with `EPIPE`.
-fn closed_pipe() -> Stdio {
-    let (reader, writer) = std::io::pipe().expect("create pipe");
-    drop(reader);
-    writer.into()
 }
 
 fn snapshot_result() -> serde_json::Value {

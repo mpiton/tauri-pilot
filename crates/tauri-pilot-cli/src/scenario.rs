@@ -90,10 +90,21 @@ impl Step {
 
 #[derive(Debug)]
 pub(crate) enum StepOutcome {
-    Passed { duration: Duration },
-    Failed { duration: Duration, message: String },
+    Passed {
+        duration: Duration,
+    },
+    Failed {
+        duration: Duration,
+        message: String,
+        /// A screenshot is only attempted when a step fails, so it lives in
+        /// this variant rather than beside it as an `Option`.
+        screenshot: ScreenshotOutcome,
+    },
     Skipped,
 }
+
+/// Where the failure screenshot landed, or why it could not be saved.
+pub(crate) type ScreenshotOutcome = Result<PathBuf, String>;
 
 #[derive(Debug)]
 pub(crate) struct StepResult {
@@ -151,6 +162,13 @@ impl ScenarioReport {
 
 // ── Main runner ───────────────────────────────────────────────────────────────
 
+/// Directory failure screenshots go to when the caller picks none.
+///
+/// Relative, so the CLI writes next to the process working directory. The MCP
+/// server passes an absolute path instead: its working directory belongs to
+/// whichever client spawned it.
+pub(crate) const DEFAULT_SCREENSHOT_DIR: &str = "tauri-pilot-failures";
+
 pub(crate) fn load_scenario(path: &Path) -> Result<Scenario> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read scenario file: {}", path.display()))?;
@@ -167,8 +185,15 @@ pub(crate) async fn run_scenario(
     scenario: &Scenario,
     window: Option<&str>,
     fail_fast_override: Option<bool>,
+    screenshots_dir: &Path,
 ) -> Result<ScenarioReport> {
-    let steps = run_scenario_steps(client, scenario, window, fail_fast_override);
+    let steps = run_scenario_steps(
+        client,
+        scenario,
+        window,
+        fail_fast_override,
+        screenshots_dir,
+    );
     match scenario.scenario.global_timeout_ms {
         Some(ms) => tokio::time::timeout(Duration::from_millis(ms), steps)
             .await
@@ -182,6 +207,7 @@ async fn run_scenario_steps(
     scenario: &Scenario,
     window: Option<&str>,
     fail_fast_override: Option<bool>,
+    screenshots_dir: &Path,
 ) -> Result<ScenarioReport> {
     let meta = &scenario.scenario;
     let name = meta
@@ -218,11 +244,18 @@ async fn run_scenario_steps(
                 let dur = step_start.elapsed();
                 let msg = format!("{e:#}");
                 print_step_fail(idx, scenario.step.len(), &step_name, &msg);
-                let _ = take_failure_screenshot(client, &step_name, window).await;
+                let shot = take_failure_screenshot(client, &step_name, window, screenshots_dir)
+                    .await
+                    .map_err(|err| format!("{err:#}"));
+                if let Err(ref why) = shot {
+                    let label = crate::style::dim("failure screenshot not saved:");
+                    eprintln!("  {label} {why}");
+                }
                 failed = true;
                 StepOutcome::Failed {
                     duration: dur,
                     message: msg,
+                    screenshot: shot,
                 }
             }
         };
@@ -522,14 +555,18 @@ fn scroll_step_target(step: &Step) -> Result<Option<String>> {
 
 // ── Screenshot on failure ─────────────────────────────────────────────────────
 
+/// Capture the current window and return the absolute path it was written to.
+///
+/// # Errors
+///
+/// Returns an error when `dir` cannot be made absolute, the screenshot RPC
+/// fails, or `dir` cannot be written.
 async fn take_failure_screenshot(
     client: &mut Client,
     step_name: &str,
     window: Option<&str>,
-) -> Result<()> {
-    let dir = Path::new("tauri-pilot-failures");
-    std::fs::create_dir_all(dir)?;
-
+    dir: &Path,
+) -> Result<PathBuf> {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
@@ -546,14 +583,20 @@ async fn take_failure_screenshot(
         .collect();
     let filename = format!("{safe_name}-{ts}.png");
     let path = dir.join(filename.as_str());
+    // Propagated, not swallowed: the report, the JUnit `<system-out>` and the
+    // docs all promise an absolute path, so a relative fallback would hand a
+    // consumer a path it cannot open — #215 through the back door.
+    let path = std::path::absolute(&path)
+        .with_context(|| format!("failed to resolve {}", path.display()))?;
 
     let result = client
         .call("screenshot", with_window(Some(json!({})), window))
         .await?;
-    save_screenshot_result(&result, &path)?;
+    save_screenshot_result(&result, &path)
+        .with_context(|| format!("failed to save screenshot to {}", path.display()))?;
     let arrow = crate::style::dim("failure screenshot →");
     eprintln!("  {arrow} {}", path.display());
-    Ok(())
+    Ok(path)
 }
 
 fn save_screenshot_result(result: &Value, path: &Path) -> Result<()> {
@@ -621,12 +664,23 @@ fn step_result_to_json(result: &StepResult) -> Value {
             "status": "passed",
             "duration_ms": duration_millis(*duration),
         }),
-        StepOutcome::Failed { duration, message } => json!({
-            "name": result.name,
-            "status": "failed",
-            "duration_ms": duration_millis(*duration),
-            "message": message,
-        }),
+        StepOutcome::Failed {
+            duration,
+            message,
+            screenshot,
+        } => {
+            let mut value = json!({
+                "name": result.name,
+                "status": "failed",
+                "duration_ms": duration_millis(*duration),
+                "message": message,
+            });
+            match screenshot {
+                Ok(path) => value["screenshot"] = json!(path.display().to_string()),
+                Err(err) => value["screenshot_error"] = json!(err),
+            }
+            value
+        }
         StepOutcome::Skipped => json!({
             "name": result.name,
             "status": "skipped",
@@ -639,6 +693,20 @@ fn duration_millis(duration: Duration) -> u64 {
 }
 
 // ── JUnit XML output ──────────────────────────────────────────────────────────
+
+fn screenshot_note(result: &StepResult) -> Option<String> {
+    match &result.outcome {
+        StepOutcome::Failed {
+            screenshot: Ok(path),
+            ..
+        } => Some(format!("failure screenshot: {}", path.display())),
+        StepOutcome::Failed {
+            screenshot: Err(err),
+            ..
+        } => Some(format!("failure screenshot not saved: {err}")),
+        StepOutcome::Passed { .. } | StepOutcome::Skipped => None,
+    }
+}
 
 pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()> {
     use quick_xml::Writer;
@@ -703,6 +771,12 @@ pub(crate) fn write_junit_xml(report: &ScenarioReport, path: &Path) -> Result<()
             }
         }
 
+        if let Some(note) = screenshot_note(result) {
+            writer.write_event(Event::Start(BytesStart::new("system-out")))?;
+            writer.write_event(Event::Text(BytesText::new(&note)))?;
+            writer.write_event(Event::End(BytesEnd::new("system-out")))?;
+        }
+
         writer.write_event(Event::End(BytesEnd::new("testcase")))?;
     }
 
@@ -744,6 +818,19 @@ mod tests {
         }
     }
 
+    /// A failed step with `screenshot` for fixtures that assert something else.
+    fn failed(ms: u64, message: &str) -> StepOutcome {
+        failed_with(ms, message, Ok(PathBuf::from("/tmp/shots/step.png")))
+    }
+
+    fn failed_with(ms: u64, message: &str, screenshot: ScreenshotOutcome) -> StepOutcome {
+        StepOutcome::Failed {
+            duration: Duration::from_millis(ms),
+            message: message.to_owned(),
+            screenshot,
+        }
+    }
+
     #[test]
     fn test_scenario_report_counts() {
         let report = make_report(vec![
@@ -753,13 +840,7 @@ mod tests {
                     duration: Duration::from_millis(100),
                 },
             ),
-            (
-                "step-2",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(50),
-                    message: "oops".into(),
-                },
-            ),
+            ("step-2", failed(50, "oops")),
             ("step-3", StepOutcome::Skipped),
         ]);
         assert_eq!(report.passed(), 1);
@@ -818,13 +899,7 @@ target = "#btn"
                     duration: Duration::from_millis(100),
                 },
             ),
-            (
-                "step-2",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(50),
-                    message: "oops".into(),
-                },
-            ),
+            ("step-2", failed(50, "oops")),
             ("step-3", StepOutcome::Skipped),
         ]);
         let value = report_to_json(&report);
@@ -842,6 +917,70 @@ target = "#btn"
         assert_eq!(value["steps"][1]["message"], "oops");
         assert_eq!(value["steps"][2]["status"], "skipped");
         assert!(value["steps"][2].get("duration_ms").is_none());
+    }
+
+    #[test]
+    fn report_to_json_carries_screenshot_path_and_reason() {
+        let report = make_report(vec![
+            (
+                "saved",
+                failed_with(10, "boom", Ok(PathBuf::from("/tmp/shots/saved-1.png"))),
+            ),
+            (
+                "not-saved",
+                failed_with(10, "boom", Err("permission denied".to_owned())),
+            ),
+        ]);
+
+        let value = report_to_json(&report);
+        assert_eq!(value["steps"][0]["screenshot"], "/tmp/shots/saved-1.png");
+        assert!(value["steps"][0].get("screenshot_error").is_none());
+        assert_eq!(value["steps"][1]["screenshot_error"], "permission denied");
+        assert!(value["steps"][1].get("screenshot").is_none());
+    }
+
+    #[test]
+    fn junit_xml_carries_screenshot_path_and_reason() {
+        let report = make_report(vec![
+            (
+                "saved",
+                failed_with(10, "boom", Ok(PathBuf::from("/tmp/shots/saved-1.png"))),
+            ),
+            (
+                "not-saved",
+                failed_with(10, "boom", Err("permission denied".to_owned())),
+            ),
+        ]);
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("results.xml");
+        write_junit_xml(&report, &path).expect("write junit xml");
+        let xml = std::fs::read_to_string(&path).expect("read xml");
+        assert!(
+            xml.contains("<system-out>failure screenshot: /tmp/shots/saved-1.png</system-out>"),
+            "missing screenshot path: {xml}"
+        );
+        assert!(
+            xml.contains(
+                "<system-out>failure screenshot not saved: permission denied</system-out>"
+            ),
+            "missing screenshot reason: {xml}"
+        );
+    }
+
+    #[test]
+    fn junit_xml_omits_system_out_without_screenshot() {
+        let report = make_report(vec![(
+            "step-1",
+            StepOutcome::Passed {
+                duration: Duration::from_millis(10),
+            },
+        )]);
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("results.xml");
+        write_junit_xml(&report, &path).expect("write junit xml");
+        let xml = std::fs::read_to_string(&path).expect("read xml");
+        assert!(!xml.contains("system-out"), "unexpected system-out: {xml}");
     }
 
     #[test]
@@ -1083,13 +1222,7 @@ action = "ping"
                     duration: Duration::from_millis(10),
                 },
             ),
-            (
-                "step-2",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(20),
-                    message: "oops & done".into(),
-                },
-            ),
+            ("step-2", failed(20, "oops & done")),
             ("step-3", StepOutcome::Skipped),
         ]);
         let dir = tempfile::tempdir().expect("temp dir");

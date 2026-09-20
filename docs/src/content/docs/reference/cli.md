@@ -112,7 +112,16 @@ The MCP server exposes tools for the CLI's app-facing commands, including
 
 `pilot.run` executes a declarative TOML scenario. Pass `path` to a `.toml` file
 or inline `content` (not both), optionally set `fail_fast` to override the file,
-and read the JSON report (`ok`, counts, `summary`, `steps`). A finished run
+and read the JSON report (`ok`, counts, `summary`, `steps`). A failed step also
+carries the absolute failure screenshot as `screenshot`, or the reason it could
+not be written as `screenshot_error`. Unless `screenshots_dir` says otherwise,
+screenshots go to an owner-only (`0700`) `tauri-pilot-failures-<uid>` directory
+under `$XDG_RUNTIME_DIR`, or under the system temp directory when
+`$XDG_RUNTIME_DIR` is unset or not private; on Windows `temp_dir()` is already
+per-user, so the plain `tauri-pilot-failures` name is used there. The MCP
+server's working directory belongs to whichever client spawned it, so it is not
+a useful default, and a shared `/tmp` path would hand every other user on the
+host whatever the screenshots happen to show. A finished run
 including failed steps is a successful tool result with `ok` false; only parse,
 I/O, connect, and timeout failures are tool errors. The tool also returns
 `INVALID_PARAMS` for an empty `[[step]]` list, `eval`/`drop`/`ipc` steps unless
@@ -1421,6 +1430,48 @@ Recordings are stored as JSON arrays:
 :::note
 `replay` sends recorded actions over the socket for execution. `--export sh` is fully local — it generates a shell script without connecting to the plugin.
 :::
+
+---
+
+### `run`
+
+Execute a declarative TOML scenario — steps with actions, assertions and
+timeouts. Exits 0 when every step passes, 1 on any failure.
+
+```bash
+tauri-pilot run <scenario.toml> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `<scenario>` | Path to the scenario TOML file |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--junit <FILE>` | Write a JUnit XML report to this path |
+| `--no-fail-fast` | Keep running the remaining steps after a failure |
+| `--screenshots-dir <DIR>` | Directory for failure screenshots. Default `./tauri-pilot-failures`, resolved against the working directory |
+| `--json` | Print the JSON report on stdout. The text summary goes to stderr either way (global flag) |
+
+A failed step captures a screenshot and reports where it landed as
+`screenshot`, or why it could not be written as `screenshot_error` — in
+`run --json`, and as `<system-out>` in the JUnit XML. The reported path is
+always absolute, so a CI job can upload it from any directory.
+
+**Example:**
+
+```bash
+tauri-pilot run docs/examples/login-flow.toml
+tauri-pilot run scenario.toml --no-fail-fast --junit results.xml
+tauri-pilot run scenario.toml --json --screenshots-dir /tmp/shots
+```
+
+The same scenarios run over MCP through `pilot.run`, which returns the JSON
+report instead of JUnit XML — see [`mcp`](#mcp).
 
 ---
 
