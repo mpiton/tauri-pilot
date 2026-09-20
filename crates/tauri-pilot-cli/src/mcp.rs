@@ -185,7 +185,16 @@ impl PilotMcpServer {
             }
             "check" => self.target_call("check", &args, window).await,
             "scroll" => {
-                let target = optional_scroll_target(&args)?;
+                // `additionalProperties: false` is advertised in `tools/list`
+                // but never enforced here, so a client still sending the old
+                // `{"ref": "e12"}` would scroll the page instead of the
+                // element. Fail loudly rather than silently (#216).
+                if args.contains_key("ref") {
+                    return Err(invalid_params(
+                        "scroll no longer takes 'ref'; pass the element through 'target' (a bare 'e12' is accepted)",
+                    ));
+                }
+                let target = optional_string(&args, "target")?;
                 self.call_app_tool(
                     "scroll",
                     Some(build_scroll_params(
@@ -834,7 +843,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "click",
-            description: "Click an element target by ref, selector, or coordinates.",
+            description: "Click an element.",
             schema: target_schema,
             read_only: false,
             destructive: false,
@@ -1002,7 +1011,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "scroll",
-            description: "Scroll the page or an element (ref, CSS selector, or coordinates).",
+            description: "Scroll the page or an element.",
             schema: scroll_schema,
             read_only: false,
             destructive: false,
@@ -1329,18 +1338,6 @@ fn optional_bool(args: &JsonObject, name: &str) -> Result<Option<bool>, McpError
     }
 }
 
-fn optional_scroll_target(args: &JsonObject) -> Result<Option<String>, McpError> {
-    let target = optional_string(args, "target")?;
-    let r#ref = optional_string(args, "ref")?;
-    match (target, r#ref) {
-        (Some(_), Some(_)) => Err(invalid_params(
-            "scroll accepts either 'target' or 'ref', not both",
-        )),
-        (Some(value), None) | (None, Some(value)) => Ok(Some(value)),
-        (None, None) => Ok(None),
-    }
-}
-
 fn required_string_array(args: &JsonObject, name: &str) -> Result<Vec<String>, McpError> {
     let values = args
         .get(name)
@@ -1393,10 +1390,7 @@ fn global_empty_schema() -> Arc<JsonObject> {
 
 fn target_schema() -> Arc<JsonObject> {
     object_schema(
-        props([(
-            "target",
-            string_prop("Element ref, CSS selector, or x,y coordinates."),
-        )]),
+        props([("target", target_prop("Element to act on"))]),
         &["target"],
     )
 }
@@ -1405,7 +1399,7 @@ fn optional_target_schema() -> Arc<JsonObject> {
     object_schema(
         props([(
             "target",
-            string_prop("Optional element ref, CSS selector, or x,y coordinates."),
+            target_prop_no_coords("Optional element to act on"),
         )]),
         &[],
     )
@@ -1421,10 +1415,7 @@ fn expected_schema() -> Arc<JsonObject> {
 fn expected_target_schema() -> Arc<JsonObject> {
     object_schema(
         props([
-            (
-                "target",
-                string_prop("Element ref, CSS selector, or x,y coordinates."),
-            ),
+            ("target", target_prop("Element to act on")),
             ("expected", string_prop("Expected value or substring.")),
         ]),
         &["target", "expected"],
@@ -1472,10 +1463,7 @@ fn diff_schema() -> Arc<JsonObject> {
 fn fill_schema() -> Arc<JsonObject> {
     object_schema(
         props([
-            (
-                "target",
-                string_prop("Element ref, CSS selector, or x,y coordinates."),
-            ),
+            ("target", target_prop("Element to act on")),
             ("value", string_prop("Value to set.")),
         ]),
         &["target", "value"],
@@ -1485,10 +1473,7 @@ fn fill_schema() -> Arc<JsonObject> {
 fn type_schema() -> Arc<JsonObject> {
     object_schema(
         props([
-            (
-                "target",
-                string_prop("Element ref, CSS selector, or x,y coordinates."),
-            ),
+            ("target", target_prop("Element to act on")),
             ("text", string_prop("Text to type.")),
         ]),
         &["target", "text"],
@@ -1515,15 +1500,7 @@ fn scroll_schema() -> Arc<JsonObject> {
             ("amount", integer_prop("Pixel amount to scroll.")),
             (
                 "target",
-                string_prop(
-                    "Optional element `@ref`, CSS selector, or x,y coordinates. Defaults to the page.",
-                ),
-            ),
-            (
-                "ref",
-                string_prop(
-                    "Alias of target. Snapshot refs accept e12 or @e12; selectors and coordinates also work.",
-                ),
+                target_prop("Optional element to scroll, defaulting to the page"),
             ),
         ]),
         &[],
@@ -1533,14 +1510,8 @@ fn scroll_schema() -> Arc<JsonObject> {
 fn drag_schema() -> Arc<JsonObject> {
     object_schema(
         props([
-            (
-                "source",
-                string_prop("Source element ref, selector, or coordinates."),
-            ),
-            (
-                "target",
-                string_prop("Destination element ref, selector, or coordinates."),
-            ),
+            ("source", target_prop("Element to drag")),
+            ("target", target_prop("Element to drop onto")),
             (
                 "offset",
                 any_prop("Optional offset object such as {\"x\": 0, \"y\": 100}."),
@@ -1567,10 +1538,7 @@ fn drag_schema() -> Arc<JsonObject> {
 fn drop_schema() -> Arc<JsonObject> {
     object_schema(
         props([
-            (
-                "target",
-                string_prop("Drop target ref, selector, or coordinates."),
-            ),
+            ("target", target_prop("Element to drop the files onto")),
             ("files", array_string_prop("Local file paths to drop.")),
         ]),
         &["target", "files"],
@@ -1641,10 +1609,7 @@ fn navigate_schema() -> Arc<JsonObject> {
 fn wait_schema() -> Arc<JsonObject> {
     object_schema(
         props([
-            (
-                "target",
-                string_prop("Element ref, CSS selector, or x,y coordinates."),
-            ),
+            ("target", target_prop_no_coords("Element to act on")),
             ("selector", string_prop("CSS selector to wait for.")),
             ("gone", bool_prop("Wait for the element to disappear.")),
             ("timeout", integer_prop("Timeout in milliseconds.")),
@@ -1896,6 +1861,29 @@ fn props<const N: usize>(properties: [(&str, Value); N]) -> Map<String, Value> {
         .collect()
 }
 
+/// Wording shared by every element-targeting property (#216).
+///
+/// The bare `e12` form is spelled out because `snapshot` prints `[ref=e12]`
+/// and agents copy that id verbatim; it used to reach `click` and `value` as
+/// a CSS selector and fail with `No element matches selector: e12`.
+const TARGET_SHAPES: &str = "snapshot ref (e12 or @e12), CSS selector, or x,y coordinates";
+
+/// Wording for the tools that resolve a target without hit-testing (#216).
+///
+/// `wait` sends `x,y` on to `querySelector`, which throws, and `html` ignores
+/// it and returns the whole page, so neither may advertise coordinates.
+const TARGET_SHAPES_NO_COORDS: &str = "snapshot ref (e12 or @e12) or CSS selector";
+
+/// Build the description of an element-targeting property.
+fn target_prop(role: &str) -> Value {
+    string_prop(&format!("{role}: {TARGET_SHAPES}."))
+}
+
+/// Build the description of a target that does not accept coordinates.
+fn target_prop_no_coords(role: &str) -> Value {
+    string_prop(&format!("{role}: {TARGET_SHAPES_NO_COORDS}."))
+}
+
 fn string_prop(description: &str) -> Value {
     json!({"type": "string", "description": description})
 }
@@ -2099,8 +2087,83 @@ mod tests {
         }
     }
 
+    /// Every element-targeting property spells out the same shapes (#216).
     #[test]
-    fn scroll_schema_accepts_target_and_ref_alias() {
+    fn target_properties_share_one_wording() {
+        for spec in tool_specs() {
+            let schema = (spec.schema)();
+            let properties = schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .expect("schema has properties");
+            for name in ["target", "source"] {
+                let Some(prop) = properties.get(name) else {
+                    continue;
+                };
+                let description = prop
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .expect("property has a description");
+                assert!(
+                    description.contains(TARGET_SHAPES)
+                        || description.contains(TARGET_SHAPES_NO_COORDS),
+                    "pilot.{} `{name}` must describe the accepted shapes, got: {description}",
+                    spec.name
+                );
+            }
+        }
+    }
+
+    /// The shared wording is pinned, not just shared (#216).
+    ///
+    /// `target_properties_share_one_wording` compares descriptions against the
+    /// same constant that builds them, so it stays green whatever the constant
+    /// says. These two assertions are what fails when the shapes change.
+    #[test]
+    fn target_descriptions_name_the_accepted_shapes() {
+        assert_eq!(
+            target_description(&target_schema()),
+            "Element to act on: snapshot ref (e12 or @e12), CSS selector, or x,y coordinates."
+        );
+        assert_eq!(
+            target_description(&wait_schema()),
+            "Element to act on: snapshot ref (e12 or @e12) or CSS selector."
+        );
+    }
+
+    /// Read the `target` property description out of a tool schema.
+    fn target_description(schema: &JsonObject) -> &str {
+        schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|props| props.get("target"))
+            .and_then(|prop| prop.get("description"))
+            .and_then(Value::as_str)
+            .expect("schema has a target description")
+    }
+
+    /// `ref` is not a second name for `target` on any tool (#216).
+    ///
+    /// A bare `e12` now parses as a ref through `target`, so the alias only
+    /// gave agents two spellings to choose between.
+    #[test]
+    fn no_tool_advertises_a_ref_alias() {
+        for spec in tool_specs() {
+            let schema = (spec.schema)();
+            let properties = schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .expect("schema has properties");
+            assert!(
+                !properties.contains_key("ref"),
+                "pilot.{} must take the element through `target`, not `ref`",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_schema_advertises_target_only() {
         let schema = scroll_schema();
         let properties = schema
             .get("properties")
@@ -2110,68 +2173,37 @@ mod tests {
             properties.contains_key("target"),
             "scroll schema must advertise `target`"
         );
-        assert!(
-            properties.contains_key("ref"),
-            "scroll schema must keep `ref` as an alias of `target`"
-        );
     }
 
+    /// `scroll` routes a bare snapshot id to a ref like every other tool.
     #[test]
-    fn optional_scroll_target_accepts_target_or_ref() {
-        let mut target_only = Map::new();
-        target_only.insert("target".to_owned(), json!("#log"));
+    fn scroll_target_accepts_a_bare_snapshot_ref() {
         assert_eq!(
-            optional_scroll_target(&target_only).expect("target"),
-            Some("#log".to_owned())
+            build_scroll_params("down", Some(50), Some("e1")),
+            json!({"ref": "e1", "direction": "down", "amount": 50})
         );
-
-        let mut ref_only = Map::new();
-        ref_only.insert("ref".to_owned(), json!("e1"));
         assert_eq!(
-            optional_scroll_target(&ref_only).expect("ref"),
-            Some("e1".to_owned())
-        );
-
-        let empty = Map::new();
-        assert_eq!(optional_scroll_target(&empty).expect("neither"), None);
-
-        let mut both = Map::new();
-        both.insert("target".to_owned(), json!("#log"));
-        both.insert("ref".to_owned(), json!("e1"));
-        let err = optional_scroll_target(&both).expect_err("both set");
-        assert!(
-            err.message.contains("not both"),
-            "unexpected error: {}",
-            err.message
-        );
-    }
-
-    #[test]
-    fn optional_scroll_target_ref_selector_builds_selector_params() {
-        let mut args = Map::new();
-        args.insert("ref".to_owned(), json!("#log"));
-        let target = optional_scroll_target(&args).expect("ref alias");
-        let params = build_scroll_params("down", Some(50), target.as_deref());
-        assert_eq!(
-            params,
+            build_scroll_params("down", Some(50), Some("#log")),
             json!({"selector": "#log", "direction": "down", "amount": 50})
         );
     }
 
+    /// The dropped `ref` argument fails instead of scrolling the page (#216).
+    ///
+    /// `additionalProperties: false` is only advertised, never enforced, so
+    /// the handler itself has to reject the pre-#216 shape.
     #[tokio::test]
-    async fn scroll_rejects_target_and_ref_together() {
+    async fn scroll_rejects_the_legacy_ref_argument() {
+        let pilot = PilotMcpServer::new(Some(PathBuf::from("/nonexistent.sock")), None);
         let mut args = Map::new();
-        args.insert("target".to_owned(), json!("#log"));
-        args.insert("ref".to_owned(), json!("e1"));
-        let err = PilotMcpServer::new(None, None)
+        args.insert("ref".to_owned(), json!("e12"));
+        let err = pilot
             .call_tool_by_name("scroll", args)
             .await
-            .expect_err("both set");
-        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+            .expect_err("scroll must reject `ref`");
         assert!(
-            err.message.contains("not both"),
-            "unexpected error: {}",
-            err.message
+            err.to_string().contains("'target'"),
+            "error must point callers at `target`, got: {err}"
         );
     }
 

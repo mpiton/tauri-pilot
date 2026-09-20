@@ -71,7 +71,7 @@ The `snapshot` method assigns stable short references (`e1`, `e2`, ...) to every
 - Refs are stored in a `Map` inside the JS bridge
 - Refs are **reset on each new snapshot** — they are not persistent across calls
 - Always take a fresh snapshot before issuing actions to avoid stale refs
-- In CLI commands, refs use the `@` prefix: `@e1`, `@e2`, etc.
+- In CLI commands, refs may carry the `@` prefix (`@e1`) or be used bare (`e1`), exactly as `snapshot` prints them
 
 ```bash
 # Typical workflow

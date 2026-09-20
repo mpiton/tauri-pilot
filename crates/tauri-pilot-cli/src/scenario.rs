@@ -70,8 +70,6 @@ pub(crate) struct Step {
     pub(crate) selector: Option<String>,
     pub(crate) direction: Option<String>,
     pub(crate) amount: Option<i32>,
-    #[serde(rename = "ref")]
-    pub(crate) step_ref: Option<String>,
     pub(crate) gone: Option<bool>,
     pub(crate) stable: Option<u64>,
     pub(crate) require_mutation: Option<bool>,
@@ -334,7 +332,7 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
                 .await
         }
         "scroll" => {
-            let target = scroll_step_target(step)?;
+            let target = step.target.as_deref();
             client
                 .call(
                     "scroll",
@@ -342,7 +340,7 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
                         Some(build_scroll_params(
                             step.direction.as_deref().unwrap_or("down"),
                             step.amount,
-                            target.as_deref(),
+                            target,
                         )),
                         window,
                     ),
@@ -360,20 +358,8 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
         }
         "wait" => {
             let timeout = timeout_ms.unwrap_or(10_000);
-            // TOML allows `ref = "e1"` on any element-targeting step. For
-            // `wait` we render it as the same `@e1` syntax `parse_target`
-            // accepts, so the helper stays single-input. Reject ambiguous
-            // steps that set both `target` and `ref` instead of silently
-            // dropping one.
-            if step.target.is_some() && step.step_ref.is_some() {
-                anyhow::bail!(
-                    "wait step sets both `target` and `ref`; pick one (use `ref = \"e1\"` for snapshot refs, `target = \"#sel\"` for CSS selectors)"
-                );
-            }
-            let target_from_ref = step.step_ref.as_deref().map(|r| format!("@{r}"));
-            let target = step.target.as_deref().or(target_from_ref.as_deref());
             let params = build_wait_params(
-                target,
+                step.target.as_deref(),
                 step.selector.as_deref(),
                 step.gone.unwrap_or(false),
                 timeout,
@@ -537,20 +523,6 @@ async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>
         anyhow::bail!("storage key {key:?} was not found");
     }
     Ok(result)
-}
-
-/// Resolve the optional scroll target from a TOML step.
-///
-/// `target` and `ref` are aliases: both keep the raw `@ref` / CSS / `x,y`
-/// value. [`build_scroll_params`] classifies bare snapshot ids (`e1`). Setting
-/// both is an error.
-fn scroll_step_target(step: &Step) -> Result<Option<String>> {
-    match (step.target.as_deref(), step.step_ref.as_deref()) {
-        (Some(_), Some(_)) => anyhow::bail!("scroll step sets both `target` and `ref`; pick one"),
-        (Some(target), None) => Ok(Some(target.to_owned())),
-        (None, Some(r)) => Ok(Some(r.to_owned())),
-        (None, None) => Ok(None),
-    }
 }
 
 // ── Screenshot on failure ─────────────────────────────────────────────────────
@@ -1149,7 +1121,6 @@ action = "ping"
             selector: None,
             direction: None,
             amount: None,
-            step_ref: None,
             gone: None,
             stable: None,
             require_mutation: None,
@@ -1174,7 +1145,6 @@ action = "ping"
             selector: None,
             direction: None,
             amount: None,
-            step_ref: None,
             gone: None,
             stable: None,
             require_mutation: None,
@@ -1235,14 +1205,18 @@ action = "ping"
         assert!(xml.contains("<skipped"));
     }
 
+    /// TOML steps address an element through `target` alone (#216).
+    ///
+    /// A bare snapshot id is a ref for every shape `parse_target` handles, so
+    /// the `ref` alias only gave scenario authors a second spelling.
     #[test]
-    fn test_scroll_step_target_from_toml_ref_and_selector() {
+    fn test_scroll_step_target_covers_every_shape() {
         let scenario: Scenario = toml::from_str(
             r##"
 [[step]]
 action = "scroll"
 direction = "down"
-ref = "e1"
+target = "e1"
 
 [[step]]
 action = "scroll"
@@ -1251,58 +1225,34 @@ amount = 50
 
 [[step]]
 action = "scroll"
-direction = "down"
-ref = "#log"
-
-[[step]]
-action = "scroll"
 direction = "left"
-ref = "100,200"
+target = "100,200"
 "##,
         )
         .expect("valid toml");
-        assert_eq!(
-            scroll_step_target(&scenario.step[0])
-                .expect("ref step")
-                .as_deref(),
-            Some("e1")
-        );
+        assert_eq!(scenario.step[0].target.as_deref(), Some("e1"));
+        assert_eq!(scenario.step[1].target.as_deref(), Some("#log"));
+        assert_eq!(scenario.step[2].target.as_deref(), Some("100,200"));
         assert_eq!(
             build_scroll_params("down", None, Some("e1")),
             json!({"ref": "e1", "direction": "down", "amount": null})
         );
-        assert_eq!(
-            scroll_step_target(&scenario.step[1])
-                .expect("target step")
-                .as_deref(),
-            Some("#log")
-        );
-        assert_eq!(
-            scroll_step_target(&scenario.step[2])
-                .expect("ref selector")
-                .as_deref(),
-            Some("#log")
-        );
-        assert_eq!(
-            scroll_step_target(&scenario.step[3])
-                .expect("ref coords")
-                .as_deref(),
-            Some("100,200")
-        );
     }
 
+    /// The dropped `ref` key fails the parse instead of being ignored (#216).
     #[test]
-    fn test_scroll_step_rejects_both_target_and_ref() {
-        let scenario: Scenario = toml::from_str(
-            r##"
+    fn test_step_rejects_the_legacy_ref_key() {
+        let err = toml::from_str::<Scenario>(
+            r#"
 [[step]]
 action = "scroll"
-target = "#log"
 ref = "e1"
-"##,
+"#,
         )
-        .expect("valid toml");
-        let err = scroll_step_target(&scenario.step[0]).expect_err("both set");
-        assert!(err.to_string().contains("both `target` and `ref`"));
+        .expect_err("`ref` is no longer a step key");
+        assert!(
+            err.to_string().contains("ref"),
+            "error must name the rejected key, got: {err}"
+        );
     }
 }

@@ -41,11 +41,13 @@ Many commands accept a `<target>` argument that identifies a DOM element. Three 
 
 | Format | Example | Description |
 |--------|---------|-------------|
-| Element ref | `@e1` | Reference from the last `snapshot` call |
+| Element ref | `@e1` or `e1` | Reference from the last `snapshot` call; the `@` is optional |
 | CSS selector | `#submit-btn` or `.class` | Standard CSS selector |
 | Coordinates | `100,200` | Raw x,y screen coordinates |
 
 > **Note:** Element refs (`@e1`, `@e2`, …) are reset on every `snapshot` call. Always take a fresh snapshot before using refs.
+
+> **Note:** A bare `e<digits>` is always read as a ref, never as a CSS type selector. A page that really has an unknown `<e12>` tag must write that selector another way, e.g. `:is(e12)` or `wait --selector e12`.
 
 ---
 
@@ -528,7 +530,7 @@ tauri-pilot scroll <direction> [amount] [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--target <target>` | Element to scroll: `@ref`, CSS selector, or `x,y`. Defaults to the page. `--ref` is an alias. |
+| `--target <target>` | Element to scroll: `@ref` (or bare `e3`), CSS selector, or `x,y`. Defaults to the page. `--ref` is an alias. |
 
 `top` jumps to `scrollY = 0`; `bottom` jumps to the maximum scroll position (`scrollHeight - innerHeight` for the page, `scrollHeight - clientHeight` for an element). Unknown directions raise an error instead of silently no-op.
 
@@ -1062,8 +1064,8 @@ tauri-pilot wait [target] [OPTIONS]
 
 **Positional `[target]`** is parsed the same way as for `click`, `text`, `value`, etc., except that `wait` only accepts a snapshot ref or a CSS selector — coordinate targets (`x,y`) are not supported here, since waiting for a position has no meaning:
 
-- `@e3` — snapshot ref (resolved via `idMap`)
-- anything else — CSS selector (e.g. `#loading-spinner`, `.toast-success`, `[data-test=foo]`)
+- `@e3` or `e3` — snapshot ref (resolved via `idMap`); the `@` is optional
+- anything else that is not `e<digits>` — CSS selector (e.g. `#loading-spinner`, `.toast-success`, `[data-test=foo]`)
 
 `--selector` takes precedence when both are provided.
 

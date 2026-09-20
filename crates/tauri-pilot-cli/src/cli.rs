@@ -78,7 +78,7 @@ pub(crate) enum Command {
     Scroll {
         direction: String,
         amount: Option<i32>,
-        /// Element to scroll: `@ref`, CSS selector, or `x,y`. Defaults to the page.
+        /// Element to scroll: `@ref` (or bare `e3`), CSS selector, or `x,y`. Defaults to the page.
         // Signed coords (`-10,20`) look like flags unless hyphen values are allowed.
         #[arg(
             long,
@@ -341,6 +341,10 @@ pub(crate) enum Target {
 }
 
 /// Parse a target string into a `Target` variant.
+///
+/// Snapshot refs are accepted with or without the `@` prefix, since `snapshot`
+/// prints them as `[ref=e1]` and callers copy that id verbatim (#216).
+/// Coordinates are `x,y`; everything else is a CSS selector.
 pub(crate) fn parse_target(s: &str) -> Target {
     if let Some(r) = s.strip_prefix('@') {
         return Target::Ref(r.to_owned());
@@ -352,7 +356,26 @@ pub(crate) fn parse_target(s: &str) -> Target {
         return Target::Coords(x, y);
     }
 
+    if is_snapshot_ref_id(s) {
+        return Target::Ref(s.to_owned());
+    }
+
     Target::Selector(s.to_owned())
+}
+
+/// Returns `true` for a bare snapshot id: `e` followed by at least one digit.
+///
+/// Claiming this shape costs a narrow slice of the selector space. A
+/// *registered* custom element must contain a hyphen in its name, so no
+/// component can be called `e12`; an unknown tag `<e12>` is still parsed into
+/// an `HTMLUnknownElement` that `querySelector("e12")` matches. A page that
+/// builds such tags must now write the type selector another way, e.g.
+/// `:is(e12)` or `wait --selector e12`.
+fn is_snapshot_ref_id(s: &str) -> bool {
+    let Some(digits) = s.strip_prefix('e') else {
+        return false;
+    };
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Parses `ipc --args` into a JSON object before the CLI connects to the app.
@@ -405,6 +428,38 @@ mod tests {
             parse_target("abc,def"),
             Target::Selector("abc,def".to_owned())
         );
+    }
+
+    /// A bare snapshot id (`e1`) is a ref, not a CSS selector (#216).
+    ///
+    /// `snapshot` prints `[ref=e1]`, so agents copy `e1` verbatim. No
+    /// registered custom element can be called `e12`, so the shape only
+    /// costs the type selector for an unknown `<e12>` tag.
+    #[test]
+    fn bare_snapshot_ref_parses_as_a_ref() {
+        assert_eq!(parse_target("e1"), Target::Ref("e1".to_owned()));
+        assert_eq!(parse_target("e42"), Target::Ref("e42".to_owned()));
+    }
+
+    /// A page that really has an `<e12>` tag can still select it (#216).
+    #[test]
+    fn a_wrapped_type_selector_escapes_the_ref_shape() {
+        assert_eq!(
+            parse_target(":is(e12)"),
+            Target::Selector(":is(e12)".to_owned())
+        );
+    }
+
+    /// Anything that is not `e` followed by digits stays a selector.
+    #[test]
+    fn near_miss_snapshot_refs_stay_selectors() {
+        for raw in ["e", "em", "e1x", "E1", "ex1", "#e1", "e-1"] {
+            assert_eq!(
+                parse_target(raw),
+                Target::Selector(raw.to_owned()),
+                "{raw} must stay a CSS selector"
+            );
+        }
     }
 
     #[test]
