@@ -170,16 +170,14 @@ fn spawn_signal_cleanup(guard: &PilotGuard) {
 fn re_raise(signum: i32) {
     // SAFETY: `signal` and `raise` are libc entry points with no preconditions.
     unsafe {
-        // Restored even under test: tokio keeps its handler installed for the
-        // life of the process, so skipping this leaves the test binary deaf to
-        // the next Ctrl+C or SIGTERM and only SIGKILL stops a hung run.
+        // Restored first: tokio keeps its handler installed for the life of the
+        // process, so the raise below would land back in the watcher instead
+        // of killing the app.
         libc::signal(signum, libc::SIG_DFL);
-        // `cargo test` builds every mock app in one process, each with its own
-        // watcher: re-raising there kills the whole test run. The exit status
-        // this skips needs a child-process harness to cover, see #230.
-        if !cfg!(test) {
-            libc::raise(signum);
-        }
+        // No `cfg!(test)` guard here: a watcher firing inside the test binary
+        // ends the whole run, so the signal path is covered out of process in
+        // tests/signal_exit.rs (#230) rather than by skipping the raise.
+        libc::raise(signum);
     }
 }
 
@@ -335,9 +333,6 @@ fn sanitize_identifier(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    use serial_test::serial;
-
     // Bound each function body by the start of the next `function ` declaration
     // (or end-of-string), so the slice is immune to brace indentation changes
     // and to nested blocks closing with the same brace pattern.
@@ -757,9 +752,6 @@ mod tests {
 
     #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
     #[test]
-    // `raise` in the signal tests reaches every watcher in the binary, and this
-    // app's guard is live between `build` and the assert below.
-    #[serial]
     fn normal_quit_unlinks_socket_file() {
         // #194: RunEvent::Exit must drop the plugin-owned socket guard so the
         // pathname file is gone before tao calls process::exit.
@@ -786,71 +778,6 @@ mod tests {
         let left = path.exists();
         super::server::unix::cleanup_bind_files(&path);
         assert!(!left, "RunEvent::Exit must unlink the socket (#194)");
-    }
-
-    /// Asserts that `signum` makes the plugin unlink its pathname socket.
-    ///
-    /// `tag` keeps the socket path of each caller distinct.
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    fn signal_unlinks_socket_file(signum: i32, tag: &str) {
-        // #217: SIGINT, SIGTERM and SIGHUP never reach RunEvent::Exit, so the
-        // plugin's own watcher is the only thing that can unlink the socket.
-        use std::time::{Duration, Instant};
-
-        let identifier = format!("com.pilot.issue217{tag}-{}", std::process::id());
-        let address = super::server::socket_address(&super::sanitize_identifier(&identifier))
-            .expect("socket address");
-        let path = address
-            .as_pathname()
-            .expect("pathname socket")
-            .to_path_buf();
-        super::server::unix::cleanup_bind_files(&path);
-
-        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-        context.config_mut().identifier = identifier;
-        let _app = tauri::test::mock_builder()
-            .plugin(super::init())
-            .build(context)
-            .expect("app starts");
-
-        assert!(path.exists(), "plugin must bind a pathname socket");
-
-        // The watcher is armed in `setup`, so one raise is enough, and tokio's
-        // handler is what keeps the signal from killing the test process.
-        // SAFETY: `raise` is a libc entry point with no preconditions.
-        unsafe {
-            libc::raise(signum);
-        }
-
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline && path.exists() {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-
-        let left = path.exists();
-        super::server::unix::cleanup_bind_files(&path);
-        assert!(!left, "signal {signum} must unlink the socket (#217)");
-    }
-
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    #[test]
-    #[serial]
-    fn sigint_unlinks_socket_file() {
-        signal_unlinks_socket_file(libc::SIGINT, "-int");
-    }
-
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    #[test]
-    #[serial]
-    fn sigterm_unlinks_socket_file() {
-        signal_unlinks_socket_file(libc::SIGTERM, "-term");
-    }
-
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    #[test]
-    #[serial]
-    fn sighup_unlinks_socket_file() {
-        signal_unlinks_socket_file(libc::SIGHUP, "-hup");
     }
 
     #[cfg(all(any(unix, windows), debug_assertions))]
