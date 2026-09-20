@@ -76,12 +76,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tauri` 2 -> 2.11.3, the release `tauri-plugin` 2.6.3 belongs to (`tauri`
   2.10.3 does not compile against `tauri-runtime` 2.11.3, which is what a
   fresh resolve pairs it with); `tokio` 1 -> 1.37, for the `mpsc::Receiver::is_closed` that `rmcp`
-  3.4.0 calls; `tracing` 0.1 -> 0.1.23, below which `rmcp`'s `#[instrument]`
-  does not expand; `serde` 1 -> 1.0.225 and `serde_json` 1 -> 1.0.127, the
+  3.4.0 calls; `tracing` 0.1 -> 0.1.41, what `tracing-subscriber` 0.3.20 asks
+  for, and above the 0.1.23 below which `rmcp`'s `#[instrument]` does not
+  expand; `serde` 1 -> 1.0.225 and `serde_json` 1 -> 1.0.127, the
   lowest `toml` 1 and `rmcp`'s `schemars` resolve with; `clap` 4 -> 4.3.4 for
-  `Error::exit_code`. A new CI job resolves direct dependencies with
-  `-Z direct-minimal-versions` and checks the workspace on Linux, so a floor
-  can no longer drift below the code the way `rmcp` did in #210. [#221]
+  `Error::exit_code`; `image` 0.25 -> 0.25.2 on macOS, where the crate-root
+  `image::ImageReader` alias the screenshot code calls first appears; and
+  `tracing-subscriber` 0.3 -> 0.3.20, the RUSTSEC-2025-0055 patch. Apps
+  consuming the plugin must now be on `tauri` 2.11.3 or newer. A new CI job
+  resolves direct dependencies with `-Z direct-minimal-versions` and checks the
+  workspace on Linux, macOS and Windows, so a floor can no longer drift below
+  the code the way `rmcp` did in #210. [#221]
 
 ### Fixed
 

@@ -30,7 +30,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "time", "io-util"] }
 tracing.workspace = true
 thiserror = "2"
-tauri = { version = "2.11.3", features = ["unstable"] }
+tauri = { workspace = true, features = ["unstable"] }
 enigo = { version = "0.6.1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -58,11 +58,13 @@ enigo = { version = "0.6.1", features = ["wayland"], optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 core-graphics = "0.25"
-image = { version = "0.25", default-features = false, features = ["png"] }
+# 0.25.2 is where `image::ImageReader` (screenshot/ipc.rs) became an alias at
+# the crate root; 0.25.0 and 0.25.1 only expose `image::io::Reader`.
+image = { version = "0.25.2", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 serial_test = "4"
-tauri = { version = "2.11.3", features = ["test"] }
+tauri = { workspace = true, features = ["test"] }
 tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [build-dependencies]

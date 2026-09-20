@@ -105,33 +105,61 @@ jobs:
   # and never sees the floors `Cargo.toml` declares. This job does: it resolves
   # direct dependencies to the lowest versions the manifests allow, which is
   # what a consumer with an old lockfile can end up with (#210, #221).
-  # Transitive crates stay at their newest, so a bad floor in someone else's
-  # manifest cannot turn it red. When it fails, raise the floor cargo or rustc
-  # names. Linux only, like the Android check. No cache: the lockfile here must
-  # never leak into `check`, and this job is not the slow one.
+  # Purely transitive crates stay at their newest, so a bad floor in a manifest
+  # nothing of ours depends on directly cannot turn it red. A direct dependency
+  # is not shielded, though: a new upstream release can fail against the floor
+  # we declare for a crate it shares with us (`rmcp` needed `tokio` 1.37), and
+  # the fix is to raise our floor for that crate. When it fails, raise the floor
+  # cargo or rustc names. Same matrix as `check`: `image`, `core-graphics`,
+  # `core-foundation` and `windows` are platform-gated and only compile there.
   minimal-versions:
     name: Direct minimal versions
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      # `-Z direct-minimal-versions` is unstable and this job gates every merge,
+      # so the resolver toolchain is pinned: a rolling nightly could go red on a
+      # regression that has nothing to do with our floors. Bump deliberately.
+      NIGHTLY: nightly-2026-09-01
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
-      # `-Z direct-minimal-versions` is nightly-only. Installed first because
-      # the toolchain action makes the last toolchain it installs the default.
       - name: Install Rust nightly (resolver only)
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.NIGHTLY }}
 
       - name: Install Rust 1.95.0
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95.0"
 
+      # Own key: `actions/cache` never overwrites an existing one, so sharing
+      # `check`'s would let whichever job saves first decide what the other
+      # restores. `Cargo.lock` is not a cached path, so the floors resolved
+      # here cannot reach `check` either way.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-minimal-v1-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-minimal-v1-
+
       - name: Resolve direct dependencies to their floors
-        run: cargo +nightly update -Z direct-minimal-versions
+        run: cargo +${{ env.NIGHTLY }} update -Z direct-minimal-versions
 
       - name: Check
         run: cargo +1.95.0 check --workspace --all-targets --locked
@@ -142,12 +170,14 @@ jobs:
     needs: [check, minimal-versions]
     if: always()
     steps:
+      # Keyed off the whole `needs` context rather than one variable per job:
+      # a new required job then only has to be added to `needs` above, and
+      # forgetting a variable can no longer leave this green on a red job.
       - name: Verify job results
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
         env:
-          CHECK_RESULT: ${{ needs.check.result }}
-          MINIMAL_VERSIONS_RESULT: ${{ needs.minimal-versions.result }}
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          if [[ "$CHECK_RESULT" != "success" || "$MINIMAL_VERSIONS_RESULT" != "success" ]]; then
-            echo "A required job failed or was cancelled (check=$CHECK_RESULT, minimal-versions=$MINIMAL_VERSIONS_RESULT)"
-            exit 1
-          fi
+          echo "A required job did not succeed:"
+          echo "$RESULTS"
+          exit 1
