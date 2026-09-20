@@ -2,33 +2,41 @@
 //! screenshot went, and `--screenshots-dir` must decide where that is.
 //!
 //! A mock JSON-RPC unix socket fails the `click` step and answers the
-//! follow-up `screenshot`, then the binary is run via `assert_cmd`.
+//! follow-up `screenshot`, then the binary is spawned against it.
 
 #![cfg(unix)]
 
+mod common;
+
+// Rust guideline compliant 2026-08-29
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
-use std::process::Output;
+use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
-use assert_cmd::Command;
+use common::{SERVER_DONE_TIMEOUT, unique_socket_path};
 
-/// How long to wait for the mock server once the binary has exited.
-const SERVER_DONE_TIMEOUT: Duration = Duration::from_secs(10);
-
-fn unique_socket_path() -> PathBuf {
-    PathBuf::from(format!(
-        "/tmp/tauri-pilot-it-run-shot-{}.sock",
-        std::process::id()
-    ))
+/// Runs a one-step scenario whose `click` fails, with extra CLI arguments.
+///
+/// # Panics
+///
+/// Panics if the socket cannot be bound or the mock server does not finish.
+fn run_failing_scenario(cwd: &Path, extra_args: &[&str]) -> Output {
+    run_failing_scenario_with_stdout(cwd, extra_args, Stdio::piped())
 }
 
-/// Run a one-step scenario whose `click` fails, with extra CLI arguments.
-fn run_failing_scenario(cwd: &Path, extra_args: &[&str]) -> Output {
-    let socket = unique_socket_path();
+/// Same, with `stdout` wired to the caller's choice.
+///
+/// `common::spawn_mock_server` answers a single request; a failing step sends
+/// `click` and then `screenshot`, so this keeps a local looping mock.
+///
+/// # Panics
+///
+/// Panics if the socket cannot be bound or the mock server does not finish.
+fn run_failing_scenario_with_stdout(cwd: &Path, extra_args: &[&str], stdout: Stdio) -> Output {
+    let socket = unique_socket_path("run-shot");
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).expect("bind mock socket");
     let (done_tx, done_rx) = mpsc::channel();
@@ -88,12 +96,15 @@ target = "#nope"
         scenario_path.to_str().expect("scenario path is UTF-8"),
     ];
     args.extend_from_slice(extra_args);
-    let output = Command::cargo_bin("tauri-pilot")
-        .expect("cargo_bin")
+    let output = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
         .current_dir(cwd)
         .args(args)
-        .output()
-        .expect("run tauri-pilot");
+        .stdout(stdout)
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tauri-pilot")
+        .wait_with_output()
+        .expect("wait for tauri-pilot");
 
     let done = done_rx.recv_timeout(SERVER_DONE_TIMEOUT);
     let _ = std::fs::remove_file(&socket);
@@ -104,6 +115,22 @@ target = "#nope"
         );
     }
     output
+}
+
+/// Reads the `--json` report from a run that is expected to fail.
+fn failing_report(output: &Output) -> serde_json::Value {
+    assert_eq!(output.status.code(), Some(1), "failing scenario exits 1");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(&stdout)
+        .unwrap_or_else(|err| panic!("--json must print a JSON report ({err}): {stdout}"))
+}
+
+/// Returns the `screenshot` path the first step reported.
+fn reported_screenshot(report: &serde_json::Value) -> PathBuf {
+    let saved = report["steps"][0]["screenshot"]
+        .as_str()
+        .unwrap_or_else(|| panic!("failed step must report its screenshot: {report}"));
+    PathBuf::from(saved)
 }
 
 #[test]
@@ -122,19 +149,15 @@ fn run_json_reports_screenshot_from_requested_directory() {
         ],
     );
 
-    assert_eq!(output.status.code(), Some(1), "failing scenario exits 1");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let report: serde_json::Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|err| panic!("--json must print a JSON report ({err}): {stdout}"));
-    let saved = report["steps"][0]["screenshot"]
-        .as_str()
-        .unwrap_or_else(|| panic!("failed step must report its screenshot: {report}"));
+    let report = failing_report(&output);
+    let saved = reported_screenshot(&report);
     assert!(
-        Path::new(saved).starts_with(&shots),
-        "screenshot {saved} ignored --screenshots-dir {}",
+        saved.starts_with(&shots),
+        "screenshot {} ignored --screenshots-dir {}",
+        saved.display(),
         shots.display()
     );
-    assert!(Path::new(saved).is_file(), "screenshot {saved} is missing");
+    assert!(saved.is_file(), "screenshot {} is missing", saved.display());
     assert!(
         !tmpdir.path().join("tauri-pilot-failures").exists(),
         "nothing should land in the working directory"
@@ -143,8 +166,80 @@ fn run_json_reports_screenshot_from_requested_directory() {
     let xml = std::fs::read_to_string(&junit).expect("read junit xml");
     assert!(
         xml.contains(&format!(
-            "<system-out>failure screenshot: {saved}</system-out>"
+            "<system-out>failure screenshot: {}</system-out>",
+            saved.display()
         )),
         "junit must carry the screenshot path: {xml}"
+    );
+}
+
+/// Without `--screenshots-dir` the shot lands in `./tauri-pilot-failures`, and
+/// the report still names it absolutely — the other half of #215.
+#[test]
+fn run_json_reports_absolute_path_under_the_default_directory() {
+    let tmpdir = tempfile::tempdir().expect("tempdir");
+    // `std::path::absolute` joins `getcwd()`, which on macOS resolves the
+    // `/var` -> `/private/var` symlink the tempdir path keeps.
+    let cwd = tmpdir.path().canonicalize().expect("canonicalize tempdir");
+    let output = run_failing_scenario(&cwd, &["--json"]);
+
+    let report = failing_report(&output);
+    let saved = reported_screenshot(&report);
+    assert!(
+        saved.is_absolute(),
+        "reported screenshot {} is not absolute",
+        saved.display()
+    );
+    let expected = cwd.join("tauri-pilot-failures");
+    assert!(
+        saved.starts_with(&expected),
+        "screenshot {} is not under the default directory {}",
+        saved.display(),
+        expected.display()
+    );
+    assert!(saved.is_file(), "screenshot {} is missing", saved.display());
+}
+
+/// Returns a stdout whose reader is already gone, so the first write fails
+/// with `EPIPE`.
+fn closed_pipe() -> Stdio {
+    let (reader, writer) = std::io::pipe().expect("create pipe");
+    drop(reader);
+    writer.into()
+}
+
+/// `run --json | head -1` must not turn a failing scenario into a 0, and the
+/// `JUnit` XML must survive the early exit (#213 meeting #215).
+#[test]
+fn run_json_into_closed_pipe_keeps_exit_1_and_writes_junit() {
+    let tmpdir = tempfile::tempdir().expect("tempdir");
+    let shots = tmpdir.path().join("shots");
+    let junit = tmpdir.path().join("results.xml");
+    let output = run_failing_scenario_with_stdout(
+        tmpdir.path(),
+        &[
+            "--json",
+            "--screenshots-dir",
+            shots.to_str().expect("shots path is UTF-8"),
+            "--junit",
+            junit.to_str().expect("junit path is UTF-8"),
+        ],
+        closed_pipe(),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a failing scenario must exit 1 even when stdout is closed: stderr={stderr}"
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "closed stdout pipe must not print a panic: stderr={stderr}"
+    );
+    let xml = std::fs::read_to_string(&junit).expect("junit xml must be written anyway");
+    assert!(
+        xml.contains("<failure"),
+        "junit must record the failure: {xml}"
     );
 }

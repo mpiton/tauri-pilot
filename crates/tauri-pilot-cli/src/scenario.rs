@@ -90,8 +90,16 @@ impl Step {
 
 #[derive(Debug)]
 pub(crate) enum StepOutcome {
-    Passed { duration: Duration },
-    Failed { duration: Duration, message: String },
+    Passed {
+        duration: Duration,
+    },
+    Failed {
+        duration: Duration,
+        message: String,
+        /// A screenshot is only attempted when a step fails, so it lives in
+        /// this variant rather than beside it as an `Option`.
+        screenshot: ScreenshotOutcome,
+    },
     Skipped,
 }
 
@@ -102,8 +110,6 @@ pub(crate) type ScreenshotOutcome = Result<PathBuf, String>;
 pub(crate) struct StepResult {
     pub(crate) name: String,
     pub(crate) outcome: StepOutcome,
-    /// `None` unless the step failed and a screenshot was attempted.
-    pub(crate) screenshot: Option<ScreenshotOutcome>,
 }
 
 #[allow(clippy::module_name_repetitions)]
@@ -222,14 +228,12 @@ async fn run_scenario_steps(
             results.push(StepResult {
                 name: step_name,
                 outcome: StepOutcome::Skipped,
-                screenshot: None,
             });
             continue;
         }
 
         let step_start = Instant::now();
 
-        let mut screenshot = None;
         let outcome = match run_step(client, step, window).await {
             Ok(_) => {
                 let dur = step_start.elapsed();
@@ -247,11 +251,11 @@ async fn run_scenario_steps(
                     let label = crate::style::dim("failure screenshot not saved:");
                     eprintln!("  {label} {why}");
                 }
-                screenshot = Some(shot);
                 failed = true;
                 StepOutcome::Failed {
                     duration: dur,
                     message: msg,
+                    screenshot: shot,
                 }
             }
         };
@@ -259,7 +263,6 @@ async fn run_scenario_steps(
         results.push(StepResult {
             name: step_name,
             outcome,
-            screenshot,
         });
     }
 
@@ -556,7 +559,8 @@ fn scroll_step_target(step: &Step) -> Result<Option<String>> {
 ///
 /// # Errors
 ///
-/// Returns an error when the screenshot RPC fails or `dir` cannot be written.
+/// Returns an error when `dir` cannot be made absolute, the screenshot RPC
+/// fails, or `dir` cannot be written.
 async fn take_failure_screenshot(
     client: &mut Client,
     step_name: &str,
@@ -579,7 +583,11 @@ async fn take_failure_screenshot(
         .collect();
     let filename = format!("{safe_name}-{ts}.png");
     let path = dir.join(filename.as_str());
-    let path = std::path::absolute(&path).unwrap_or(path);
+    // Propagated, not swallowed: the report, the JUnit `<system-out>` and the
+    // docs all promise an absolute path, so a relative fallback would hand a
+    // consumer a path it cannot open — #215 through the back door.
+    let path = std::path::absolute(&path)
+        .with_context(|| format!("failed to resolve {}", path.display()))?;
 
     let result = client
         .call("screenshot", with_window(Some(json!({})), window))
@@ -650,28 +658,29 @@ pub(crate) fn report_to_json(report: &ScenarioReport) -> Value {
 }
 
 fn step_result_to_json(result: &StepResult) -> Value {
-    let mut value = step_outcome_to_json(result);
-    match &result.screenshot {
-        Some(Ok(path)) => value["screenshot"] = json!(path.display().to_string()),
-        Some(Err(err)) => value["screenshot_error"] = json!(err),
-        None => {}
-    }
-    value
-}
-
-fn step_outcome_to_json(result: &StepResult) -> Value {
     match &result.outcome {
         StepOutcome::Passed { duration } => json!({
             "name": result.name,
             "status": "passed",
             "duration_ms": duration_millis(*duration),
         }),
-        StepOutcome::Failed { duration, message } => json!({
-            "name": result.name,
-            "status": "failed",
-            "duration_ms": duration_millis(*duration),
-            "message": message,
-        }),
+        StepOutcome::Failed {
+            duration,
+            message,
+            screenshot,
+        } => {
+            let mut value = json!({
+                "name": result.name,
+                "status": "failed",
+                "duration_ms": duration_millis(*duration),
+                "message": message,
+            });
+            match screenshot {
+                Ok(path) => value["screenshot"] = json!(path.display().to_string()),
+                Err(err) => value["screenshot_error"] = json!(err),
+            }
+            value
+        }
         StepOutcome::Skipped => json!({
             "name": result.name,
             "status": "skipped",
@@ -686,9 +695,16 @@ fn duration_millis(duration: Duration) -> u64 {
 // ── JUnit XML output ──────────────────────────────────────────────────────────
 
 fn screenshot_note(result: &StepResult) -> Option<String> {
-    match result.screenshot.as_ref()? {
-        Ok(path) => Some(format!("failure screenshot: {}", path.display())),
-        Err(err) => Some(format!("failure screenshot not saved: {err}")),
+    match &result.outcome {
+        StepOutcome::Failed {
+            screenshot: Ok(path),
+            ..
+        } => Some(format!("failure screenshot: {}", path.display())),
+        StepOutcome::Failed {
+            screenshot: Err(err),
+            ..
+        } => Some(format!("failure screenshot not saved: {err}")),
+        StepOutcome::Passed { .. } | StepOutcome::Skipped => None,
     }
 }
 
@@ -796,10 +812,22 @@ mod tests {
                 .map(|(name, outcome)| StepResult {
                     name: name.to_string(),
                     outcome,
-                    screenshot: None,
                 })
                 .collect(),
             total_duration: Duration::from_millis(1234),
+        }
+    }
+
+    /// A failed step with `screenshot` for fixtures that assert something else.
+    fn failed(ms: u64, message: &str) -> StepOutcome {
+        failed_with(ms, message, Ok(PathBuf::from("/tmp/shots/step.png")))
+    }
+
+    fn failed_with(ms: u64, message: &str, screenshot: ScreenshotOutcome) -> StepOutcome {
+        StepOutcome::Failed {
+            duration: Duration::from_millis(ms),
+            message: message.to_owned(),
+            screenshot,
         }
     }
 
@@ -812,13 +840,7 @@ mod tests {
                     duration: Duration::from_millis(100),
                 },
             ),
-            (
-                "step-2",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(50),
-                    message: "oops".into(),
-                },
-            ),
+            ("step-2", failed(50, "oops")),
             ("step-3", StepOutcome::Skipped),
         ]);
         assert_eq!(report.passed(), 1);
@@ -877,13 +899,7 @@ target = "#btn"
                     duration: Duration::from_millis(100),
                 },
             ),
-            (
-                "step-2",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(50),
-                    message: "oops".into(),
-                },
-            ),
+            ("step-2", failed(50, "oops")),
             ("step-3", StepOutcome::Skipped),
         ]);
         let value = report_to_json(&report);
@@ -905,24 +921,16 @@ target = "#btn"
 
     #[test]
     fn report_to_json_carries_screenshot_path_and_reason() {
-        let mut report = make_report(vec![
+        let report = make_report(vec![
             (
                 "saved",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(10),
-                    message: "boom".into(),
-                },
+                failed_with(10, "boom", Ok(PathBuf::from("/tmp/shots/saved-1.png"))),
             ),
             (
                 "not-saved",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(10),
-                    message: "boom".into(),
-                },
+                failed_with(10, "boom", Err("permission denied".to_owned())),
             ),
         ]);
-        report.results[0].screenshot = Some(Ok(PathBuf::from("/tmp/shots/saved-1.png")));
-        report.results[1].screenshot = Some(Err("permission denied".to_string()));
 
         let value = report_to_json(&report);
         assert_eq!(value["steps"][0]["screenshot"], "/tmp/shots/saved-1.png");
@@ -933,24 +941,16 @@ target = "#btn"
 
     #[test]
     fn junit_xml_carries_screenshot_path_and_reason() {
-        let mut report = make_report(vec![
+        let report = make_report(vec![
             (
                 "saved",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(10),
-                    message: "boom".into(),
-                },
+                failed_with(10, "boom", Ok(PathBuf::from("/tmp/shots/saved-1.png"))),
             ),
             (
                 "not-saved",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(10),
-                    message: "boom".into(),
-                },
+                failed_with(10, "boom", Err("permission denied".to_owned())),
             ),
         ]);
-        report.results[0].screenshot = Some(Ok(PathBuf::from("/tmp/shots/saved-1.png")));
-        report.results[1].screenshot = Some(Err("permission denied".to_string()));
 
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("results.xml");
@@ -1222,13 +1222,7 @@ action = "ping"
                     duration: Duration::from_millis(10),
                 },
             ),
-            (
-                "step-2",
-                StepOutcome::Failed {
-                    duration: Duration::from_millis(20),
-                    message: "oops & done".into(),
-                },
-            ),
+            ("step-2", failed(20, "oops & done")),
             ("step-3", StepOutcome::Skipped),
         ]);
         let dir = tempfile::tempdir().expect("temp dir");

@@ -242,10 +242,36 @@ pub(crate) enum Command {
         /// Override `fail_fast` setting from the scenario file.
         #[arg(long)]
         no_fail_fast: bool,
-        /// Directory for failure screenshots (default: ./tauri-pilot-failures).
-        #[arg(long, value_name = "DIR")]
-        screenshots_dir: Option<PathBuf>,
+        /// Directory for failure screenshots.
+        #[arg(
+            long,
+            value_name = "DIR",
+            default_value = crate::scenario::DEFAULT_SCREENSHOT_DIR,
+            value_parser = screenshots_dir_value
+        )]
+        screenshots_dir: PathBuf,
     },
+}
+
+/// Parses `--screenshots-dir`, mapping an empty value back to the default.
+///
+/// `--screenshots-dir ''` used to reach `Path::new("").join(name)`, which is a
+/// bare filename and resolves against the working directory — the placement
+/// #215 removes.
+///
+/// # Errors
+///
+/// Never fails; the signature is what clap's `value_parser` expects.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "clap's value_parser only accepts Fn(&str) -> Result<T, E>"
+)]
+fn screenshots_dir_value(raw: &str) -> Result<PathBuf, std::convert::Infallible> {
+    Ok(if raw.trim().is_empty() {
+        PathBuf::from(crate::scenario::DEFAULT_SCREENSHOT_DIR)
+    } else {
+        PathBuf::from(raw)
+    })
 }
 
 #[derive(Subcommand, Debug)]

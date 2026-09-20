@@ -1,6 +1,11 @@
 //! Shared harness for CLI integration tests: a one-shot mock JSON-RPC server
 //! on a unix socket.
 
+// Each test binary compiles this module on its own and uses a different
+// subset of it, so `expect` would fire "unfulfilled expectation" in the
+// binaries that do use everything.
+#![allow(dead_code)]
+
 // Rust guideline compliant 2026-08-29
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;

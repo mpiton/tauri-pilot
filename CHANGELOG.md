@@ -34,16 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Failure screenshots from `run` and MCP `pilot.run` are now reported and
-  no longer land wherever the process happened to start. A failed step
-  carries the absolute file in its result (`screenshot`), or the reason it
-  could not be written (`screenshot_error`), in the MCP report, in
-  `run --json` and as `<system-out>` in the JUnit XML. `run
-  --screenshots-dir <DIR>` and the `screenshots_dir` argument on `pilot.run`
-  pick the directory; `pilot.run` defaults to `tauri-pilot-failures` under
-  the system temp directory rather than the client's working directory.
-  `run --json` prints the report as JSON; the flag was accepted and
-  ignored before. [#215]
+- Failure screenshots from `run` and MCP `pilot.run` are now reported, and
+  `pilot.run` no longer drops them wherever the server process happened to
+  start. A failed step carries the absolute file in its result
+  (`screenshot`), or the reason it could not be written
+  (`screenshot_error`), in the MCP report, in `run --json` and as
+  `<system-out>` in the JUnit XML. `run --screenshots-dir <DIR>` and the
+  `screenshots_dir` argument on `pilot.run` pick the directory. `run` keeps
+  its `./tauri-pilot-failures` default, relative to the working directory;
+  `pilot.run` now defaults to an owner-only per-user
+  `tauri-pilot-failures-<uid>` directory under `$XDG_RUNTIME_DIR` or the
+  system temp directory, because the server's working directory belongs to
+  whichever client spawned it, and the old fixed `/tmp` path was writable
+  and readable by every user on the host. `run --json` prints the report as
+  JSON; the flag was accepted and ignored before. [#215]
 
 - A request over the plugin's 1 MiB line limit, such as a React
   development build sent with `eval -`, now fails before it is sent, with
