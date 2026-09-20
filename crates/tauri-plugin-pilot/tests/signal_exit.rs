@@ -7,14 +7,22 @@
 //! instead, signals it, and asserts on the socket file it leaves behind as well
 //! as on the status it dies with. The one in-process test left in the plugin
 //! covers `RunEvent::Exit` (#194), not signals.
-#![cfg(all(unix, not(target_os = "android"), debug_assertions))]
+//!
+//! Windows has the same path under another name (#229): a console control
+//! event, the instance file in place of the socket, and the exit status of the
+//! default handler in place of 128+n.
+#![cfg(all(any(unix, windows), not(target_os = "android"), debug_assertions))]
 
 // Rust guideline compliant 2026-08-29
 
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
+#[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
@@ -31,16 +39,19 @@ const READY: &str = "issue230-ready";
 /// the regression takes to report rather than tuning a race.
 const EXIT_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[cfg(unix)]
 #[test]
 fn sigint_ends_the_app_with_the_signal_status() {
     signal_ends_the_app(libc::SIGINT, "int");
 }
 
+#[cfg(unix)]
 #[test]
 fn sigterm_ends_the_app_with_the_signal_status() {
     signal_ends_the_app(libc::SIGTERM, "term");
 }
 
+#[cfg(unix)]
 #[test]
 fn sighup_ends_the_app_with_the_signal_status() {
     signal_ends_the_app(libc::SIGHUP, "hup");
@@ -49,6 +60,7 @@ fn sighup_ends_the_app_with_the_signal_status() {
 /// Asserts `signum` kills a child app and unlinks its socket.
 ///
 /// `tag` keeps the socket directory of each caller distinct.
+#[cfg(unix)]
 fn signal_ends_the_app(signum: i32, tag: &str) {
     // A private XDG_RUNTIME_DIR of our own makes the child's socket path
     // predictable here, without reaching for the crate-private
@@ -67,7 +79,7 @@ fn signal_ends_the_app(signum: i32, tag: &str) {
     let identifier = format!("tp230-{tag}");
     let socket = dir.join(format!("tauri-pilot-{identifier}.sock"));
 
-    let mut child = spawn_child_app(&dir, &identifier);
+    let mut child = spawn_child_app("XDG_RUNTIME_DIR", &dir, &identifier);
     let ready = wait_for_ready(&mut child, EXIT_TIMEOUT);
     let bound = socket.exists();
 
@@ -93,15 +105,89 @@ fn signal_ends_the_app(signum: i32, tag: &str) {
     );
 }
 
-/// Re-execs this test binary as a mock app bound in `socket_dir`.
-fn spawn_child_app(socket_dir: &Path, identifier: &str) -> Child {
-    Command::new(std::env::current_exe().expect("test binary path"))
+/// Ctrl+Break must end a child app and remove its instance file (#229).
+///
+/// Ctrl+Break is the only watched event that can be aimed at one process
+/// group: Ctrl+C with a group id is delivered to nobody, and with none it
+/// reaches this test binary and cargo too. It stands for Ctrl+C, which takes
+/// the same branch of tokio's handler. Console close takes the other one, where
+/// the handler parks so the watcher can run (the reason for the tokio 1.44
+/// floor), and cannot be generated at all: it is only checked by hand.
+#[cfg(windows)]
+#[test]
+fn ctrl_break_ends_the_app_and_removes_the_instance_file() {
+    use windows::Win32::Foundation::STATUS_CONTROL_C_EXIT;
+    use windows::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
+
+    // A private LOCALAPPDATA of our own keeps the child out of the real
+    // instance registry and makes its instance file predictable here.
+    let dir = std::env::temp_dir().join(format!("tp229-{}", std::process::id()));
+    // An interrupted run whose pid this one drew may have left its instance
+    // file here, which would pass for the child's registration below.
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create private LOCALAPPDATA");
+    // The pid again: the named pipe is machine-wide, unlike LOCALAPPDATA, so a
+    // fixed name collides with a second `cargo test` or a stranded child.
+    let identifier = format!("tp229-break-{}", std::process::id());
+    let instance = dir
+        .join("tauri-pilot")
+        .join("instances")
+        .join(format!("{identifier}.json"));
+
+    let mut child = spawn_child_app("LOCALAPPDATA", &dir, &identifier);
+    let ready = wait_for_ready(&mut child, EXIT_TIMEOUT);
+    // The Windows bind runs on the server task (#115), after `build` returns,
+    // so the ready line can come before the instance file does.
+    let deadline = Instant::now() + EXIT_TIMEOUT;
+    while !instance.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let registered = instance.exists();
+
+    // SAFETY: `GenerateConsoleCtrlEvent` has no preconditions. The child's pid
+    // is its group id, as it was spawned with `CREATE_NEW_PROCESS_GROUP`.
+    let sent = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+    let status = wait_for_exit(&mut child, EXIT_TIMEOUT);
+
+    let left = instance.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(ready, "child app never reported ready");
+    assert!(registered, "child app must register its instance file");
+    assert!(
+        sent.is_ok(),
+        "failed to send Ctrl+Break to the child app: {sent:?}"
+    );
+    let Some(status) = status else {
+        panic!("Ctrl+Break must end the app, it still ran after {EXIT_TIMEOUT:?} (#229)");
+    };
+    assert!(!left, "Ctrl+Break must remove the instance file (#229)");
+    assert_eq!(
+        status.code(),
+        Some(STATUS_CONTROL_C_EXIT.0),
+        "app must exit with the status the default console handler gives (#229)"
+    );
+}
+
+/// Re-execs this test binary as a mock app, with `dir_env` pointing at `dir`.
+///
+/// `dir_env` is the variable the plugin derives its socket or instance file
+/// location from, so the child binds under a directory this test owns.
+fn spawn_child_app(dir_env: &str, dir: &Path, identifier: &str) -> Child {
+    let mut command = Command::new(std::env::current_exe().expect("test binary path"));
+    command
         .args(["child_app", "--exact", "--ignored", "--nocapture"])
         .env(CHILD_ENV, identifier)
-        .env("XDG_RUNTIME_DIR", socket_dir)
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn child app")
+        .env(dir_env, dir)
+        .stdout(Stdio::piped());
+    // A group of its own: a console control event is sent to a whole group, and
+    // the inherited one holds this test binary and cargo too.
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(
+        &mut command,
+        windows::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP.0,
+    );
+    command.spawn().expect("spawn child app")
 }
 
 /// Reads the child's output until it reports ready, or `timeout` elapses.
