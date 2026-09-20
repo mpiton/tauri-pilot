@@ -90,14 +90,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The signal watcher's exit half is under test. `re_raise` skipped
-  `libc::raise` under `cfg!(test)`, because every mock app shares the test
-  process and re-raising there ends the whole run, so nothing covered the part
-  that actually kills the app: a plugin that swallowed Ctrl+C and left only
-  SIGKILL to stop a `cargo tauri dev` run would still have gone green. An
+- The signal watcher's exit half is under test. Nothing covered the part that
+  actually kills the app, because every mock app shares the test process and
+  the re-raise there ends the whole run: a plugin that swallowed Ctrl+C and
+  left only SIGKILL to stop a `cargo tauri dev` run would have gone green. An
   integration test now re-execs the test binary as a child app, sends it
-  SIGINT, SIGTERM or SIGHUP, and asserts both the unlinked socket and the
-  128+n exit status, so the `cfg!(test)` guard could go. [#230]
+  SIGINT, SIGTERM or SIGHUP, and asserts both the unlinked socket (#217) and
+  the 128+n exit status, which no in-process test can do. `re_raise` also
+  stopped skipping `libc::raise` under `cfg!(test)`: that flag is only set in
+  the `--lib` binary, so it never changed what a shipped app did, and the
+  divergence is gone with the three in-process signal tests it existed for.
+  [#230]
 
 - The second Clippy pass, the one that lints the plugin with debug
   assertions off as release builds compile it, now takes `--all-targets`
@@ -1090,9 +1093,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#215]: https://github.com/mpiton/tauri-pilot/issues/215
 [#216]: https://github.com/mpiton/tauri-pilot/issues/216
 [#217]: https://github.com/mpiton/tauri-pilot/issues/217
-[#230]: https://github.com/mpiton/tauri-pilot/issues/230
 [#220]: https://github.com/mpiton/tauri-pilot/issues/220
 [#221]: https://github.com/mpiton/tauri-pilot/issues/221
+[#230]: https://github.com/mpiton/tauri-pilot/issues/230
 [#231]: https://github.com/mpiton/tauri-pilot/issues/231
 [#232]: https://github.com/mpiton/tauri-pilot/issues/232
 [#233]: https://github.com/mpiton/tauri-pilot/issues/233

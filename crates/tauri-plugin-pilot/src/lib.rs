@@ -174,6 +174,9 @@ fn re_raise(signum: i32) {
         // process, so the raise below would land back in the watcher instead
         // of killing the app.
         libc::signal(signum, libc::SIG_DFL);
+        // No `cfg!(test)` guard here: a watcher firing inside the test binary
+        // ends the whole run, so the signal path is covered out of process in
+        // tests/signal_exit.rs (#230) rather than by skipping the raise.
         libc::raise(signum);
     }
 }

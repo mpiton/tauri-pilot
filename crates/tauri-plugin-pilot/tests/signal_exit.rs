@@ -1,16 +1,18 @@
 //! #230: a watched signal must still end the app, not just unlink the socket.
 //!
-//! The unlink half is cheap to cover in process, and the plugin's unit tests
-//! do. The exit status is not: every mock app shares the test process, so a
-//! re-raise there ends the whole run. Each test below re-execs this binary as a
-//! child app instead, signals it, and asserts on the status it dies with as
-//! well as on the socket file it leaves behind.
+//! This file owns both halves of the signal path: the unlinked socket (#217)
+//! and the 128+n exit status (#230). Neither is coverable in process: every
+//! mock app shares the test process, so the re-raise that ends the app ends the
+//! whole run with it. Each test below re-execs this binary as a child app
+//! instead, signals it, and asserts on the socket file it leaves behind as well
+//! as on the status it dies with. The one in-process test left in the plugin
+//! covers `RunEvent::Exit` (#194), not signals.
 #![cfg(all(unix, not(target_os = "android"), debug_assertions))]
 
 // Rust guideline compliant 2026-08-29
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -53,14 +55,20 @@ fn signal_ends_the_app(signum: i32, tag: &str) {
     // `server::socket_address`. Under /tmp rather than `temp_dir()`: macOS
     // returns a path long enough to push the socket past the `sun_path` limit.
     let dir = PathBuf::from(format!("/tmp/tp230-{}-{tag}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("create socket dir");
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-        .expect("socket dir must be private, else the plugin falls back to /tmp");
+    // Created non-recursively with its mode set up front: a name pre-planted in
+    // world-writable /tmp then fails with EEXIST instead of being adopted, where
+    // `create_dir_all` plus `set_permissions` would chmod a symlink's target
+    // instead. 0700 is also what keeps the plugin from rejecting the directory
+    // and falling back to /tmp.
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&dir)
+        .expect("socket dir must be ours and private");
     let identifier = format!("tp230-{tag}");
     let socket = dir.join(format!("tauri-pilot-{identifier}.sock"));
 
     let mut child = spawn_child_app(&dir, &identifier);
-    let ready = wait_for_ready(&mut child);
+    let ready = wait_for_ready(&mut child, EXIT_TIMEOUT);
     let bound = socket.exists();
 
     let pid = i32::try_from(child.id()).expect("child pid fits in pid_t");
@@ -96,13 +104,28 @@ fn spawn_child_app(socket_dir: &Path, identifier: &str) -> Child {
         .expect("spawn child app")
 }
 
-/// Reads the child's output until it reports ready, or its stdout ends.
-fn wait_for_ready(child: &mut Child) -> bool {
+/// Reads the child's output until it reports ready, or `timeout` elapses.
+///
+/// Bounded like `wait_for_exit`, and for the same reason: `lines()` has no
+/// deadline, so a child wedged before its ready line would hang the whole
+/// `cargo test` run, Rust having no per-test timeout. Killing the child on
+/// timeout also ends the reader thread, whose only block is that stdout.
+fn wait_for_ready(child: &mut Child, timeout: Duration) -> bool {
     let stdout = child.stdout.take().expect("piped stdout");
-    BufReader::new(stdout)
-        .lines()
-        .map_while(Result::ok)
-        .any(|line| line.contains(READY))
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let ready = BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+            .any(|line| line.contains(READY));
+        let _ = tx.send(ready);
+    });
+    if let Ok(ready) = rx.recv_timeout(timeout) {
+        return ready;
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    false
 }
 
 /// Waits up to `timeout` for the child to exit, killing it if it outlives that.
@@ -143,9 +166,11 @@ fn child_app() {
     println!("{READY}");
     std::io::stdout().flush().expect("flush ready line");
 
-    // The watcher runs on tauri's runtime, so park this thread and let the
-    // parent's signal end the process.
-    loop {
-        std::thread::sleep(Duration::from_secs(60));
-    }
+    // The watcher runs on tauri's runtime, so this thread only has to outlive
+    // one signal round trip. Bounded rather than parked forever: a parent killed
+    // from outside the process group (IDE stop button, CI step timeout) would
+    // strand this child with its socket bound, and a later run drawing the same
+    // pid would then fail on a socket it cannot bind rather than on the signal
+    // it means to test.
+    std::thread::sleep(EXIT_TIMEOUT * 3);
 }
