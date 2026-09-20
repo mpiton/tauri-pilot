@@ -11,10 +11,10 @@ repository = "https://github.com/mpiton/tauri-pilot"
 homepage = "https://github.com/mpiton/tauri-pilot"
 
 [workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1" }
-tracing = "0.1"
+serde = { version = "1.0.225", features = ["derive"] }
+serde_json = "1.0.127"
+tokio = { version = "1.37" }
+tracing = "0.1.23"
 
 [workspace.lints.clippy]
 unwrap_used = "deny"

@@ -71,6 +71,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clock skew against `date`. `--json` output is unchanged and still carries the
   raw epoch. [#231]
 
+- Dependency floors raised to versions the code builds against. Several were
+  major-only and let a consumer's lockfile hold a version that cannot compile:
+  `tauri` 2 -> 2.11.3, the release `tauri-plugin` 2.6.3 belongs to (`tauri`
+  2.10.3 does not compile against `tauri-runtime` 2.11.3, which is what a
+  fresh resolve pairs it with); `tokio` 1 -> 1.37, for the `mpsc::Receiver::is_closed` that `rmcp`
+  3.4.0 calls; `tracing` 0.1 -> 0.1.23, below which `rmcp`'s `#[instrument]`
+  does not expand; `serde` 1 -> 1.0.225 and `serde_json` 1 -> 1.0.127, the
+  lowest `toml` 1 and `rmcp`'s `schemars` resolve with; `clap` 4 -> 4.3.4 for
+  `Error::exit_code`. A new CI job resolves direct dependencies with
+  `-Z direct-minimal-versions` and checks the workspace on Linux, so a floor
+  can no longer drift below the code the way `rmcp` did in #210. [#221]
+
 ### Fixed
 
 - The second Clippy pass, the one that lints the plugin with debug
@@ -1065,6 +1077,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#216]: https://github.com/mpiton/tauri-pilot/issues/216
 [#217]: https://github.com/mpiton/tauri-pilot/issues/217
 [#220]: https://github.com/mpiton/tauri-pilot/issues/220
+[#221]: https://github.com/mpiton/tauri-pilot/issues/221
 [#231]: https://github.com/mpiton/tauri-pilot/issues/231
 [#232]: https://github.com/mpiton/tauri-pilot/issues/232
 [#233]: https://github.com/mpiton/tauri-pilot/issues/233

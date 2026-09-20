@@ -30,7 +30,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "time", "io-util"] }
 tracing.workspace = true
 thiserror = "2"
-tauri = { version = "2", features = ["unstable"] }
+tauri = { version = "2.11.3", features = ["unstable"] }
 enigo = { version = "0.6.1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -62,7 +62,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 serial_test = "4"
-tauri = { version = "2", features = ["test"] }
+tauri = { version = "2.11.3", features = ["test"] }
 tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [build-dependencies]
