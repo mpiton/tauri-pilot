@@ -128,9 +128,102 @@ impl<R: tauri::Runtime> Webviews for TauriWebviews<R> {
 /// Also used by the `__callback` command to tag hellos with the page they
 /// come from.
 pub(crate) fn current_url<R: tauri::Runtime>(webview: &tauri::WebviewWindow<R>) -> Option<Url> {
+    // Android `url()` posts to the main thread and waits. Desktop returns on
+    // the caller, so a test window named below blocks here instead, while the
+    // command is still on the stack.
+    #[cfg(test)]
+    url_gate::wait_if_installed(webview.label());
+
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| webview.url()))
         .ok()
         .and_then(Result::ok)
+}
+
+/// Stand-in for Android's main-thread URL round trip.
+///
+/// `WebviewWindow::url` on the mock runtime returns immediately, which hides
+/// the deadlock. A window labeled [`LABEL`] waits here until the test releases
+/// the gate.
+#[cfg(test)]
+pub(crate) mod url_gate {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
+
+    /// Window label that makes [`super::current_url`] wait.
+    pub(crate) const LABEL: &str = "url-wait";
+
+    struct Inner {
+        entered: AtomicBool,
+        left: AtomicBool,
+        released: Mutex<bool>,
+        cv: Condvar,
+    }
+
+    /// Shared with the callback thread. [`Self::release`] ends the wait.
+    #[derive(Clone)]
+    pub(crate) struct UrlGate(Arc<Inner>);
+
+    impl UrlGate {
+        /// Arm the gate. The next `url-wait` window blocks in `current_url`.
+        pub(crate) fn install() -> Self {
+            let gate = Self(Arc::new(Inner {
+                entered: AtomicBool::new(false),
+                left: AtomicBool::new(false),
+                released: Mutex::new(false),
+                cv: Condvar::new(),
+            }));
+            *GATE.lock().expect("url gate lock") = Some(gate.clone());
+            gate
+        }
+
+        /// `current_url` has reached the wait.
+        pub(crate) fn entered(&self) -> bool {
+            self.0.entered.load(Ordering::SeqCst)
+        }
+
+        /// `current_url` has finished the wait.
+        pub(crate) fn left(&self) -> bool {
+            self.0.left.load(Ordering::SeqCst)
+        }
+
+        /// Prepare for another callback. The previous waiter must have returned.
+        pub(crate) fn reset(&self) {
+            self.0.entered.store(false, Ordering::SeqCst);
+            self.0.left.store(false, Ordering::SeqCst);
+            *self.0.released.lock().expect("url gate release") = false;
+        }
+
+        /// Let every waiter return.
+        pub(crate) fn release(&self) {
+            *self.0.released.lock().expect("url gate release") = true;
+            self.0.cv.notify_all();
+        }
+    }
+
+    static GATE: Mutex<Option<UrlGate>> = Mutex::new(None);
+
+    /// Drop the installed gate and wake anyone still waiting.
+    pub(crate) fn clear() {
+        if let Some(gate) = GATE.lock().expect("url gate lock").take() {
+            gate.release();
+        }
+    }
+
+    pub(super) fn wait_if_installed(label: &str) {
+        if label != LABEL {
+            return;
+        }
+        let gate = GATE.lock().expect("url gate lock").clone();
+        let Some(gate) = gate else {
+            return;
+        };
+        gate.0.entered.store(true, Ordering::SeqCst);
+        let mut released = gate.0.released.lock().expect("url gate release");
+        while !*released {
+            released = gate.0.cv.wait(released).expect("url gate wait");
+        }
+        gate.0.left.store(true, Ordering::SeqCst);
+    }
 }
 
 // The bodies call the inherent `WebviewWindow` methods, which take precedence
