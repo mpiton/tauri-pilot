@@ -175,7 +175,8 @@ target = "#ok"
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).expect("bind mock socket");
     // The first connection is held open and never answered; the second
-    // answers every request.
+    // answers every request and reports it.
+    let (seen, requests) = std::sync::mpsc::channel();
     thread::spawn(move || {
         let (_silent, _) = listener.accept().expect("accept silent connection");
         let (stream, _) = listener.accept().expect("accept fresh connection");
@@ -184,6 +185,7 @@ target = "#ok"
         let mut line = String::new();
         while reader.read_line(&mut line).expect("read line") > 0 {
             let req: serde_json::Value = serde_json::from_str(line.trim()).expect("parse request");
+            let _ = seen.send((req["method"].clone(), req["params"].clone()));
             let resp =
                 serde_json::json!({"jsonrpc": "2.0", "id": req["id"], "result": {"ok": true}});
             let mut bytes = serde_json::to_vec(&resp).expect("serialize");
@@ -211,5 +213,14 @@ target = "#ok"
     assert_eq!(
         report["steps"][1]["status"], "passed",
         "the next step runs on a fresh connection: {report}"
+    );
+    // The fresh connection carries the next step, not a replay of the stale one.
+    let requests: Vec<_> = requests.try_iter().collect();
+    assert_eq!(
+        requests,
+        [(
+            serde_json::json!("click"),
+            serde_json::json!({"selector": "#ok"})
+        )]
     );
 }

@@ -52,7 +52,8 @@ pub(crate) struct Client {
     endpoint: PathBuf,
     /// How long a call waits for its answer, before `rpc_budget` extends it.
     rpc_timeout: Duration,
-    /// Set while a request awaits its answer; still set after a call gave up.
+    /// Set while a request awaits its answer; still set after a call gave up
+    /// or its connection failed.
     in_flight: bool,
 }
 
@@ -73,11 +74,12 @@ impl Client {
         })
     }
 
-    /// Replaces a connection left out of sync by an unfinished call.
+    /// Replaces a connection an unfinished or failed call left unusable.
     ///
     /// A no-op while the connection is usable. A scenario calls this before
-    /// each step, so a step cut off by its `timeout_ms` or by `--rpc-timeout`
-    /// does not fail every step after it (#241).
+    /// each step, so a step cut off by its `timeout_ms` or by `--rpc-timeout`,
+    /// or one whose connection the app closed, does not fail every step after
+    /// it (#241).
     ///
     /// # Errors
     ///
@@ -114,6 +116,7 @@ impl Client {
         // A call dropped mid-exchange, by this deadline or a caller's, leaves
         // its answer on the way or half read, and the next call would take
         // that as its own. The flag stays set then, and later calls refuse.
+        // An I/O error leaves it set too: that connection is dead.
         self.in_flight = true;
         let exchanged = tokio::time::timeout(budget, self.exchange(&bytes))
             .await
@@ -124,8 +127,8 @@ impl Client {
                     self.endpoint.display()
                 )
             })?;
-        self.in_flight = false;
         let line = exchanged?;
+        self.in_flight = false;
 
         let response: Response = serde_json::from_str(line.trim())?;
 
@@ -560,6 +563,48 @@ mod tests {
             err.to_string(),
             "Connection is out of sync: an earlier request on it did not complete"
         );
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_resync_replaces_a_connection_the_app_closed() {
+        // An app that restarts mid-run hangs up without answering. The next
+        // step must reconnect instead of failing on the dead connection.
+        let socket = unique_socket_path("t05l");
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let mut line = String::new();
+            BufReader::new(stream)
+                .read_line(&mut line)
+                .await
+                .expect("read line");
+            let (stream, _) = listener.accept().await.expect("accept again");
+            let (reader, mut writer) = stream.into_split();
+            line.clear();
+            BufReader::new(reader)
+                .read_line(&mut line)
+                .await
+                .expect("read line");
+            let req: Request = serde_json::from_str(line.trim()).expect("parse request");
+            let resp = Response::success(req.id, serde_json::json!({"status": "ok"}));
+            let mut bytes = serde_json::to_vec(&resp).expect("serialize response");
+            bytes.push(b'\n');
+            writer.write_all(&bytes).await.expect("write response");
+        });
+
+        let mut client = Client::connect(&socket).await.expect("connect");
+        let err = client
+            .call("click", None)
+            .await
+            .expect_err("the app hung up");
+        assert_eq!(err.to_string(), "Server closed the connection");
+        client.resync().await.expect("reconnect");
+        let result = client.call("ping", None).await.expect("ping");
+        assert_eq!(result, serde_json::json!({"status": "ok"}));
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);
