@@ -472,3 +472,23 @@ test("an Error whose name or message is not a string keeps them", () => {
     assert.equal(entry.args[0], "Unhandled rejection: " + expected);
   }
 });
+
+test("an uncaught error or rejection from a pilot eval names the eval", () => {
+  // #245: the stack WebKitGTK gives an error thrown by eval'd code, captured
+  // on pilot-test-app. Eval frames carry no location, so the eval wrapper is
+  // the first frame the bridge can read.
+  const error = new Error("boom");
+  error.stack =
+    "eval code@\neval@[native code]\n__PILOT_EVAL__@tauri://localhost:1:143\nglobal code@tauri://localhost:1:435";
+
+  for (const [type, event] of [
+    ["unhandledrejection", { reason: error }],
+    ["error", { message: "Uncaught Error: boom", filename: "tauri://localhost", lineno: 1, colno: 143, error }],
+  ]) {
+    const { pilot, win } = loadBridge();
+    win.dispatch(type, event);
+
+    const [entry] = pilot.consoleLogs({ level: "error" });
+    assert.equal(entry.source, "tauri-pilot-eval", type);
+  }
+});

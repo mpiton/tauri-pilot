@@ -12,6 +12,14 @@ use tokio::sync::{oneshot, watch};
 /// with a pending eval. `bridge.js` hardcodes the same value.
 pub(crate) const HELLO_ID: u64 = 0;
 
+/// Name of the function [`EvalEngine::wrap_script`] wraps every script in.
+///
+/// `WebKit` writes frames of eval'd code with no location and ignores
+/// `//# sourceURL`, so the bridge reads this name in a stack to tell that a
+/// console call came from a script pilot sent (#245). `bridge.js` hardcodes
+/// the same value.
+pub(crate) const WRAPPER_NAME: &str = "__PILOT_EVAL__";
+
 /// Origins whose bridge said hello, each with the hello count at its latest hello.
 #[derive(Debug, Default)]
 struct Bridges {
@@ -243,6 +251,9 @@ impl EvalEngine {
     /// scheme, host and port (or hostless href) and returns without running
     /// the command if they differ (#173). A foreign page cannot call
     /// `__callback`, so a mismatch is silent there.
+    ///
+    /// The wrapper is a function named [`WRAPPER_NAME`] so the bridge can
+    /// tell console calls from the script apart from app output (#245).
     #[must_use]
     pub fn wrap_script(id: u64, script: &str, origin: Option<&Url>) -> String {
         let run = format!(
@@ -254,10 +265,10 @@ impl EvalEngine {
         );
         match origin {
             Some(origin) => format!(
-                "(async()=>{{if({})return;{run}}})();",
+                "(async function {WRAPPER_NAME}(){{if({})return;{run}}})();",
                 origin_mismatch_js(origin)
             ),
-            None => format!("(async()=>{{{run}}})();"),
+            None => format!("(async function {WRAPPER_NAME}(){{{run}}})();"),
         }
     }
 
@@ -391,6 +402,22 @@ mod tests {
             !script.contains("return {id:7,result:"),
             "wrapped script must not return a native eval completion payload; got: {script}"
         );
+    }
+
+    // #245: JavaScriptCore gives eval'd code no location and ignores
+    // `//# sourceURL`, so the bridge finds a pilot eval by this frame name.
+    #[test]
+    fn test_wrap_script_names_the_wrapper_function() {
+        let origin = Url::parse("tauri://localhost/").expect("valid test URL");
+        for script in [
+            EvalEngine::wrap_script(1, "1", None),
+            EvalEngine::wrap_script(1, "1", Some(&origin)),
+        ] {
+            assert!(
+                script.starts_with(&format!("(async function {WRAPPER_NAME}(){{")),
+                "the wrapper must be a function named {WRAPPER_NAME}; got: {script}"
+            );
+        }
     }
 
     #[test]

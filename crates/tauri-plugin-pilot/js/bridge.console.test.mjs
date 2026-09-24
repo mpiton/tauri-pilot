@@ -442,3 +442,112 @@ test("a replacement that fakes the Pilot marker is still chained", () => {
   assert.deepEqual(seen, ["mine"], "the page's function must not be dropped");
   assert.deepEqual(messages(pilot), ["mine"]);
 });
+
+test("a log from a pilot eval names the eval, not the wrapper position", () => {
+  // JavaScriptCore writes eval and `new Function` frames with no location and
+  // ignores `//# sourceURL`, so the first frame with one was the eval wrapper
+  // and `logs` showed `tauri://localhost:1:143` (#245). Stacks captured on
+  // pilot-test-app under WebKitGTK 2.52: a stage that calls the script in
+  // tail position loses the `__PILOT__evalScript` frame, one that calls it
+  // inside `try` keeps it.
+  const head = ["extractSource@user-script:6:74:30", "view@user-script:6:162:60"];
+  for (const frames of [
+    ["eval code@", "eval@[native code]", "__PILOT_EVAL__@tauri://localhost:1:143"],
+    ["@", "anonymous@", "__PILOT__evalScript@user-script:6:1491:27", "__PILOT_EVAL__@tauri://localhost:1:165"],
+  ]) {
+    const pilot = loadBridge();
+    const saved = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => [...head, ...frames, "global code@tauri://localhost:1:435"].join("\n");
+    try {
+      console.log("from eval");
+    } finally {
+      Error.prepareStackTrace = saved;
+    }
+
+    const [entry] = pilot.consoleLogs({ level: "log" });
+    assert.equal(entry.source, "tauri-pilot-eval", frames.join(" | "));
+  }
+});
+
+test("a log from a pilot eval under V8 names the eval too", () => {
+  // V8 gives eval'd code a location (`eval at __PILOT__evalScript ...`), so without a
+  // check the entry pointed into the bridge instead of naming the eval.
+  const pilot = loadBridge();
+  function __PILOT_EVAL__() {
+    return pilot.eval({ script: 'console.log("from eval"); 1' });
+  }
+  __PILOT_EVAL__();
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(entry.source, "tauri-pilot-eval");
+});
+
+// Replays `frames` below the bridge's own two frames, the way
+// `extractSource` sees a console call, and returns the entry's source.
+function sourceOfReplayedLog(frames) {
+  const pilot = loadBridge();
+  const head = ["extractSource@user-script:6:74:30", "view@user-script:6:162:60"];
+  const saved = Error.prepareStackTrace;
+  Error.prepareStackTrace = () => [...head, ...frames].join("\n");
+  try {
+    console.log("replayed");
+  } finally {
+    Error.prepareStackTrace = saved;
+  }
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  return entry.source;
+}
+
+test("an app frame called from a pilot eval keeps the log", () => {
+  // Every bridge command (`click`, `fill`, ...) runs inside the eval wrapper,
+  // so an app handler it triggers must not be filed as eval output.
+  assert.equal(
+    sourceOfReplayedLog([
+      "onSave@tauri://localhost/assets/index.js:12:5",
+      "eval code@",
+      "__PILOT_EVAL__@tauri://localhost:1:143",
+    ]),
+    "onSave@tauri://localhost/assets/index.js:12:5",
+  );
+
+  const pilot = loadBridge();
+  globalThis.appHandler = function appHandler() {
+    console.log("from app");
+  };
+  try {
+    (function __PILOT_EVAL__() {
+      return pilot.eval({ script: "appHandler(); 1" });
+    })();
+  } finally {
+    delete globalThis.appHandler;
+  }
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.match(entry.source, /appHandler/);
+});
+
+test("an app function or file named evalScript keeps the log", () => {
+  // The bridge used to skip any frame matching `evalScript`, so the log
+  // reported the caller instead of the line that called console.log.
+  const frame = "evalScript@tauri://localhost/assets/evalScript.js:3:9";
+  assert.equal(sourceOfReplayedLog([frame, "global code@tauri://localhost/assets/main.js:1:1"]), frame);
+
+  const pilot = loadBridge();
+  function evalScript() {
+    console.log("from app");
+  }
+  evalScript();
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.match(entry.source, /evalScript/);
+});
+
+test("a log after an await in a pilot eval under V8 names the eval", async () => {
+  // V8 follows the `await` back to the wrapper with an `async __PILOT_EVAL__`
+  // frame. WebKit keeps no such frame, so there the entry has no source.
+  const pilot = loadBridge();
+  await (async function __PILOT_EVAL__() {
+    return await pilot.eval({ script: 'await Promise.resolve(); console.log("after await"); 1' });
+  })();
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(entry.source, "tauri-pilot-eval");
+});
