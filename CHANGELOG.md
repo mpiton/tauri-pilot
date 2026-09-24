@@ -95,8 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the load with `step 'assert-exists' does not accept 'selector'; use
   'target'`. Unknown actions and missing required keys fail the same way. They
   used to fail only when the step ran, after earlier steps had changed the app
-  and with a failure screenshot. The CLI reference lists the keys each action
-  takes. [#243]
+  and with a failure screenshot. A `wait` step now needs exactly one of
+  `target` or `selector`. Behavior change: a stray key next to the ones the
+  action needs, such as `value` on `click`, used to be ignored and now fails
+  the load, so a scenario that passed before may need cleaning up. The CLI
+  reference lists the keys each action takes. [#243]
 
 - MCP tool errors keep the app's structured `error.data` as fields instead of
   one text blob. A `pilot.state` call with an unknown `window` now returns

@@ -113,31 +113,52 @@ impl Step {
 
     /// Keys set on this step, leaving out those every action accepts.
     fn set_keys(&self) -> Vec<&'static str> {
+        // Exhaustive: a new `Step` field fails to compile until it is listed here.
+        let Self {
+            name: _,
+            action: _,
+            timeout_ms: _,
+            target,
+            value,
+            text,
+            key,
+            url,
+            script,
+            expected,
+            selector,
+            direction,
+            amount,
+            gone,
+            stable,
+            require_mutation,
+            path,
+        } = self;
         [
-            ("target", self.target.is_some()),
-            ("value", self.value.is_some()),
-            ("text", self.text.is_some()),
-            ("key", self.key.is_some()),
-            ("url", self.url.is_some()),
-            ("script", self.script.is_some()),
-            ("expected", self.expected.is_some()),
-            ("selector", self.selector.is_some()),
-            ("direction", self.direction.is_some()),
-            ("amount", self.amount.is_some()),
-            ("gone", self.gone.is_some()),
-            ("stable", self.stable.is_some()),
-            ("require_mutation", self.require_mutation.is_some()),
-            ("path", self.path.is_some()),
+            ("target", target.is_some()),
+            ("value", value.is_some()),
+            ("text", text.is_some()),
+            ("key", key.is_some()),
+            ("url", url.is_some()),
+            ("script", script.is_some()),
+            ("expected", expected.is_some()),
+            ("selector", selector.is_some()),
+            ("direction", direction.is_some()),
+            ("amount", amount.is_some()),
+            ("gone", gone.is_some()),
+            ("stable", stable.is_some()),
+            ("require_mutation", require_mutation.is_some()),
+            ("path", path.is_some()),
         ]
         .into_iter()
-        .filter_map(|(key, set)| set.then_some(key))
+        .filter_map(|(field, set)| set.then_some(field))
         .collect()
     }
 
     /// Checks the action is known and its keys match [`STEP_KEYS`].
     ///
     /// `selector` and `target` look alike to a scenario author, so rejecting
-    /// one names the other when the action takes it.
+    /// one names the other when the action takes it and the step lacks it.
+    /// `wait` needs exactly one of the two, which the table cannot express.
     fn check_keys(&self) -> Result<(), String> {
         let action = self.action.as_str();
         let Some(&(_, required, optional)) = STEP_KEYS.iter().find(|(name, ..)| *name == action)
@@ -148,11 +169,20 @@ impl Step {
         let set = self.set_keys();
         if let Some(&key) = set.iter().find(|&&key| !accepts(key)) {
             let hint = match key {
-                "selector" if accepts("target") => "; use 'target'",
-                "target" if accepts("selector") => "; use 'selector'",
+                "selector" if accepts("target") && self.target.is_none() => "; use 'target'",
+                "target" if accepts("selector") && self.selector.is_none() => "; use 'selector'",
                 _ => "",
             };
             return Err(format!("step '{action}' does not accept '{key}'{hint}"));
+        }
+        if action == "wait" {
+            match (self.target.is_some(), self.selector.is_some()) {
+                (false, false) => return Err("step 'wait' requires 'target' or 'selector'".into()),
+                (true, true) => {
+                    return Err("step 'wait' takes 'target' or 'selector', not both".into());
+                }
+                _ => {}
+            }
         }
         match required.iter().find(|&&key| !set.contains(&key)) {
             Some(key) => Err(format!("step '{action}' requires '{key}'")),
@@ -247,10 +277,7 @@ pub(crate) const DEFAULT_SCREENSHOT_DIR: &str = "tauri-pilot-failures";
 pub(crate) fn load_scenario(path: &Path) -> Result<Scenario> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read scenario file: {}", path.display()))?;
-    let scenario = toml::from_str(&content)
-        .with_context(|| format!("Failed to parse scenario TOML: {}", path.display()))?;
-    validate_steps(&scenario).with_context(|| format!("Invalid scenario: {}", path.display()))?;
-    Ok(scenario)
+    parse_scenario(&content).with_context(|| format!("Failed to load scenario: {}", path.display()))
 }
 
 pub(crate) fn parse_scenario(content: &str) -> Result<Scenario> {
@@ -260,10 +287,17 @@ pub(crate) fn parse_scenario(content: &str) -> Result<Scenario> {
 }
 
 /// Rejects the first step whose keys do not fit its action.
+///
+/// Always names the 1-based position, since step names can repeat in a file.
 fn validate_steps(scenario: &Scenario) -> Result<()> {
     for (idx, step) in scenario.step.iter().enumerate() {
-        step.check_keys()
-            .map_err(|reason| anyhow::anyhow!("{}: {reason}", step.display_name(idx)))?;
+        step.check_keys().map_err(|reason| {
+            let n = idx + 1;
+            match &step.name {
+                Some(name) => anyhow::anyhow!("step {n} ({name}): {reason}"),
+                None => anyhow::anyhow!("step {n}: {reason}"),
+            }
+        })?;
     }
     Ok(())
 }
@@ -1163,7 +1197,7 @@ urls = "http://example.com"
             "[[step]]\naction = \"assert-exists\"\nselector = \"#login-form\"\n",
             &[
                 "Invalid scenario",
-                "step-1: step 'assert-exists' does not accept 'selector'; use 'target'",
+                "step 1: step 'assert-exists' does not accept 'selector'; use 'target'",
             ],
         );
     }
@@ -1175,8 +1209,21 @@ urls = "http://example.com"
             &["step 'click' does not accept 'value'"],
         );
         assert_invalid(
-            "[[step]]\nname = \"settle\"\naction = \"watch\"\ntarget = \"#list\"\n",
-            &["settle: step 'watch' does not accept 'target'; use 'selector'"],
+            "[[step]]\naction = \"click\"\ntarget = \"#a\"\n\n[[step]]\nname = \"settle\"\naction = \"watch\"\ntarget = \"#list\"\n",
+            &["step 2 (settle): step 'watch' does not accept 'target'; use 'selector'"],
+        );
+    }
+
+    /// The hint must not name a key the step already sets.
+    #[test]
+    fn parse_scenario_hints_only_at_a_missing_key() {
+        let err =
+            parse_scenario("[[step]]\naction = \"click\"\ntarget = \"#a\"\nselector = \"#a\"\n")
+                .expect_err("selector on click");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.ends_with("step 'click' does not accept 'selector'"),
+            "unexpected error: {msg}"
         );
     }
 
@@ -1188,8 +1235,129 @@ urls = "http://example.com"
         );
         assert_invalid(
             "[[step]]\naction = \"click\"\ntarget = \"#a\"\n\n[[step]]\naction = \"assert-text\"\ntarget = \"h1\"\n",
-            &["step-2: step 'assert-text' requires 'expected'"],
+            &["step 2: step 'assert-text' requires 'expected'"],
         );
+    }
+
+    /// `wait` sends either `target` or `selector`; the bridge rejects neither,
+    /// and `build_wait_params` drops `target` when both are set.
+    #[test]
+    fn parse_scenario_requires_exactly_one_wait_target() {
+        assert_invalid(
+            "[[step]]\naction = \"wait\"\ngone = true\n",
+            &["step 1: step 'wait' requires 'target' or 'selector'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"wait\"\ntarget = \"#a\"\nselector = \"#a\"\n",
+            &["step 1: step 'wait' takes 'target' or 'selector', not both"],
+        );
+    }
+
+    /// Every action with every key `dispatch_step` reads must load.
+    ///
+    /// Written by hand, not built from `STEP_KEYS`: a row missing a key must
+    /// fail here.
+    #[test]
+    fn parse_scenario_accepts_every_key_each_action_reads() {
+        let scenario = parse_scenario(
+            r##"
+[[step]]
+name = "go"
+action = "click"
+target = "#a"
+timeout_ms = 500
+
+[[step]]
+action = "fill"
+target = "#a"
+value = "x"
+
+[[step]]
+action = "type"
+target = "#a"
+text = "x"
+
+[[step]]
+action = "press"
+key = "Enter"
+
+[[step]]
+action = "select"
+target = "#a"
+value = "x"
+
+[[step]]
+action = "check"
+target = "#a"
+
+[[step]]
+action = "scroll"
+target = "#a"
+direction = "down"
+amount = 50
+
+[[step]]
+action = "navigate"
+url = "http://localhost/"
+
+[[step]]
+action = "wait"
+target = "#a"
+gone = true
+
+[[step]]
+action = "wait"
+selector = "#a"
+gone = false
+
+[[step]]
+action = "watch"
+selector = "#a"
+stable = 300
+require_mutation = true
+
+[[step]]
+action = "eval"
+script = "1"
+
+[[step]]
+action = "screenshot"
+path = "shot.png"
+selector = "#a"
+
+[[step]]
+action = "assert-text"
+target = "#a"
+expected = "x"
+
+[[step]]
+action = "assert-exists"
+target = "#a"
+
+[[step]]
+action = "assert-visible"
+target = "#a"
+
+[[step]]
+action = "assert-hidden"
+target = "#a"
+
+[[step]]
+action = "assert-value"
+target = "#a"
+expected = "x"
+
+[[step]]
+action = "assert-url"
+expected = "/home"
+
+[[step]]
+action = "storage-get"
+key = "theme"
+"##,
+        )
+        .expect("every documented key loads");
+        assert_eq!(scenario.step.len(), 20);
     }
 
     #[test]
@@ -1380,7 +1548,7 @@ action = "ping"
     /// the `ref` alias only gave scenario authors a second spelling.
     #[test]
     fn test_scroll_step_target_covers_every_shape() {
-        let scenario: Scenario = toml::from_str(
+        let scenario = parse_scenario(
             r##"
 [[step]]
 action = "scroll"

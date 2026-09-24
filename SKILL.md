@@ -221,7 +221,13 @@ action = "storage-get"
 key = "theme"
 ```
 
-Failure screenshots auto-saved to `./tauri-pilot-failures/`, or to `run --screenshots-dir <DIR>`. A failed step reports the absolute file as `screenshot`, or why it could not be written as `screenshot_error`, in `run --json`, in the MCP report and as `<system-out>` in the JUnit XML. A step the CLI gave up on before the app answered (`--rpc-timeout`, or `timeout_ms` on any action but `wait`/`watch`) gets no screenshot, only a `screenshot_error` saying the connection is out of sync; with `--no-fail-fast` the next step reconnects. Exit code 0 on success, 1 on any failure. Use `run` for structured CI tests; use `record`/`replay` for capture-replay of manual interactions. Over MCP, `pilot.run` takes `path` or inline `content` plus optional `fail_fast` and `screenshots_dir` (default: an owner-only per-user `tauri-pilot-failures-<uid>` directory under `$XDG_RUNTIME_DIR`, or under the system temp directory when that is unavailable) and returns a JSON report (`ok`, counts, `summary`, `steps`) instead of JUnit XML. A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.
+Each step is checked against its action when the scenario loads, before
+`run` or `pilot.run` connects. An unknown action, a missing required key, or a
+key the action does not read (`selector` on `assert-exists`, `target` on
+`watch`) fails the whole scenario. `wait` takes `target` or `selector`, not
+both. The CLI reference lists the keys each action takes under `run`.
+
+Failure screenshots auto-saved to `./tauri-pilot-failures/`, or to `run --screenshots-dir <DIR>`. A failed step reports the absolute file as `screenshot`, or why it could not be written as `screenshot_error`, in `run --json`, in the MCP report and as `<system-out>` in the JUnit XML. A step the CLI gave up on before the app answered (`--rpc-timeout`, or `timeout_ms` on any action but `wait`/`watch`) gets no screenshot, only a `screenshot_error` saying the connection is out of sync; with `--no-fail-fast` the next step reconnects. Exit code 0 on success, 1 on any failure. Use `run` for structured CI tests; use `record`/`replay` for capture-replay of manual interactions. Over MCP, `pilot.run` takes `path` or inline `content` plus optional `fail_fast` and `screenshots_dir` (default: an owner-only per-user `tauri-pilot-failures-<uid>` directory under `$XDG_RUNTIME_DIR`, or under the system temp directory when that is unavailable) and returns a JSON report (`ok`, counts, `summary`, `steps`) instead of JUnit XML. A finished run including failed steps is a successful tool result with `ok` false; only parse, step-key, I/O, connect, and timeout failures are tool errors.
 
 ## Global Flags
 

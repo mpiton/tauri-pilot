@@ -987,7 +987,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "run",
-            description: "Execute a declarative TOML scenario and return a JSON report (`ok`, counts, `summary`, `steps`). A finished run including failed steps is a successful tool result with `ok` false; only parse, I/O, connect, and timeout failures are tool errors.",
+            description: "Execute a declarative TOML scenario and return a JSON report (`ok`, counts, `summary`, `steps`). A finished run including failed steps is a successful tool result with `ok` false; only parse, step-key, I/O, connect, and timeout failures are tool errors.",
             schema: run_schema,
             read_only: false,
             destructive: true,
@@ -2377,6 +2377,31 @@ target = "#btn"
         assert!(
             error.contains("Cannot connect to socket")
                 || error.contains("Cannot connect to named pipe"),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// A step key the action does not read fails before connecting (#243).
+    #[tokio::test]
+    async fn run_invalid_step_key_is_tool_error_before_connect() {
+        let missing_socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-missing-keys-{}.sock",
+            std::process::id()
+        ));
+        let mut args = Map::new();
+        args.insert(
+            "content".to_owned(),
+            json!("[[step]]\naction = \"assert-exists\"\nselector = \"#x\"\n"),
+        );
+        let result = PilotMcpServer::new(Some(missing_socket), None)
+            .call_tool_by_name("run", args)
+            .await
+            .expect("tool call returns");
+        assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(
+            error.contains("step 'assert-exists' does not accept 'selector'; use 'target'")
+                && !error.contains("Cannot connect"),
             "unexpected error: {error}"
         );
     }

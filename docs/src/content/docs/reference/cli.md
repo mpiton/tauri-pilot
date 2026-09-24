@@ -126,8 +126,10 @@ server's working directory belongs to whichever client spawned it, so it is not
 a useful default, and a shared `/tmp` path would hand every other user on the
 host whatever the screenshots happen to show. A finished run
 including failed steps is a successful tool result with `ok` false; only parse,
-I/O, connect, and timeout failures are tool errors. The tool also returns
-`INVALID_PARAMS` for an empty `[[step]]` list, `eval`/`drop`/`ipc` steps unless
+step-key, I/O, connect, and timeout failures are tool errors. Step keys are
+checked against the table under `run`, and `drop` and `ipc` are not scenario
+actions, so they fail there as unknown actions. The tool also returns
+`INVALID_PARAMS` for an empty `[[step]]` list, `eval` steps unless
 `TAURI_PILOT_MCP_ENABLE_DANGEROUS_TOOLS` is set, `javascript:` navigate URLs,
 and screenshot steps that set `path`. The CLI example
 `docs/examples/login-flow.toml` includes a screenshot `path` and cannot be run
@@ -1503,7 +1505,7 @@ other keys depend on the action:
 | `press` | `key` | |
 | `scroll` | | `target`, `direction`, `amount` |
 | `navigate` | `url` | |
-| `wait` | | `target`, `selector`, `gone` |
+| `wait` | `target` or `selector`, not both | `gone` |
 | `watch` | | `selector`, `stable`, `require_mutation` |
 | `eval` | `script` | |
 | `screenshot` | | `path`, `selector` |
@@ -1517,10 +1519,11 @@ action, a missing required key, or a key the action does not read fails the
 whole file, and no step runs:
 
 ```text
-Error: Invalid scenario: sel.toml
+Error: Failed to load scenario: sel.toml
 
 Caused by:
-    step-1: step 'assert-exists' does not accept 'selector'; use 'target'
+    0: Invalid scenario
+    1: step 1: step 'assert-exists' does not accept 'selector'; use 'target'
 ```
 
 A failed step captures a screenshot and reports where it landed as
