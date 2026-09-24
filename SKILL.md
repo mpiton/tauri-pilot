@@ -230,6 +230,7 @@ Failure screenshots auto-saved to `./tauri-pilot-failures/`, or to `run --screen
 | `--socket <path>` | Explicit socket path (auto-detected by default) |
 | `--window <label>` | Target a specific window (env: `TAURI_PILOT_WINDOW`). Default: `main` or first available |
 | `--json` | Raw JSON output |
+| `--rpc-timeout <secs>` | Give up when the app has not answered after this long (env: `TAURI_PILOT_RPC_TIMEOUT`). Default: 35, plus the `--timeout` of `wait`/`watch` |
 
 ## Socket Auto-Detection
 

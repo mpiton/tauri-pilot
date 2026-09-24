@@ -14,6 +14,7 @@ These options can be used with any command.
 | `--socket <path>` | Explicit path to the Unix socket. Auto-detected if omitted. Env: `TAURI_PILOT_SOCKET` |
 | `--window <label>` | Target a specific window by label. Env: `TAURI_PILOT_WINDOW`. Default: `main`, falls back to the first window by label |
 | `--json` | Output JSON instead of human-readable text |
+| `--rpc-timeout <secs>` | Seconds to wait for the app to answer before giving up (default `35`). `wait` and `watch` add their own `--timeout` on top. Env: `TAURI_PILOT_RPC_TIMEOUT` |
 
 ### Socket Auto-Detection
 

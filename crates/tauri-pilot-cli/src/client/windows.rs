@@ -50,6 +50,9 @@ pub async fn connect(path: &Path) -> Result<Client> {
         reader: BufReader::new(reader),
         writer,
         next_id: 1,
+        endpoint: path.to_owned(),
+        deadline: super::rpc_timeout(),
+        in_flight: false,
     })
 }
 

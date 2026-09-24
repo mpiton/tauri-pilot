@@ -1,7 +1,9 @@
 use crate::protocol::{Request, Response};
 
-use anyhow::{Result, bail};
-use std::path::Path;
+use anyhow::{Result, anyhow, bail};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 /// Longest request line the plugin reads, trailing newline included.
@@ -10,6 +12,30 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 /// longer line with an error and closes the connection, often while the CLI
 /// is still writing. The crates ship separately, so change both together.
 pub(crate) const MAX_REQUEST_LEN: usize = 1_048_576;
+
+/// How long a call waits for the app's answer unless `--rpc-timeout` says otherwise.
+///
+/// Above the plugin's longest fixed bound, 30 s for `screenshot`, so a slow
+/// but live app still answers. `wait`, `watch` and a tuned `drag` add the
+/// time they spend in the webview on top. Lower and a slow `navigate` fails
+/// while the app is still working; higher and a wedged app takes longer to
+/// report (#241).
+pub(crate) const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(35);
+
+/// Deadline set once from `--rpc-timeout`, read by every `Client` the process opens.
+static RPC_TIMEOUT: OnceLock<Duration> = OnceLock::new();
+
+/// Sets the deadline for every `Client` connected afterwards.
+///
+/// Only the first call takes effect: the CLI sets it once, from its flags,
+/// before it opens any connection.
+pub(crate) fn set_rpc_timeout(timeout: Duration) {
+    let _ = RPC_TIMEOUT.set(timeout);
+}
+
+fn rpc_timeout() -> Duration {
+    RPC_TIMEOUT.get().copied().unwrap_or(DEFAULT_RPC_TIMEOUT)
+}
 
 /// JSON-RPC client over a platform-specific transport (Unix socket or Named Pipe).
 pub(crate) struct Client {
@@ -22,6 +48,12 @@ pub(crate) struct Client {
     #[cfg(windows)]
     writer: tokio::io::WriteHalf<tokio::net::windows::named_pipe::NamedPipeClient>,
     next_id: u64,
+    /// Socket or pipe path, named when the app does not answer.
+    endpoint: PathBuf,
+    /// How long a call waits for its answer, before `rpc_budget` extends it.
+    deadline: Duration,
+    /// Set while a request awaits its answer; still set after a call gave up.
+    in_flight: bool,
 }
 
 impl Client {
@@ -43,9 +75,13 @@ impl Client {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<serde_json::Value> {
+        if self.in_flight {
+            bail!("Connection is out of sync: an earlier request on it did not complete");
+        }
         let id = self.next_id;
         self.next_id += 1;
 
+        let budget = rpc_budget(self.deadline, params.as_ref());
         let bytes = encode(id, method, params)?;
         if bytes.len() > MAX_REQUEST_LEN {
             bail!(
@@ -53,14 +89,21 @@ impl Client {
                 bytes.len()
             );
         }
-        self.writer.write_all(&bytes).await?;
-        self.writer.flush().await?;
-
-        let mut line = String::new();
-        let n = self.reader.read_line(&mut line).await?;
-        if n == 0 {
-            bail!("Server closed the connection");
-        }
+        // A call dropped mid-exchange, by this deadline or a caller's, leaves
+        // its answer on the way or half read, and the next call would take
+        // that as its own. The flag stays set then, and later calls refuse.
+        self.in_flight = true;
+        let exchanged = tokio::time::timeout(budget, self.exchange(&bytes))
+            .await
+            .map_err(|_elapsed| {
+                anyhow!(
+                    "No response from the app after {budget:?}: {} accepted the connection \
+                     but did not answer. Raise --rpc-timeout if the command needs longer.",
+                    self.endpoint.display()
+                )
+            })?;
+        self.in_flight = false;
+        let line = exchanged?;
 
         let response: Response = serde_json::from_str(line.trim())?;
 
@@ -114,6 +157,19 @@ impl Client {
         Ok(response.result.unwrap_or(serde_json::Value::Null))
     }
 
+    /// Write one request line and read one answer line.
+    async fn exchange(&mut self, bytes: &[u8]) -> Result<String> {
+        self.writer.write_all(bytes).await?;
+        self.writer.flush().await?;
+
+        let mut line = String::new();
+        let n = self.reader.read_line(&mut line).await?;
+        if n == 0 {
+            bail!("Server closed the connection");
+        }
+        Ok(line)
+    }
+
     /// Bytes the next `call` would write for this request, newline included.
     pub(crate) fn request_len(
         &self,
@@ -122,6 +178,26 @@ impl Client {
     ) -> Result<usize> {
         Ok(encode(self.next_id, method, params)?.len())
     }
+}
+
+/// Time a call may wait: `deadline`, plus the time in ms the request asks
+/// the webview to spend before the plugin can answer.
+///
+/// That is the `timeout` of a `wait` or `watch`, or the gesture of a `drag`:
+/// up to 60 moves spaced by `stepDelayMs`, then `settleMs`. The plugin
+/// stretches its own bound the same way, so the client must not cut first.
+fn rpc_budget(deadline: Duration, params: Option<&serde_json::Value>) -> Duration {
+    let ms = |key: &str| {
+        params
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    // ponytail: counts the 60-move clamp, not `steps`; over-waits only when the app is wedged.
+    let in_webview = ms("timeout")
+        .saturating_add(ms("stepDelayMs").saturating_mul(60))
+        .saturating_add(ms("settleMs"));
+    deadline.saturating_add(Duration::from_millis(in_webview))
 }
 
 /// Serialize a request as one line, trailing newline included.
@@ -386,6 +462,89 @@ mod tests {
 
         handle.abort();
         let _ = std::fs::remove_file(&socket);
+    }
+
+    /// Accept one connection and never answer, like a wedged app or another
+    /// process squatting the socket path.
+    fn silent_server(path: &Path) -> tokio::task::JoinHandle<()> {
+        let _ = std::fs::remove_file(path);
+        let listener = UnixListener::bind(path).expect("bind mock socket");
+        tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.expect("accept");
+            std::future::pending::<()>().await;
+        })
+    }
+
+    #[tokio::test]
+    async fn test_client_gives_up_when_the_app_never_answers() {
+        // Something that accepts the connection but never writes a line used
+        // to block every command forever, with no output (#241).
+        let socket = unique_socket_path("t05i");
+        let handle = silent_server(&socket);
+
+        let mut client = connect_with_retry(&socket).await;
+        client.deadline = Duration::from_millis(100);
+        let err = tokio::time::timeout(Duration::from_secs(5), client.call("ping", None))
+            .await
+            .expect("bounded by the client deadline")
+            .expect_err("silent server");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "No response from the app after 100ms: {} accepted the connection but did not \
+                 answer. Raise --rpc-timeout if the command needs longer.",
+                socket.display()
+            )
+        );
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    async fn test_client_refuses_reuse_after_an_unfinished_call() {
+        // A caller's own deadline, like a scenario step `timeout_ms`, drops the
+        // call mid-read. The late answer would then be read as the answer to
+        // the next request, so that request must fail at once (#241).
+        let socket = unique_socket_path("t05j");
+        let handle = silent_server(&socket);
+
+        let mut client = connect_with_retry(&socket).await;
+        let dropped =
+            tokio::time::timeout(Duration::from_millis(50), client.call("click", None)).await;
+        assert!(dropped.is_err(), "the silent server cannot answer");
+        let err = tokio::time::timeout(Duration::from_secs(5), client.call("screenshot", None))
+            .await
+            .expect("refused without waiting for the app")
+            .expect_err("connection out of sync");
+        assert_eq!(
+            err.to_string(),
+            "Connection is out of sync: an earlier request on it did not complete"
+        );
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[test]
+    fn test_rpc_budget_adds_the_wait_timeout() {
+        // `wait` and `watch` run for their own `timeout` in the webview, so
+        // the client deadline only covers the time around it.
+        let base = Duration::from_secs(35);
+        let wait = serde_json::json!({"selector": "#a", "timeout": 60_000});
+        assert_eq!(rpc_budget(base, Some(&wait)), Duration::from_secs(95));
+        let click = serde_json::json!({"selector": "#a"});
+        assert_eq!(rpc_budget(base, Some(&click)), base);
+        assert_eq!(rpc_budget(base, None), base);
+    }
+
+    #[test]
+    fn test_rpc_budget_adds_a_tuned_drag_gesture() {
+        // The plugin waits `steps × stepDelayMs + settleMs` for a drag, so a
+        // slow gesture over MCP must not hit the client deadline first.
+        let base = Duration::from_secs(35);
+        let drag = serde_json::json!({"steps": 60, "stepDelayMs": 1_000, "settleMs": 5_000});
+        assert_eq!(rpc_budget(base, Some(&drag)), Duration::from_secs(100));
     }
 
     #[tokio::test]
