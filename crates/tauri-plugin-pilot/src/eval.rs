@@ -119,6 +119,12 @@ pub(crate) struct EvalEngine {
     next_id: Arc<AtomicU64>,
     last_snapshot: Arc<Mutex<Option<serde_json::Value>>>,
     bridges: Arc<watch::Sender<Bridges>>,
+    /// Last URL whose load started, keyed by webview label.
+    ///
+    /// Written from `on_page_load` (`Started`) and read by the callback
+    /// commands. Both run under the plugin store lock, so a navigation cannot
+    /// replace this URL while a hello is being recorded.
+    pages: Arc<Mutex<HashMap<String, Url>>>,
 }
 
 impl EvalEngine {
@@ -128,7 +134,28 @@ impl EvalEngine {
             next_id: Arc::new(AtomicU64::new(1)),
             last_snapshot: Arc::new(Mutex::new(None)),
             bridges: Arc::new(watch::Sender::new(Bridges::default())),
+            pages: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Remember `url` as the page `label` started loading.
+    ///
+    /// `on_page_load` calls this for `Started` only. That hook does not ask
+    /// the webview for its URL.
+    pub(crate) fn record_page_start(&self, label: &str, url: Url) {
+        self.pages
+            .lock()
+            .expect("page url lock poisoned")
+            .insert(label.to_owned(), url);
+    }
+
+    /// URL recorded when `label` last started loading.
+    pub(crate) fn page_at_start(&self, label: &str) -> Option<Url> {
+        self.pages
+            .lock()
+            .expect("page url lock poisoned")
+            .get(label)
+            .cloned()
     }
 
     /// Record a hello from `page` (the invoking webview's URL).
@@ -609,6 +636,28 @@ mod tests {
             engine
                 .wait_bridge(&app, since, Duration::from_secs(1))
                 .await
+        );
+    }
+
+    #[test]
+    fn test_page_at_start_keeps_the_latest_started_url_per_label() {
+        let engine = EvalEngine::new();
+        let url = |text| Url::parse(text).expect("valid test URL");
+        assert!(engine.page_at_start("main").is_none());
+        engine.record_page_start("main", url("tauri://localhost/"));
+        engine.record_page_start("settings", url("https://example.com/"));
+        assert_eq!(
+            engine.page_at_start("main").as_ref().map(Url::as_str),
+            Some("tauri://localhost/")
+        );
+        engine.record_page_start("main", url("tauri://localhost/next"));
+        assert_eq!(
+            engine.page_at_start("main").as_ref().map(Url::as_str),
+            Some("tauri://localhost/next")
+        );
+        assert_eq!(
+            engine.page_at_start("settings").as_ref().map(Url::as_str),
+            Some("https://example.com/")
         );
     }
 

@@ -192,6 +192,17 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     tracing::warn!(error = %err, "failed to inject tauri-pilot bridge on webview ready");
                 }
             })
+            // `Started` runs under the plugin store lock and does not call
+            // `webview.url()`. The callback commands read this record (#252).
+            .on_page_load(|webview, payload| {
+                if payload.event() != tauri::webview::PageLoadEvent::Started {
+                    return;
+                }
+                let Some(engine) = webview.try_state::<EvalEngine>() else {
+                    return;
+                };
+                engine.record_page_start(webview.label(), payload.url().clone());
+            })
             .setup(|app, _api| {
                 let engine = EvalEngine::new();
                 app.manage(engine.clone());

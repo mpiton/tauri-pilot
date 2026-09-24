@@ -1069,28 +1069,29 @@ pub(crate) fn handle_callback(
 
 /// Tauri IPC command for the eval callback handler.
 ///
-/// Async so the URL read does not run under the plugin store lock. On Android
-/// that read waits for the main thread, and navigation there needs the same
-/// lock (#252).
+/// Synchronous, so Tauri holds the plugin store lock until it returns. The
+/// page is the last load that `Started` on this webview. `webview.url()` is
+/// not called: on Android that waits for the main thread, and navigation
+/// needs the same lock (#252). A new load cannot be recorded until this
+/// returns, so an in-flight hello still names the page it came from.
 #[tauri::command]
 #[allow(
     clippy::needless_pass_by_value,
     reason = "tauri::command contract — macro wrapper is the real consumer"
 )]
-pub(crate) async fn callback<R: tauri::Runtime>(
+pub(crate) fn callback<R: tauri::Runtime>(
     eval_engine: tauri::State<'_, EvalEngine>,
     webview: tauri::WebviewWindow<R>,
     id: u64,
     result: Option<String>,
     error: Option<String>,
-) -> Result<(), String> {
-    finish_callback(eval_engine, webview, id, result, error).await
+) {
+    finish_callback(&eval_engine, &webview, id, result, error);
 }
 
 /// Legacy Tauri IPC command for the `__callback` handler.
 ///
-/// Async for the same reason as [`callback`]: the URL read must not run while
-/// the plugin store lock is held (#252).
+/// Same lock and page rules as [`callback`].
 ///
 /// `#[tauri::command]` binds `State<'_, T>` by value. The generated wrapper is
 /// the true consumer, so clippy's view of the body is incomplete. Cannot be
@@ -1100,36 +1101,26 @@ pub(crate) async fn callback<R: tauri::Runtime>(
     clippy::needless_pass_by_value,
     reason = "tauri::command contract — macro wrapper is the real consumer"
 )]
-pub(crate) async fn __callback<R: tauri::Runtime>(
+pub(crate) fn __callback<R: tauri::Runtime>(
     eval_engine: tauri::State<'_, EvalEngine>,
     webview: tauri::WebviewWindow<R>,
     id: u64,
     result: Option<String>,
     error: Option<String>,
-) -> Result<(), String> {
-    finish_callback(eval_engine, webview, id, result, error).await
+) {
+    finish_callback(&eval_engine, &webview, id, result, error);
 }
 
-/// Yield once, then record the callback.
-///
-/// Tauri holds the plugin store mutex until an async command yields. The first
-/// poll stops here, the mutex drops, and only the next poll reads the URL.
-async fn finish_callback<R: tauri::Runtime>(
-    eval_engine: tauri::State<'_, EvalEngine>,
-    webview: tauri::WebviewWindow<R>,
+/// Record the callback against the page saved when its load started.
+fn finish_callback<R: tauri::Runtime>(
+    eval_engine: &EvalEngine,
+    webview: &tauri::WebviewWindow<R>,
     id: u64,
     result: Option<String>,
     error: Option<String>,
-) -> Result<(), String> {
-    tokio::task::yield_now().await;
-    handle_callback(
-        &eval_engine,
-        id,
-        result,
-        error,
-        crate::webview::current_url(&webview).as_ref(),
-    );
-    Ok(())
+) {
+    let page = eval_engine.page_at_start(webview.label());
+    handle_callback(eval_engine, id, result, error, page.as_ref());
 }
 
 #[cfg(test)]
@@ -3140,43 +3131,65 @@ mod tests {
         );
     }
 
-    /// How long a free plugin-store lock may take. A held lock waits out the
-    /// URL gate instead, which is much longer.
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    const NAVIGATION_LOCK_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
-
-    /// How long the callback may take to reach `current_url`.
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    const URL_WAIT_ENTRY_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
-
-    /// Issue 252: a pilot callback must not keep the plugin store locked while
-    /// `current_url` waits. On Android that wait is `WebviewWindow::url`, and
-    /// the main thread needs the same lock to finish navigation.
+    /// An in-flight hello with no client result must not mark the destination.
+    ///
+    /// The live webview URL is already the destination. Reading it would tag
+    /// that origin, and on Android it would also wait on the main thread
+    /// while the plugin store lock is held (#252). The hello has to use the
+    /// URL recorded when the previous page started loading.
     #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
     #[test]
-    fn callback_does_not_hold_plugin_store_while_url_waits() {
-        use tauri::{WebviewUrl, WebviewWindowBuilder};
+    fn in_flight_hello_without_result_does_not_mark_destination() {
+        use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
         use crate::webview::url_gate::{LABEL, UrlGate};
 
-        struct SocketCleanup(std::path::PathBuf);
-        impl Drop for SocketCleanup {
-            fn drop(&mut self) {
-                crate::server::unix::cleanup_bind_files(&self.0);
-            }
-        }
-
         let gate = UrlGate::install();
         let _gate_guard = scopeguard_release(gate.clone());
+        let (_socket, app) = callback_test_app();
+        let window =
+            WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External(url(FOREIGN_PAGE)))
+                .data_directory(std::env::temp_dir())
+                .build()
+                .expect("url-wait window");
+        let live = window.url().expect("live url");
+        assert_eq!(
+            origin_key(&live),
+            origin_key(&url(FOREIGN_PAGE)),
+            "the fixture's live URL must be the destination"
+        );
 
+        let engine = app.state::<EvalEngine>();
+        engine.record_page_start(LABEL, url(APP_PAGE));
+        for command in ["plugin:pilot|__callback", "plugin:pilot|callback"] {
+            let before = engine.hellos();
+            invoke_hello(&window, &gate, command);
+            assert!(!gate.entered(), "{command} read the live webview URL");
+            assert_eq!(
+                engine.hellos(),
+                before + 1,
+                "{command} did not record the hello"
+            );
+            assert!(
+                engine.has_bridge(&url(APP_PAGE)),
+                "{command} dropped the page recorded at start"
+            );
+            assert!(
+                !engine.has_bridge(&url(FOREIGN_PAGE)),
+                "{command} marked the destination from an in-flight hello with no result"
+            );
+        }
+    }
+
+    /// App whose plugin socket is removed when the guard drops.
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    fn callback_test_app() -> (SocketCleanup, tauri::App<tauri::test::MockRuntime>) {
         let identifier = format!("com.pilot.issue252-{}", std::process::id());
         let address = crate::server::socket_address(&identifier).expect("socket address");
         let path = address
             .as_pathname()
             .expect("pathname socket")
             .to_path_buf();
-        let _socket = SocketCleanup(path);
-
         let mut context = tauri::test::mock_context(tauri::test::noop_assets());
         context.config_mut().identifier = identifier;
         for command in ["plugin:pilot|__callback", "plugin:pilot|callback"] {
@@ -3189,19 +3202,55 @@ mod tests {
             .plugin(crate::init())
             .build(context)
             .expect("app starts");
-        let window = WebviewWindowBuilder::new(
-            &app,
-            LABEL,
-            WebviewUrl::External("tauri://localhost".parse().expect("local origin")),
-        )
-        .data_directory(std::env::temp_dir())
-        .build()
-        .expect("url-wait window");
+        (SocketCleanup(path), app)
+    }
 
-        for command in ["plugin:pilot|__callback", "plugin:pilot|callback"] {
-            gate.reset();
-            assert_navigation_while_url_waits(&app, &window, &gate, command);
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    struct SocketCleanup(std::path::PathBuf);
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    impl Drop for SocketCleanup {
+        fn drop(&mut self) {
+            crate::server::unix::cleanup_bind_files(&self.0);
         }
+    }
+
+    /// Send a hello with no result. Returns once the command does.
+    ///
+    /// A command that calls `current_url` blocks in the URL gate, so this
+    /// waits only long enough for a lock-free callback to finish.
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    fn invoke_hello(
+        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        gate: &crate::webview::url_gate::UrlGate,
+        command: &str,
+    ) {
+        let window = window.clone();
+        let command_owned = command.to_owned();
+        let ipc = std::thread::spawn(move || {
+            window.on_message(
+                tauri::webview::InvokeRequest {
+                    cmd: command_owned,
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: url(APP_PAGE),
+                    body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "id": 0 })),
+                    headers: tauri::http::HeaderMap::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.to_owned(),
+                },
+                Box::new(|_webview, _cmd, _response, _callback, _error| {}),
+            );
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !ipc.is_finished() {
+            assert!(!gate.entered(), "{command} read the live webview URL");
+            assert!(
+                std::time::Instant::now() <= deadline,
+                "{command} did not return; it is waiting on the webview URL"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        ipc.join().expect("callback thread");
     }
 
     #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
@@ -3214,70 +3263,5 @@ mod tests {
             }
         }
         Guard(gate)
-    }
-
-    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
-    fn assert_navigation_while_url_waits(
-        app: &tauri::App<tauri::test::MockRuntime>,
-        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
-        gate: &crate::webview::url_gate::UrlGate,
-        command: &str,
-    ) {
-        use std::sync::mpsc;
-        use std::time::Instant;
-
-        let handle = app.handle().clone();
-        let window = window.clone();
-        let command_owned = command.to_owned();
-        let ipc = std::thread::spawn(move || {
-            window.on_message(
-                tauri::webview::InvokeRequest {
-                    cmd: command_owned,
-                    callback: tauri::ipc::CallbackFn(0),
-                    error: tauri::ipc::CallbackFn(1),
-                    url: "tauri://localhost".parse().expect("local origin"),
-                    body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "id": 1 })),
-                    headers: tauri::http::HeaderMap::default(),
-                    invoke_key: tauri::test::INVOKE_KEY.to_owned(),
-                },
-                Box::new(|_webview, _cmd, _response, _callback, _error| {}),
-            );
-        });
-
-        // The command may return before the URL read: an async handler is
-        // polled after Tauri drops the plugin store lock.
-        let entry_deadline = Instant::now() + URL_WAIT_ENTRY_LIMIT;
-        while !gate.entered() {
-            if Instant::now() > entry_deadline {
-                gate.release();
-                ipc.join().expect("callback thread");
-                panic!("{command} did not reach current_url within {URL_WAIT_ENTRY_LIMIT:?}");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-
-        let (locked, nav_rx) = mpsc::channel();
-        let nav = std::thread::spawn(move || {
-            // Same mutex `on_navigation` takes. The plugin name is absent, so
-            // the call only contends for the store.
-            let _removed = handle.remove_plugin("not-installed");
-            let _ = locked.send(());
-        });
-        let navigation_blocked = nav_rx.recv_timeout(NAVIGATION_LOCK_LIMIT).is_err();
-        gate.release();
-        let leave_deadline = Instant::now() + URL_WAIT_ENTRY_LIMIT;
-        while !gate.left() {
-            assert!(
-                Instant::now() <= leave_deadline,
-                "{command} did not leave current_url"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        nav.join().expect("navigation thread");
-        ipc.join().expect("callback thread");
-        assert!(
-            !navigation_blocked,
-            "{command} held the plugin store while waiting for the webview URL"
-        );
     }
 }

@@ -125,8 +125,10 @@ impl<R: tauri::Runtime> Webviews for TauriWebviews<R> {
 
 /// Read the current URL of a webview, or `None` when the runtime cannot report it.
 ///
-/// Also used by the `__callback` command to tag hellos with the page they
-/// come from.
+/// Android `url()` posts to the main thread and waits. A caller that already
+/// holds the plugin store lock must not use this: navigation on that thread
+/// needs the same lock (#252). Callback commands read [`crate::eval::EvalEngine::page_at_start`]
+/// instead.
 pub(crate) fn current_url<R: tauri::Runtime>(webview: &tauri::WebviewWindow<R>) -> Option<Url> {
     // Android `url()` posts to the main thread and waits. Desktop returns on
     // the caller, so a test window named below blocks here instead, while the
@@ -154,7 +156,6 @@ pub(crate) mod url_gate {
 
     struct Inner {
         entered: AtomicBool,
-        left: AtomicBool,
         released: Mutex<bool>,
         cv: Condvar,
     }
@@ -168,7 +169,6 @@ pub(crate) mod url_gate {
         pub(crate) fn install() -> Self {
             let gate = Self(Arc::new(Inner {
                 entered: AtomicBool::new(false),
-                left: AtomicBool::new(false),
                 released: Mutex::new(false),
                 cv: Condvar::new(),
             }));
@@ -179,18 +179,6 @@ pub(crate) mod url_gate {
         /// `current_url` has reached the wait.
         pub(crate) fn entered(&self) -> bool {
             self.0.entered.load(Ordering::SeqCst)
-        }
-
-        /// `current_url` has finished the wait.
-        pub(crate) fn left(&self) -> bool {
-            self.0.left.load(Ordering::SeqCst)
-        }
-
-        /// Prepare for another callback. The previous waiter must have returned.
-        pub(crate) fn reset(&self) {
-            self.0.entered.store(false, Ordering::SeqCst);
-            self.0.left.store(false, Ordering::SeqCst);
-            *self.0.released.lock().expect("url gate release") = false;
         }
 
         /// Let every waiter return.
@@ -222,7 +210,6 @@ pub(crate) mod url_gate {
         while !*released {
             released = gate.0.cv.wait(released).expect("url gate wait");
         }
-        gate.0.left.store(true, Ordering::SeqCst);
     }
 }
 
