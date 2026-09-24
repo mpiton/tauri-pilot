@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-24
+
 ### Added
 
 - TOML scenario `storage-get` step reads a storage key and fails when it is
@@ -1075,7 +1077,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#54]: https://github.com/mpiton/tauri-pilot/issues/54
 [#62]: https://github.com/mpiton/tauri-pilot/pull/62
 [#63]: https://github.com/mpiton/tauri-pilot/pull/63
-[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/mpiton/tauri-pilot/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/mpiton/tauri-pilot/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/mpiton/tauri-pilot/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/mpiton/tauri-pilot/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/mpiton/tauri-pilot/compare/v0.7.0...v0.7.1
@@ -1138,6 +1141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#155]: https://github.com/mpiton/tauri-pilot/issues/155
 [#156]: https://github.com/mpiton/tauri-pilot/issues/156
 [#157]: https://github.com/mpiton/tauri-pilot/issues/157
+[#158]: https://github.com/mpiton/tauri-pilot/issues/158
 [#159]: https://github.com/mpiton/tauri-pilot/issues/159
 [#160]: https://github.com/mpiton/tauri-pilot/issues/160
 [#161]: https://github.com/mpiton/tauri-pilot/issues/161
