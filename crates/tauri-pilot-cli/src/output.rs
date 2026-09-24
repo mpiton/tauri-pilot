@@ -581,6 +581,9 @@ fn format_mutation_entry(el: &serde_json::Value) -> String {
 
 /// Format a diff result showing added, removed, and changed elements.
 pub(crate) fn format_diff(value: &serde_json::Value) {
+    if let Some(warning) = value.get("warning").and_then(serde_json::Value::as_str) {
+        eprintln!("{}", crate::style::warn(warning));
+    }
     let added = value.get("added").and_then(|v| v.as_array());
     let removed = value.get("removed").and_then(|v| v.as_array());
     let changed_entries = value.get("changed").and_then(|v| v.as_array());

@@ -191,7 +191,7 @@ tauri-pilot snapshot [OPTIONS]
 | `-d`, `--depth <n>` | Maximum tree depth to traverse |
 | `--save <file>` | Save the snapshot to a JSON file for later comparison with `diff --ref` |
 
-**Note on `--save` with `--json`:** the saved file holds the unmodified RPC payload (`{"elements":[…]}`) so it can be fed straight back into `diff --ref`. The `--json` payload printed to stdout additionally embeds a `"path"` field (`{"elements":[…],"path":"<file>"}`) so callers piping into `jq` / `python -c 'json.load(sys.stdin)'` can recover the saved location without parsing stderr. The two shapes are intentionally different.
+**Note on `--save` with `--json`:** the saved file holds the unmodified RPC payload (`{"elements":[…],"options":{…}}`) so it can be fed straight back into `diff --ref`. The `--json` payload printed to stdout additionally embeds a `"path"` field (`{"elements":[…],"options":{…},"path":"<file>"}`) so callers piping into `jq` / `python -c 'json.load(sys.stdin)'` can recover the saved location without parsing stderr. The two shapes are intentionally different.
 
 **Example:**
 
@@ -213,8 +213,10 @@ e3  button    "Refresh"
   {"ref":"e1","role":"heading","name":"PR Dashboard","depth":0},
   {"ref":"e2","role":"textbox","name":"Search PRs","depth":1,"value":""},
   {"ref":"e3","role":"button","name":"Refresh","depth":1}
-]}}
+],"options":{"interactive":true,"selector":null,"depth":null}}}
 ```
+
+`options` records the capture options so `diff` can refuse a reference taken with different ones.
 
 ---
 
@@ -267,6 +269,18 @@ No changes detected.
 
 Elements are matched between snapshots by `(role, name, depth)` — not by ref ID, since refs reset on every snapshot. For duplicate elements sharing the same identity, position order is used as a tiebreaker.
 
+**Capture options must match:**
+
+`diff` compares `--interactive`, `--selector` and `--depth` with the options recorded in the reference (the last snapshot, or the `--ref` file) before taking the new snapshot. On a mismatch it fails instead of reporting every filtered element as added or removed:
+
+```bash
+$ tauri-pilot snapshot --save full.snap
+$ tauri-pilot diff -i --ref full.snap
+Error: RPC error (-32602): Reference snapshot was captured with other options: interactive (reference: false, current: true). ...
+```
+
+The JSON-RPC error (`-32602`) carries both option sets in `data` (`{"reference":{…},"current":{…}}`). A reference file saved by 0.7.3 or earlier has no `options`: it is still diffed, and the result gets a `warning` field (printed on stderr by the CLI).
+
 **JSON-RPC example:**
 
 ```json
@@ -274,7 +288,7 @@ Elements are matched between snapshots by `(role, name, depth)` — not by ref I
 {"jsonrpc":"2.0","id":1,"method":"diff","params":{"interactive":true}}
 
 // Request (diff vs saved reference)
-{"jsonrpc":"2.0","id":1,"method":"diff","params":{"interactive":true,"reference":{"elements":[...]}}}
+{"jsonrpc":"2.0","id":1,"method":"diff","params":{"interactive":true,"reference":{"elements":[...],"options":{"interactive":true,"selector":null,"depth":null}}}}
 
 // Response
 {"jsonrpc":"2.0","id":1,"result":{

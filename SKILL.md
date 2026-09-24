@@ -77,7 +77,7 @@ Three target formats, auto-detected:
 | `snapshot -d 3` | Limit tree depth |
 | `snapshot --save file.snap` | Save snapshot to file |
 | `diff` | Show changes since last snapshot |
-| `diff --ref file.snap` | Diff against a saved snapshot |
+| `diff --ref file.snap` | Diff against a saved snapshot. Pass the same `-i`/`-s`/`-d` as the snapshot, or `diff` refuses |
 | `text <target>` | Get text content |
 | `html [target]` | Get innerHTML (page if no target) |
 | `value <target>` | Get input/select value (multi-select: all selected, joined with `, `) |

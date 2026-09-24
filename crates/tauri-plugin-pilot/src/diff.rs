@@ -137,6 +137,93 @@ pub fn compute_diff(old: &[SnapshotElement], new: &[SnapshotElement]) -> DiffRes
     }
 }
 
+/// Options that decide which elements a snapshot contains.
+///
+/// Recorded next to `elements` because two snapshots captured with different
+/// options differ in every element those options filter, not in page content.
+/// `diff` compares them before diffing (#244).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CaptureOptions {
+    /// Only interactive elements were kept.
+    pub interactive: bool,
+    /// Root of the captured subtree; `depth` counts from it.
+    pub selector: Option<String>,
+    /// Maximum traversal depth, `None` for the bridge default.
+    pub depth: Option<u64>,
+}
+
+impl CaptureOptions {
+    /// Reads the options from `snapshot` or `diff` params.
+    ///
+    /// Normalizes the way the bridge applies them: a missing `interactive` is
+    /// `false` and an empty `selector` is no selector.
+    #[must_use]
+    pub fn from_params(params: Option<&serde_json::Value>) -> Self {
+        let get = |key: &str| params.and_then(|p| p.get(key));
+        Self {
+            interactive: get("interactive")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            selector: get("selector")
+                .and_then(serde_json::Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            depth: get("depth").and_then(serde_json::Value::as_u64),
+        }
+    }
+}
+
+/// Warning for a reference snapshot that records no capture options.
+pub const UNRECORDED_OPTIONS_WARNING: &str = "Reference snapshot does not record its capture \
+options (saved by tauri-pilot 0.7.3 or earlier), so it cannot be checked against this diff. \
+If it was captured with other --interactive, --selector or --depth values, the elements they \
+filter show up as added or removed. Re-save it to enable the check.";
+
+/// Returns the options recorded in `snapshot`, or `None` when it has none.
+#[must_use]
+pub fn recorded_options(snapshot: &serde_json::Value) -> Option<CaptureOptions> {
+    snapshot
+        .get("options")
+        .filter(|o| !o.is_null())
+        .map(|o| CaptureOptions::from_params(Some(o)))
+}
+
+/// Describes how `reference` differs from `current`, or `None` if they match.
+#[must_use]
+pub fn options_mismatch(reference: &CaptureOptions, current: &CaptureOptions) -> Option<String> {
+    let selector = |s: &Option<String>| s.as_ref().map_or("none".to_owned(), |s| format!("{s:?}"));
+    let depth = |d: Option<u64>| d.map_or("none".to_owned(), |d| d.to_string());
+    let mut fields = Vec::new();
+    if reference.interactive != current.interactive {
+        fields.push(format!(
+            "interactive (reference: {}, current: {})",
+            reference.interactive, current.interactive
+        ));
+    }
+    if reference.selector != current.selector {
+        fields.push(format!(
+            "selector (reference: {}, current: {})",
+            selector(&reference.selector),
+            selector(&current.selector)
+        ));
+    }
+    if reference.depth != current.depth {
+        fields.push(format!(
+            "depth (reference: {}, current: {})",
+            depth(reference.depth),
+            depth(current.depth)
+        ));
+    }
+    (!fields.is_empty()).then(|| {
+        format!(
+            "Reference snapshot was captured with other options: {}. Diffing them would report \
+             every element those options filter as added or removed. Re-run diff with the \
+             reference's options, or take a new reference snapshot with the current ones.",
+            fields.join(", ")
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +445,66 @@ mod tests {
         assert!(result.added.is_empty());
         assert!(result.removed.is_empty());
         assert!(result.changed.is_empty());
+    }
+
+    #[test]
+    fn test_capture_options_normalize_like_the_bridge() {
+        // The bridge reads `interactive || false` and `selector || null`, so a
+        // missing flag and an empty selector capture the same tree as the
+        // defaults and must not count as a mismatch.
+        let defaults = CaptureOptions::from_params(None);
+        let explicit = CaptureOptions::from_params(Some(
+            &serde_json::json!({"interactive": false, "selector": "", "depth": null}),
+        ));
+        assert_eq!(defaults, explicit);
+        assert_eq!(
+            serde_json::to_value(&defaults).expect("serialize"),
+            serde_json::json!({"interactive": false, "selector": null, "depth": null})
+        );
+    }
+
+    #[test]
+    fn test_recorded_options_absent_in_pre_244_snapshot() {
+        let legacy = serde_json::json!({"elements": []});
+        assert_eq!(recorded_options(&legacy), None);
+    }
+
+    #[test]
+    fn test_recorded_options_read_back() {
+        let snapshot = serde_json::json!({
+            "elements": [],
+            "options": {"interactive": true, "selector": "#app", "depth": 3}
+        });
+        let options = recorded_options(&snapshot).expect("options recorded");
+        assert!(options.interactive);
+        assert_eq!(options.selector.as_deref(), Some("#app"));
+        assert_eq!(options.depth, Some(3));
+    }
+
+    #[test]
+    fn test_options_mismatch_none_when_equal() {
+        let options = CaptureOptions::from_params(None);
+        assert_eq!(options_mismatch(&options, &options), None);
+    }
+
+    #[test]
+    fn test_options_mismatch_names_every_differing_option() {
+        let reference = CaptureOptions::from_params(None);
+        let current = CaptureOptions::from_params(Some(
+            &serde_json::json!({"interactive": true, "selector": "#app", "depth": 2}),
+        ));
+        let message = options_mismatch(&reference, &current).expect("mismatch");
+        assert!(
+            message.contains("interactive (reference: false, current: true)"),
+            "{message}"
+        );
+        assert!(
+            message.contains("selector (reference: none, current: \"#app\")"),
+            "{message}"
+        );
+        assert!(
+            message.contains("depth (reference: none, current: 2)"),
+            "{message}"
+        );
     }
 }

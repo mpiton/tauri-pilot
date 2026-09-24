@@ -526,8 +526,9 @@ async fn run_snapshot_command(
     if let Some(ref path) = save {
         // The on-disk file holds the unmodified RPC payload; the `"path"` key
         // below is added to the in-memory result *after* the write so consumers
-        // who later re-load the file still see the original `{"elements": …}`
-        // shape that `diff --ref` and the plugin expect.
+        // who later re-load the file still see the original
+        // `{"elements": …, "options": …}` shape that `diff --ref` and the
+        // plugin expect.
         let json = serde_json::to_string_pretty(&result)?;
         std::fs::write(path, &json)
             .with_context(|| format!("Failed to save snapshot to {}", path.display()))?;

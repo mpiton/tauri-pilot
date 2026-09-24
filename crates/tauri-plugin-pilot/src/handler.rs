@@ -204,9 +204,10 @@ pub(crate) async fn dispatch(
         }
         "windows.list" => Ok(serde_json::json!({"windows": webviews.list()})),
         "snapshot" => {
-            let result =
+            let mut result =
                 handle_eval_method("snapshot", params, engine, webviews, win, DEFAULT_TIMEOUT)
                     .await?;
+            record_options(&mut result, &diff::CaptureOptions::from_params(params));
             engine.store_snapshot(&result);
             Ok(result)
         }
@@ -402,6 +403,8 @@ async fn handle_diff(
             data: None,
         })?
     };
+    let options = diff::CaptureOptions::from_params(params);
+    let warning = check_reference_options(&reference, &options)?;
 
     // Take a new snapshot using the bridge — strip "reference" to avoid embedding
     // the entire old snapshot in the JS eval string (the bridge doesn't use it).
@@ -418,7 +421,8 @@ async fn handle_diff(
             message: msg,
             data: None,
         })?;
-    let result = eval_bridge(&script, engine, webviews, window, DEFAULT_TIMEOUT).await?;
+    let mut result = eval_bridge(&script, engine, webviews, window, DEFAULT_TIMEOUT).await?;
+    record_options(&mut result, &options);
 
     // Parse both snapshots: extract "elements" arrays
     let old_elements: Vec<diff::SnapshotElement> = reference
@@ -448,11 +452,42 @@ async fn handle_diff(
     // Store the new snapshot for subsequent diffs
     engine.store_snapshot(&result);
 
-    serde_json::to_value(&diff_result).map_err(|e| RpcError {
+    let mut value = serde_json::to_value(&diff_result).map_err(|e| RpcError {
         code: -32603,
         message: format!("Serialization error: {e}"),
         data: None,
-    })
+    })?;
+    if let Some(warning) = warning {
+        value["warning"] = serde_json::Value::from(warning);
+    }
+    Ok(value)
+}
+
+/// Adds the capture `options` to a snapshot result so `diff` can check them.
+fn record_options(snapshot: &mut serde_json::Value, options: &diff::CaptureOptions) {
+    if let Some(obj) = snapshot.as_object_mut() {
+        obj.insert("options".into(), serde_json::json!(options));
+    }
+}
+
+/// Refuses a diff whose reference was captured with other options (#244).
+///
+/// Returns a warning instead when the reference predates recorded options.
+fn check_reference_options(
+    reference: &serde_json::Value,
+    current: &diff::CaptureOptions,
+) -> Result<Option<&'static str>, RpcError> {
+    let Some(recorded) = diff::recorded_options(reference) else {
+        return Ok(Some(diff::UNRECORDED_OPTIONS_WARNING));
+    };
+    match diff::options_mismatch(&recorded, current) {
+        Some(message) => Err(RpcError {
+            code: RPC_INVALID_PARAMS,
+            message,
+            data: Some(serde_json::json!({"reference": recorded, "current": current})),
+        }),
+        None => Ok(None),
+    }
 }
 
 /// Handle the "press" method by injecting an OS-level keyboard event.
@@ -1360,6 +1395,116 @@ mod tests {
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("No previous snapshot"));
+    }
+
+    /// A webview whose bridge answers the first eval with `result`.
+    fn answering_webviews(engine: &EvalEngine, result: serde_json::Value) -> FakeWebviews {
+        let engine = engine.clone();
+        // The first registered callback on a fresh engine has id == 1.
+        FakeWebviews::window("main", None).on_eval(move || engine.resolve(1, Ok(result.clone())))
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_snapshot_records_capture_options() {
+        // #244: a saved snapshot must say which options produced it, so a
+        // later `diff --ref` can refuse a comparison that cannot be right.
+        let engine = EvalEngine::new();
+        let webviews = answering_webviews(&engine, json!({"elements": []}));
+        let params = json!({"interactive": true, "selector": "#app", "depth": 3});
+        let result = dispatch(
+            "snapshot",
+            Some(&params),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("snapshot succeeds");
+        let options = json!({"interactive": true, "selector": "#app", "depth": 3});
+        assert_eq!(result["options"], options);
+        let stored = engine.get_last_snapshot().expect("snapshot stored");
+        assert_eq!(stored["options"], options);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_diff_rejects_reference_with_other_options() {
+        // #244: an interactive diff against a full baseline reported every
+        // non-interactive element as removed. The check runs before any eval,
+        // so a webview that never answers is enough.
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", None);
+        let params = json!({
+            "interactive": true,
+            "reference": {
+                "elements": [],
+                "options": {"interactive": false, "selector": null, "depth": null}
+            }
+        });
+        let err = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("mismatched options must be refused");
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.message
+                .contains("interactive (reference: false, current: true)"),
+            "{}",
+            err.message
+        );
+        let data = err.data.expect("structured data");
+        assert_eq!(data["reference"]["interactive"], json!(false));
+        assert_eq!(data["current"]["interactive"], json!(true));
+        assert!(webviews.scripts().is_empty(), "must not snapshot the page");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_diff_rejects_last_snapshot_with_other_options() {
+        // Same trap without `--ref`: `snapshot` then `diff -i` compared the
+        // interactive capture against the full in-memory snapshot.
+        let engine = EvalEngine::new();
+        engine.store_snapshot(&json!({
+            "elements": [],
+            "options": {"interactive": false, "selector": null, "depth": null}
+        }));
+        let webviews = FakeWebviews::window("main", None);
+        let params = json!({"interactive": true});
+        let err = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("mismatched options must be refused");
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("interactive"), "{}", err.message);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_diff_warns_on_reference_without_options() {
+        // A baseline saved by 0.7.3 or earlier has no `options` key: diff it,
+        // but say the options could not be checked.
+        let engine = EvalEngine::new();
+        let webviews = answering_webviews(&engine, json!({"elements": []}));
+        let params = json!({"interactive": true, "reference": {"elements": []}});
+        let result = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect("legacy reference is still diffed");
+        let warning = result["warning"].as_str().expect("warning present");
+        assert!(warning.contains("capture options"), "{warning}");
+        assert_eq!(result["removed"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_diff_with_matching_options_stores_them() {
+        let engine = EvalEngine::new();
+        let webviews = answering_webviews(&engine, json!({"elements": []}));
+        let options = json!({"interactive": true, "selector": null, "depth": null});
+        let params = json!({
+            "interactive": true,
+            "reference": {"elements": [], "options": options}
+        });
+        let result = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect("matching options diff");
+        assert!(result.get("warning").is_none(), "{result}");
+        // The stored snapshot feeds the next `diff`, so it carries options too.
+        let stored = engine.get_last_snapshot().expect("snapshot stored");
+        assert_eq!(stored["options"], options);
     }
 
     #[test]
