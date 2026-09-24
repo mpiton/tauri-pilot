@@ -152,24 +152,44 @@ pub struct CaptureOptions {
     pub depth: Option<u64>,
 }
 
+/// Depth the bridge walks to when `snapshot` gets none.
+///
+/// Mirrors the `maxDepth` fallback in `js/bridge.js`. If the two drift apart,
+/// `-d 255` and no depth record different options for the same tree.
+const BRIDGE_DEFAULT_DEPTH: u64 = 255;
+
 impl CaptureOptions {
     /// Reads the options from `snapshot` or `diff` params.
     ///
     /// Normalizes the way the bridge applies them: a missing `interactive` is
-    /// `false` and an empty `selector` is no selector.
-    #[must_use]
-    pub fn from_params(params: Option<&serde_json::Value>) -> Self {
-        let get = |key: &str| params.and_then(|p| p.get(key));
-        Self {
-            interactive: get("interactive")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            selector: get("selector")
-                .and_then(serde_json::Value::as_str)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned),
-            depth: get("depth").and_then(serde_json::Value::as_u64),
-        }
+    /// `false`, an empty `selector` is no selector and a `depth` of 255 is the
+    /// bridge default. Callers send the bridge these options, not the raw
+    /// params, so the recorded options describe the captured tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an option has the wrong JSON type. Defaulting it
+    /// would record options the bridge did not capture with.
+    pub fn from_params(params: Option<&serde_json::Value>) -> Result<Self, String> {
+        let get = |key: &str| params.and_then(|p| p.get(key)).filter(|v| !v.is_null());
+        let wrong = |key: &str, kind: &str| format!("Snapshot option `{key}` must be {kind}");
+        let interactive = get("interactive")
+            .map(|v| v.as_bool().ok_or_else(|| wrong("interactive", "a boolean")))
+            .transpose()?;
+        let selector = get("selector")
+            .map(|v| v.as_str().ok_or_else(|| wrong("selector", "a string")))
+            .transpose()?;
+        let depth = get("depth")
+            .map(|v| {
+                v.as_u64()
+                    .ok_or_else(|| wrong("depth", "a non-negative integer"))
+            })
+            .transpose()?;
+        Ok(Self {
+            interactive: interactive.unwrap_or(false),
+            selector: selector.filter(|s| !s.is_empty()).map(str::to_owned),
+            depth: depth.filter(|&d| d != BRIDGE_DEFAULT_DEPTH),
+        })
     }
 }
 
@@ -180,38 +200,60 @@ If it was captured with other --interactive, --selector or --depth values, the e
 filter show up as added or removed. Re-save it to enable the check.";
 
 /// Returns the options recorded in `snapshot`, or `None` when it has none.
-#[must_use]
-pub fn recorded_options(snapshot: &serde_json::Value) -> Option<CaptureOptions> {
-    snapshot
-        .get("options")
-        .filter(|o| !o.is_null())
-        .map(|o| CaptureOptions::from_params(Some(o)))
+///
+/// # Errors
+///
+/// Returns an error when `options` is present but does not name every option
+/// with a valid value. A missing option is unknown, not the default, so the
+/// reference cannot be checked.
+pub fn recorded_options(snapshot: &serde_json::Value) -> Result<Option<CaptureOptions>, String> {
+    let Some(options) = snapshot.get("options").filter(|o| !o.is_null()) else {
+        return Ok(None);
+    };
+    if let Some(key) = ["interactive", "selector", "depth"]
+        .into_iter()
+        .find(|key| options.get(key).is_none())
+    {
+        return Err(format!(
+            "Reference snapshot options do not record `{key}`. Re-save the reference snapshot."
+        ));
+    }
+    CaptureOptions::from_params(Some(options))
+        .map(Some)
+        .map_err(|e| format!("Reference snapshot options are invalid: {e}"))
 }
 
 /// Describes how `reference` differs from `current`, or `None` if they match.
 #[must_use]
 pub fn options_mismatch(reference: &CaptureOptions, current: &CaptureOptions) -> Option<String> {
-    let selector = |s: &Option<String>| s.as_ref().map_or("none".to_owned(), |s| format!("{s:?}"));
-    let depth = |d: Option<u64>| d.map_or("none".to_owned(), |d| d.to_string());
+    // Exhaustive, so a new capture option does not compile until it is compared.
+    let CaptureOptions {
+        interactive,
+        selector,
+        depth,
+    } = reference;
+    let show_selector =
+        |s: &Option<String>| s.as_ref().map_or("none".to_owned(), |s| format!("{s:?}"));
+    let show_depth = |d: Option<u64>| d.map_or("none".to_owned(), |d| d.to_string());
     let mut fields = Vec::new();
-    if reference.interactive != current.interactive {
+    if *interactive != current.interactive {
         fields.push(format!(
-            "interactive (reference: {}, current: {})",
-            reference.interactive, current.interactive
+            "interactive (reference: {interactive}, current: {})",
+            current.interactive
         ));
     }
-    if reference.selector != current.selector {
+    if *selector != current.selector {
         fields.push(format!(
             "selector (reference: {}, current: {})",
-            selector(&reference.selector),
-            selector(&current.selector)
+            show_selector(selector),
+            show_selector(&current.selector)
         ));
     }
-    if reference.depth != current.depth {
+    if *depth != current.depth {
         fields.push(format!(
             "depth (reference: {}, current: {})",
-            depth(reference.depth),
-            depth(current.depth)
+            show_depth(*depth),
+            show_depth(current.depth)
         ));
     }
     (!fields.is_empty()).then(|| {
@@ -447,16 +489,23 @@ mod tests {
         assert!(result.changed.is_empty());
     }
 
+    /// Parses `params` that are expected to be valid capture options.
+    fn options(params: &serde_json::Value) -> CaptureOptions {
+        CaptureOptions::from_params(Some(params)).expect("valid capture options")
+    }
+
     #[test]
     fn test_capture_options_normalize_like_the_bridge() {
-        // The bridge reads `interactive || false` and `selector || null`, so a
-        // missing flag and an empty selector capture the same tree as the
-        // defaults and must not count as a mismatch.
-        let defaults = CaptureOptions::from_params(None);
-        let explicit = CaptureOptions::from_params(Some(
-            &serde_json::json!({"interactive": false, "selector": "", "depth": null}),
-        ));
+        // The bridge reads `interactive || false`, `selector || null` and
+        // `depth ?? 255`, so a missing flag, an empty selector and depth 255
+        // capture the same tree as the defaults and must not count as a
+        // mismatch.
+        let defaults = CaptureOptions::from_params(None).expect("defaults");
+        let explicit =
+            options(&serde_json::json!({"interactive": false, "selector": "", "depth": null}));
+        let default_depth = options(&serde_json::json!({"depth": 255}));
         assert_eq!(defaults, explicit);
+        assert_eq!(defaults, default_depth);
         assert_eq!(
             serde_json::to_value(&defaults).expect("serialize"),
             serde_json::json!({"interactive": false, "selector": null, "depth": null})
@@ -464,9 +513,29 @@ mod tests {
     }
 
     #[test]
+    fn test_capture_options_reject_wrong_types() {
+        // The bridge would read these its own way (`"false"` is truthy,
+        // `"1"` limits depth), so defaulting them would record options that
+        // do not describe the captured tree.
+        for (params, key) in [
+            (serde_json::json!({"interactive": "false"}), "interactive"),
+            (serde_json::json!({"interactive": 1}), "interactive"),
+            (serde_json::json!({"selector": true}), "selector"),
+            (serde_json::json!({"depth": "1"}), "depth"),
+            (serde_json::json!({"depth": 3.0}), "depth"),
+            (serde_json::json!({"depth": -1}), "depth"),
+        ] {
+            let err = CaptureOptions::from_params(Some(&params)).expect_err("wrong type");
+            assert!(err.contains(&format!("`{key}`")), "{params}: {err}");
+        }
+    }
+
+    #[test]
     fn test_recorded_options_absent_in_pre_244_snapshot() {
         let legacy = serde_json::json!({"elements": []});
-        assert_eq!(recorded_options(&legacy), None);
+        assert_eq!(recorded_options(&legacy), Ok(None));
+        let null = serde_json::json!({"elements": [], "options": null});
+        assert_eq!(recorded_options(&null), Ok(None));
     }
 
     #[test]
@@ -475,24 +544,42 @@ mod tests {
             "elements": [],
             "options": {"interactive": true, "selector": "#app", "depth": 3}
         });
-        let options = recorded_options(&snapshot).expect("options recorded");
+        let options = recorded_options(&snapshot)
+            .expect("valid options")
+            .expect("options recorded");
         assert!(options.interactive);
         assert_eq!(options.selector.as_deref(), Some("#app"));
         assert_eq!(options.depth, Some(3));
     }
 
     #[test]
+    fn test_recorded_options_reject_incomplete_or_invalid() {
+        // A missing option is unknown, not the default: reading it as the
+        // default would let a diff with default options pass the check.
+        let partial = serde_json::json!({"elements": [], "options": {"interactive": true}});
+        let err = recorded_options(&partial).expect_err("incomplete options");
+        assert!(err.contains("`selector`"), "{err}");
+        let empty = serde_json::json!({"elements": [], "options": {}});
+        assert!(recorded_options(&empty).is_err());
+        let wrong = serde_json::json!({
+            "elements": [],
+            "options": {"interactive": "true", "selector": null, "depth": null}
+        });
+        let err = recorded_options(&wrong).expect_err("invalid options");
+        assert!(err.contains("`interactive`"), "{err}");
+    }
+
+    #[test]
     fn test_options_mismatch_none_when_equal() {
-        let options = CaptureOptions::from_params(None);
+        let options = CaptureOptions::from_params(None).expect("defaults");
         assert_eq!(options_mismatch(&options, &options), None);
     }
 
     #[test]
     fn test_options_mismatch_names_every_differing_option() {
-        let reference = CaptureOptions::from_params(None);
-        let current = CaptureOptions::from_params(Some(
-            &serde_json::json!({"interactive": true, "selector": "#app", "depth": 2}),
-        ));
+        let reference = CaptureOptions::from_params(None).expect("defaults");
+        let current =
+            options(&serde_json::json!({"interactive": true, "selector": "#app", "depth": 2}));
         let message = options_mismatch(&reference, &current).expect("mismatch");
         assert!(
             message.contains("interactive (reference: false, current: true)"),

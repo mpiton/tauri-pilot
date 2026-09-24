@@ -60,6 +60,9 @@ pub(crate) enum Command {
         save: Option<std::path::PathBuf>,
     },
     /// Compare current page with previous snapshot, showing only differences
+    ///
+    /// `-i`, `-s` and `-d` must match the options of the reference snapshot
+    /// (the last snapshot, or the `--ref` file), or `diff` refuses.
     Diff {
         /// Path to a saved snapshot file to compare against
         #[arg(long, value_name = "FILE")]

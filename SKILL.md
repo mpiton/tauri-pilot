@@ -76,7 +76,7 @@ Three target formats, auto-detected:
 | `snapshot -s ".panel"` | Scope to CSS selector |
 | `snapshot -d 3` | Limit tree depth |
 | `snapshot --save file.snap` | Save snapshot to file |
-| `diff` | Show changes since last snapshot |
+| `diff` | Show changes since last snapshot. Pass the same `-i`/`-s`/`-d` as that snapshot (`snapshot -i` then `diff -i`), or `diff` refuses |
 | `diff --ref file.snap` | Diff against a saved snapshot. Pass the same `-i`/`-s`/`-d` as the snapshot, or `diff` refuses |
 | `text <target>` | Get text content |
 | `html [target]` | Get innerHTML (page if no target) |

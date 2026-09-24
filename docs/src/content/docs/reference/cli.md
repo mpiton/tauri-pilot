@@ -233,9 +233,9 @@ tauri-pilot diff [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--ref <file>` | Diff against a saved snapshot file instead of the last in-memory snapshot |
-| `-i`, `--interactive` | Only include interactive elements in the new snapshot |
-| `-s`, `--selector <sel>` | Scope the new snapshot to a CSS selector |
-| `-d`, `--depth <n>` | Maximum tree depth to traverse |
+| `-i`, `--interactive` | Only include interactive elements. Must match the reference snapshot, or `diff` refuses |
+| `-s`, `--selector <sel>` | Scope to a CSS selector. Must match the reference snapshot, or `diff` refuses |
+| `-d`, `--depth <n>` | Maximum tree depth to traverse. Must match the reference snapshot, or `diff` refuses |
 
 **Output format:**
 
