@@ -204,9 +204,7 @@ pub(crate) async fn dispatch(
         }
         "windows.list" => Ok(serde_json::json!({"windows": webviews.list()})),
         "snapshot" => {
-            let result =
-                handle_eval_method("snapshot", params, engine, webviews, win, DEFAULT_TIMEOUT)
-                    .await?;
+            let result = capture_snapshot(&capture_options(params)?, engine, webviews, win).await?;
             engine.store_snapshot(&result);
             Ok(result)
         }
@@ -402,23 +400,9 @@ async fn handle_diff(
             data: None,
         })?
     };
-
-    // Take a new snapshot using the bridge — strip "reference" to avoid embedding
-    // the entire old snapshot in the JS eval string (the bridge doesn't use it).
-    let snapshot_params = params.map(|p| {
-        let mut cleaned = p.clone();
-        if let Some(obj) = cleaned.as_object_mut() {
-            obj.remove("reference");
-        }
-        cleaned
-    });
-    let script =
-        build_bridge_call("snapshot", snapshot_params.as_ref()).map_err(|msg| RpcError {
-            code: -32602,
-            message: msg,
-            data: None,
-        })?;
-    let result = eval_bridge(&script, engine, webviews, window, DEFAULT_TIMEOUT).await?;
+    let options = capture_options(params)?;
+    let warning = check_reference_options(&reference, &options)?;
+    let result = capture_snapshot(&options, engine, webviews, window).await?;
 
     // Parse both snapshots: extract "elements" arrays
     let old_elements: Vec<diff::SnapshotElement> = reference
@@ -448,11 +432,76 @@ async fn handle_diff(
     // Store the new snapshot for subsequent diffs
     engine.store_snapshot(&result);
 
-    serde_json::to_value(&diff_result).map_err(|e| RpcError {
+    let mut value = serde_json::to_value(&diff_result).map_err(|e| RpcError {
         code: -32603,
         message: format!("Serialization error: {e}"),
         data: None,
+    })?;
+    if let Some(warning) = warning {
+        value["warning"] = serde_json::Value::from(warning);
+    }
+    Ok(value)
+}
+
+/// Reads the capture options of a `snapshot` or `diff` request.
+fn capture_options(params: Option<&serde_json::Value>) -> Result<diff::CaptureOptions, RpcError> {
+    diff::CaptureOptions::from_params(params).map_err(|message| RpcError {
+        code: RPC_INVALID_PARAMS,
+        message,
+        data: None,
     })
+}
+
+/// Takes a snapshot with `options` and records them in the result.
+///
+/// The bridge gets the normalized options, not the raw params, so the
+/// recorded options are the ones the tree was captured with and `diff` can
+/// check them (#244).
+async fn capture_snapshot(
+    options: &diff::CaptureOptions,
+    engine: &EvalEngine,
+    webviews: &dyn Webviews,
+    window: Option<&str>,
+) -> Result<serde_json::Value, RpcError> {
+    let params = serde_json::json!(options);
+    let mut result = handle_eval_method(
+        "snapshot",
+        Some(&params),
+        engine,
+        webviews,
+        window,
+        DEFAULT_TIMEOUT,
+    )
+    .await?;
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("options".into(), params);
+    }
+    Ok(result)
+}
+
+/// Refuses a diff whose reference was captured with other options (#244).
+///
+/// Returns a warning instead when the reference predates recorded options.
+fn check_reference_options(
+    reference: &serde_json::Value,
+    current: &diff::CaptureOptions,
+) -> Result<Option<&'static str>, RpcError> {
+    let recorded = diff::recorded_options(reference).map_err(|message| RpcError {
+        code: RPC_INVALID_PARAMS,
+        message,
+        data: None,
+    })?;
+    let Some(recorded) = recorded else {
+        return Ok(Some(diff::UNRECORDED_OPTIONS_WARNING));
+    };
+    match diff::options_mismatch(&recorded, current) {
+        Some(message) => Err(RpcError {
+            code: RPC_INVALID_PARAMS,
+            message,
+            data: Some(serde_json::json!({"reference": recorded, "current": current})),
+        }),
+        None => Ok(None),
+    }
 }
 
 /// Handle the "press" method by injecting an OS-level keyboard event.
@@ -1360,6 +1409,172 @@ mod tests {
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("No previous snapshot"));
+    }
+
+    /// A webview whose bridge answers the first eval with `result`.
+    fn answering_webviews(engine: &EvalEngine, result: serde_json::Value) -> FakeWebviews {
+        let engine = engine.clone();
+        // The first registered callback on a fresh engine has id == 1.
+        FakeWebviews::window("main", None).on_eval(move || engine.resolve(1, Ok(result.clone())))
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_snapshot_records_capture_options() {
+        // #244: a saved snapshot must say which options produced it, so a
+        // later `diff --ref` can refuse a comparison that cannot be right.
+        let engine = EvalEngine::new();
+        let webviews = answering_webviews(&engine, json!({"elements": []}));
+        let params = json!({"interactive": true, "selector": "#app", "depth": 3});
+        let result = dispatch(
+            "snapshot",
+            Some(&params),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("snapshot succeeds");
+        let options = json!({"interactive": true, "selector": "#app", "depth": 3});
+        assert_eq!(result["options"], options);
+        let stored = engine.get_last_snapshot().expect("snapshot stored");
+        assert_eq!(stored["options"], options);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_diff_rejects_reference_with_other_options() {
+        // #244: an interactive diff against a full baseline reported every
+        // non-interactive element as removed. The check runs before any eval,
+        // so a webview that never answers is enough.
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", None);
+        let params = json!({
+            "interactive": true,
+            "reference": {
+                "elements": [],
+                "options": {"interactive": false, "selector": null, "depth": null}
+            }
+        });
+        let err = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("mismatched options must be refused");
+        assert_eq!(err.code, -32602);
+        assert!(
+            err.message
+                .contains("interactive (reference: false, current: true)"),
+            "{}",
+            err.message
+        );
+        let data = err.data.expect("structured data");
+        assert_eq!(data["reference"]["interactive"], json!(false));
+        assert_eq!(data["current"]["interactive"], json!(true));
+        assert!(webviews.scripts().is_empty(), "must not snapshot the page");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_diff_rejects_last_snapshot_with_other_options() {
+        // Same trap without `--ref`: `snapshot` then `diff -i` compared the
+        // interactive capture against the full in-memory snapshot.
+        let engine = EvalEngine::new();
+        engine.store_snapshot(&json!({
+            "elements": [],
+            "options": {"interactive": false, "selector": null, "depth": null}
+        }));
+        let webviews = FakeWebviews::window("main", None);
+        let params = json!({"interactive": true});
+        let err = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("mismatched options must be refused");
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("interactive"), "{}", err.message);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_diff_warns_on_reference_without_options() {
+        // A baseline saved by 0.7.3 or earlier has no `options` key: diff it,
+        // but say the options could not be checked.
+        let engine = EvalEngine::new();
+        let webviews = answering_webviews(&engine, json!({"elements": []}));
+        let params = json!({"interactive": true, "reference": {"elements": []}});
+        let result = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect("legacy reference is still diffed");
+        let warning = result["warning"].as_str().expect("warning present");
+        assert!(warning.contains("capture options"), "{warning}");
+        assert_eq!(result["removed"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_diff_with_matching_options_stores_them() {
+        let engine = EvalEngine::new();
+        let webviews = answering_webviews(&engine, json!({"elements": []}));
+        let options = json!({"interactive": true, "selector": null, "depth": null});
+        let params = json!({
+            "interactive": true,
+            "reference": {"elements": [], "options": options}
+        });
+        let result = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect("matching options diff");
+        assert!(result.get("warning").is_none(), "{result}");
+        // The stored snapshot feeds the next `diff`, so it carries options too.
+        let stored = engine.get_last_snapshot().expect("snapshot stored");
+        assert_eq!(stored["options"], options);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_diff_sends_the_bridge_the_recorded_options() {
+        // `depth: 255` is the bridge default, so it matches a reference with
+        // no depth. The bridge gets the normalized options, not the raw
+        // params, and never the embedded reference.
+        let engine = EvalEngine::new();
+        let webviews = answering_webviews(&engine, json!({"elements": []}));
+        let params = json!({
+            "interactive": true,
+            "depth": 255,
+            "reference": {
+                "elements": [],
+                "options": {"interactive": true, "selector": null, "depth": null}
+            }
+        });
+        dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect("depth 255 matches the default");
+        let scripts = webviews.scripts();
+        let script = scripts.first().expect("snapshot evaluated");
+        assert!(script.contains(r#""depth":null"#), "{script}");
+        assert!(script.contains(r#""interactive":true"#), "{script}");
+        assert!(!script.contains("reference"), "{script}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_snapshot_rejects_wrong_option_types() {
+        // `"false"` is truthy in the bridge: it would capture interactive
+        // elements only while the snapshot records `interactive: false`.
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", None);
+        for method in ["snapshot", "diff"] {
+            engine.store_snapshot(&json!({"elements": []}));
+            let params = json!({"interactive": "false"});
+            let err = dispatch(method, Some(&params), &engine, &webviews, &Recorder::new())
+                .await
+                .expect_err("wrong option type must be refused");
+            assert_eq!(err.code, -32602, "{method}");
+            assert!(err.message.contains("`interactive`"), "{}", err.message);
+        }
+        assert!(webviews.scripts().is_empty(), "must not snapshot the page");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_diff_rejects_incomplete_reference_options() {
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", None);
+        let params = json!({"reference": {"elements": [], "options": {"interactive": false}}});
+        let err = dispatch("diff", Some(&params), &engine, &webviews, &Recorder::new())
+            .await
+            .expect_err("incomplete reference options must be refused");
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("`selector`"), "{}", err.message);
+        assert!(webviews.scripts().is_empty(), "must not snapshot the page");
     }
 
     #[test]

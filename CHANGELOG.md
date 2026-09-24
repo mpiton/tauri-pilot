@@ -90,6 +90,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `diff` refuses to compare snapshots captured with different `--interactive`,
+  `--selector` or `--depth` values. `diff -i --ref full.json` used to report
+  every non-interactive element as removed, with nothing changed on the page,
+  and `snapshot` followed by `diff -i` did the same against the in-memory
+  snapshot. `snapshot` results and `--save` files now carry an `options` key;
+  on a mismatch `diff` fails with the differing options (also in the error's
+  `data`). A reference without `options`, saved by 0.7.3 or earlier, is still
+  diffed, with a `warning` in the result that the CLI prints on stderr.
+  JSON-RPC `snapshot` and `diff` reject a capture option of the wrong type,
+  such as `"interactive": "false"`, and a reference whose `options` omits one
+  of the three.
+  Behavior change: `snapshot` then `diff -i` now fails; take the snapshot with
+  `-i` too. [#244]
+
 - `run` and MCP `pilot.run` check every scenario step before connecting. A key
   the action does not read, such as `selector` on `assert-exists`, now fails
   the load with `step 'assert-exists' does not accept 'selector'; use
@@ -1150,3 +1164,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#241]: https://github.com/mpiton/tauri-pilot/issues/241
 [#242]: https://github.com/mpiton/tauri-pilot/issues/242
 [#243]: https://github.com/mpiton/tauri-pilot/issues/243
+[#244]: https://github.com/mpiton/tauri-pilot/issues/244

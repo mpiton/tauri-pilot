@@ -30,10 +30,10 @@ tauri-pilot snapshot -i
 tauri-pilot click @e3
 
 # Step 3: See what changed (instead of re-reading the full tree)
-tauri-pilot diff
+tauri-pilot diff -i
 ```
 
-The `diff` command compares the current page with the last snapshot and returns only added, removed, and changed elements. This saves significant tokens — a typical diff after a click is 2-5 lines vs 50-100 for a full re-snapshot.
+The `diff` command compares the current page with the last snapshot and returns only added, removed, and changed elements. This saves significant tokens — a typical diff after a click is 2-5 lines vs 50-100 for a full re-snapshot. Pass `diff` the same `-i`/`-s`/`-d` as that snapshot, or it refuses: a snapshot captured with other options would show every filtered element as added or removed.
 
 The `-i` flag filters to interactive elements only, reducing noise in the output. That set includes native controls and unmapped hosts with `draggable="true"`, `contenteditable`, an `onclick` handler, or `tabindex`.
 
@@ -80,7 +80,7 @@ tauri-pilot assert url "/settings"
 ## Best practices for snapshot parsing
 
 - **Always take a fresh snapshot before interacting** — refs reset on each snapshot. `@e1` in one snapshot may refer to a different element in the next.
-- **Use `diff` instead of re-snapshotting** — after an interaction, `tauri-pilot diff` returns only what changed. This is much cheaper than re-reading the full tree.
+- **Use `diff` instead of re-snapshotting** — after an interaction, `tauri-pilot diff -i` (after `snapshot -i`) returns only what changed. This is much cheaper than re-reading the full tree.
 - **Use `-i` to filter interactive elements** — this reduces output size and makes the tree easier to parse.
 - **Use `-s` to scope to a section** — `tauri-pilot snapshot -s "#sidebar"` limits the tree to a subtree, further reducing noise.
 - **Use `wait` before snapshot** — after navigation or interaction, wait for the page to settle before taking a snapshot to avoid acting on stale state.
@@ -139,7 +139,7 @@ tauri-pilot snapshot -i                   # discover what's on screen
 tauri-pilot fill @e2 "search query"       # interact
 tauri-pilot click @e3                     # submit
 tauri-pilot wait --selector ".results"    # wait for response
-tauri-pilot diff                          # see what changed (token-efficient)
+tauri-pilot diff -i                       # see what changed (token-efficient)
 tauri-pilot snapshot -i                   # refresh refs
 tauri-pilot assert text @e1 "Results"     # verify in one step
 ```

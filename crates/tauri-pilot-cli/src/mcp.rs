@@ -851,7 +851,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "diff",
-            description: "Compare the current page to the previous or supplied snapshot.",
+            description: "Compare the current page to the previous or supplied snapshot. interactive, selector and depth must match the options the snapshot was taken with, or diff refuses (a reference that doesn't record its options is diffed with a warning).",
             schema: diff_schema,
             read_only: true,
             destructive: false,
@@ -1483,16 +1483,23 @@ fn diff_schema() -> Arc<JsonObject> {
         props([
             (
                 "interactive",
-                bool_prop("Only include interactive elements."),
+                bool_prop("Only include interactive elements. Must match the reference snapshot."),
             ),
             (
                 "selector",
-                string_prop("CSS selector to scope the new snapshot."),
+                string_prop(
+                    "CSS selector to scope the snapshot. Must match the reference snapshot.",
+                ),
             ),
-            ("depth", integer_prop("Maximum traversal depth.")),
+            (
+                "depth",
+                integer_prop("Maximum traversal depth. Must match the reference snapshot."),
+            ),
             (
                 "reference",
-                any_prop("Optional prior snapshot object to compare against."),
+                any_prop(
+                    "Optional prior `snapshot` result to compare against, including its `options`.",
+                ),
             ),
         ]),
         &[],
