@@ -14,6 +14,7 @@ These options can be used with any command.
 | `--socket <path>` | Explicit path to the Unix socket. Auto-detected if omitted. Env: `TAURI_PILOT_SOCKET` |
 | `--window <label>` | Target a specific window by label. Env: `TAURI_PILOT_WINDOW`. Default: `main`, falls back to the first window by label |
 | `--json` | Output JSON instead of human-readable text |
+| `--rpc-timeout <secs>` | Seconds to wait for the app to answer before giving up (default `35`). `wait` and `watch` add their own `--timeout` on top. Env: `TAURI_PILOT_RPC_TIMEOUT` |
 
 ### Socket Auto-Detection
 
@@ -1492,7 +1493,12 @@ tauri-pilot run <scenario.toml> [OPTIONS]
 A failed step captures a screenshot and reports where it landed as
 `screenshot`, or why it could not be written as `screenshot_error` — in
 `run --json`, and as `<system-out>` in the JUnit XML. The reported path is
-always absolute, so a CI job can upload it from any directory.
+always absolute, so a CI job can upload it from any directory. A step the
+CLI gave up on before the app answered gets no screenshot: `--rpc-timeout` ran
+out, or its `timeout_ms` did on any action but `wait` and `watch`, which pass
+it to the app instead. The app may still answer that abandoned request on the
+connection, so `screenshot_error` says the connection is out of sync. With
+`--no-fail-fast`, the next step opens a fresh connection.
 
 **Example:**
 

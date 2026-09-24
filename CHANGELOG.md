@@ -90,6 +90,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CLI no longer hangs forever when something accepts the connection but
+  never answers, such as a wedged app or another process holding the socket
+  path. Each command now gives up after 35 s, plus the `--timeout` of `wait`
+  and `watch` or the gesture time of a tuned `drag`, and names the path that
+  stayed silent. Change the deadline with
+  `--rpc-timeout <secs>` or `TAURI_PILOT_RPC_TIMEOUT`. A connection whose
+  request was abandoned, for example by the `timeout_ms` of a scenario step
+  other than `wait` or `watch`, now refuses further requests instead of
+  pairing the late answer with the next one. Such a step gets no failure
+  screenshot: it reports `screenshot_error` right away, where the screenshot
+  used to hang the run. With `--no-fail-fast`, the next step opens a fresh
+  connection, also when the app closed the old one. [#241]
+
 - On Windows, quitting the app with Ctrl+C or Ctrl+Break, or by closing the
   console running `cargo tauri dev`, now removes
   `%LOCALAPPDATA%\tauri-pilot\instances\{identifier}.json`. Those console
@@ -1116,3 +1129,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#231]: https://github.com/mpiton/tauri-pilot/issues/231
 [#232]: https://github.com/mpiton/tauri-pilot/issues/232
 [#233]: https://github.com/mpiton/tauri-pilot/issues/233
+[#241]: https://github.com/mpiton/tauri-pilot/issues/241

@@ -272,6 +272,9 @@ async fn run_scenario_steps(
 }
 
 async fn run_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
+    // An earlier step cut off mid-call left the connection out of sync; with
+    // fail_fast off, this step must still reach the app (#241).
+    client.resync().await?;
     // wait/watch send timeout in RPC params; all other actions use a tokio deadline
     let is_rpc_timed = matches!(step.action.as_str(), "wait" | "watch");
     match (is_rpc_timed, step.timeout_ms) {

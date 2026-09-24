@@ -26,7 +26,7 @@ use cli::{
     AssertKind, Cli, Command, FormsArgs, RecordAction, StorageAction, StorageArgs, Target,
     parse_target,
 };
-use client::{Client, MAX_REQUEST_LEN};
+use client::{Client, MAX_REQUEST_LEN, set_rpc_timeout};
 use output::{out, outln};
 
 #[tokio::main]
@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
+    set_rpc_timeout(Duration::from_secs(args.rpc_timeout));
     if is_mcp {
         return mcp::run_mcp_server(args.socket, args.window).await;
     }

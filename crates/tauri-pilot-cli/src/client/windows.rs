@@ -1,9 +1,8 @@
-use super::Client;
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::time::Duration;
-use tokio::io::BufReader;
-use tokio::net::windows::named_pipe::ClientOptions;
+use tokio::io::{ReadHalf, WriteHalf};
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
 /// Maximum time spent retrying when all server pipe instances are busy.
@@ -22,7 +21,9 @@ const RETRY_INTERVAL: Duration = Duration::from_millis(20);
 /// an async contract, so we mirror the Unix socket behavior by yielding
 /// between retries, giving up after `CONNECT_DEADLINE` so a stuck server
 /// never hangs the CLI.
-pub async fn connect(path: &Path) -> Result<Client> {
+pub async fn connect(
+    path: &Path,
+) -> Result<(ReadHalf<NamedPipeClient>, WriteHalf<NamedPipeClient>)> {
     let deadline = tokio::time::Instant::now() + CONNECT_DEADLINE;
     let client = loop {
         match ClientOptions::new().open(path) {
@@ -45,17 +46,13 @@ pub async fn connect(path: &Path) -> Result<Client> {
             }
         }
     };
-    let (reader, writer) = tokio::io::split(client);
-    Ok(Client {
-        reader: BufReader::new(reader),
-        writer,
-        next_id: 1,
-    })
+    Ok(tokio::io::split(client))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::Client;
     use crate::protocol::{Request, Response};
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::Duration;
@@ -187,6 +184,45 @@ mod tests {
                 .expect_err("call returns error")
                 .to_string()
                 .contains("-32601")
+        );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_client_gives_up_when_the_app_never_answers() {
+        // A pipe server that connects and never writes a line used to block
+        // every command forever. The unanswered request then leaves the
+        // connection out of sync, so the next call is refused (#241).
+        let pipe = unique_pipe_path();
+        let server = ServerOptions::new()
+            .create(&pipe)
+            .expect("create named pipe server");
+        let handle = tokio::spawn(async move {
+            server.connect().await.expect("server accept");
+            std::future::pending::<()>().await;
+        });
+
+        let mut client = connect_with_retry(Path::new(&pipe)).await;
+        client.rpc_timeout = Duration::from_millis(100);
+        let err = tokio::time::timeout(Duration::from_secs(5), client.call("ping", None))
+            .await
+            .expect("bounded by the client deadline")
+            .expect_err("silent server");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "No response from the app after 100ms: {pipe} accepted the connection but did \
+                 not answer. Raise --rpc-timeout if the command needs longer."
+            )
+        );
+        let err = tokio::time::timeout(Duration::from_secs(5), client.call("screenshot", None))
+            .await
+            .expect("refused without waiting for the app")
+            .expect_err("connection out of sync");
+        assert_eq!(
+            err.to_string(),
+            "Connection is out of sync: an earlier request on it did not complete"
         );
 
         handle.abort();

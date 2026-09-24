@@ -22,6 +22,18 @@ pub(crate) struct Cli {
     #[arg(long, env = "TAURI_PILOT_WINDOW", global = true)]
     pub window: Option<String>,
 
+    /// Seconds to wait for the app to answer a command before giving up.
+    /// `wait` and `watch` add their own `--timeout` on top.
+    #[arg(
+        long,
+        env = "TAURI_PILOT_RPC_TIMEOUT",
+        global = true,
+        value_name = "SECS",
+        default_value_t = crate::client::DEFAULT_RPC_TIMEOUT.as_secs(),
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub rpc_timeout: u64,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -609,6 +621,29 @@ mod tests {
         } else {
             panic!("Expected Assert Url command");
         }
+    }
+
+    #[test]
+    fn test_parse_rpc_timeout() {
+        // `wait --timeout` keeps its own meaning next to the global flag (#241).
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "wait",
+            "--timeout",
+            "5000",
+            "--rpc-timeout",
+            "3",
+        ]);
+        assert_eq!(cli.rpc_timeout, 3);
+        if let Command::Wait { timeout, .. } = cli.command {
+            assert_eq!(timeout, 5000);
+        } else {
+            panic!("Expected Wait command");
+        }
+        assert!(
+            Cli::try_parse_from(["tauri-pilot", "--rpc-timeout", "0", "ping"]).is_err(),
+            "a zero deadline would fail every command"
+        );
     }
 
     #[test]
