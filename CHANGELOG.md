@@ -95,8 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tauri://localhost:1:143`, the position of the eval wrapper, which looked
   like the top of the app bundle. WebKit writes eval'd frames with no location
   and ignores `//# sourceURL`, so the wrapper is now a named function the
-  bridge recognizes. Calls into app code keep the app frame, and a call made
-  after an `await` in the script still has no source. [#245]
+  bridge recognizes. Calls into app code keep the app frame. On WebKit a call
+  made after an `await` in the script still has no source; V8 (WebView2)
+  follows the `await` and reports `tauri-pilot-eval`. [#245]
 
 - `diff` refuses to compare snapshots captured with different `--interactive`,
   `--selector` or `--depth` values. `diff -i --ref full.json` used to report

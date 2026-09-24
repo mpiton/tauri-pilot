@@ -17,9 +17,8 @@ pub(crate) const HELLO_ID: u64 = 0;
 /// `WebKit` writes frames of eval'd code with no location and ignores
 /// `//# sourceURL`, so the bridge reads this name in a stack to tell that a
 /// console call came from a script pilot sent (#245). `bridge.js` hardcodes
-/// the same value. It must not contain `__PILOT__`, which marks frames the
-/// bridge skips.
-const WRAPPER_NAME: &str = "__PILOT_EVAL__";
+/// the same value.
+pub(crate) const WRAPPER_NAME: &str = "__PILOT_EVAL__";
 
 /// Origins whose bridge said hello, each with the hello count at its latest hello.
 #[derive(Debug, Default)]

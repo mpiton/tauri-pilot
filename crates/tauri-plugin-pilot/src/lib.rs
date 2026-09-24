@@ -356,6 +356,18 @@ mod tests {
 
     #[cfg(all(any(unix, windows), debug_assertions))]
     #[test]
+    fn bridge_recognizes_the_eval_wrapper_name() {
+        // #245: a rename on one side only would send every eval log back to
+        // the wrapper position with all other tests green.
+        let check = format!("line.includes('{}')", crate::eval::WRAPPER_NAME);
+        assert!(
+            super::BRIDGE_JS.contains(&check),
+            "bridge must look for the eval wrapper with `{check}`"
+        );
+    }
+
+    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[test]
     fn bridge_click_dispatches_pointer_sequence() {
         let js = super::BRIDGE_JS;
         let js_normalized: String = js.lines().collect::<Vec<_>>().join("\n");
@@ -479,7 +491,7 @@ mod tests {
         // SyntaxError from indirect eval.
         let js = super::BRIDGE_JS;
         assert!(
-            js.contains("function evalScript("),
+            js.contains("function __PILOT__evalScript("),
             "BRIDGE_JS must define evalScript"
         );
         assert!(
@@ -508,7 +520,9 @@ mod tests {
         // Needles are formatting-stable substrings of the JS source, so a
         // future `prettier`/`rustfmt` reflow of `bridge.js` does not silently
         // break the ordering check.
-        let evalscript_idx = js.find("function evalScript(").expect("evalScript missing");
+        let evalscript_idx = js
+            .find("function __PILOT__evalScript(")
+            .expect("evalScript missing");
         // SAFETY: the needle is ASCII, so `find()` returns a UTF-8 char boundary.
         let body = &js[evalscript_idx..];
         let expr_idx = body

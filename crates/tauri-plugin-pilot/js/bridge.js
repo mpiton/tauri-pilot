@@ -300,11 +300,12 @@
       // The eval wrapper (WRAPPER_NAME in eval.rs). JavaScriptCore writes
       // eval'd frames with no location and ignores `//# sourceURL`, so
       // reaching the wrapper means the call came from a script pilot sent,
-      // not from the app (#245). `evalScript` frames sit on the way there:
-      // JSC keeps one when a stage calls the script inside `try`, and V8
-      // tags the eval'd code itself `eval at evalScript`.
+      // not from the app (#245). `__PILOT__evalScript` frames sit on the way
+      // there and fall to the `__PILOT__` skip: JSC keeps one when a stage
+      // calls the script inside `try`, and V8 tags the eval'd code itself
+      // `eval at __PILOT__evalScript`.
       if (line.includes('__PILOT_EVAL__')) return 'tauri-pilot-eval';
-      if (line.includes('__PILOT__') || /\bevalScript\b/.test(line)) continue;
+      if (line.includes('__PILOT__')) continue;
       if (skipped < skipLocationFrames) {
         skipped++;
         continue;
@@ -1447,7 +1448,9 @@
     };
   }
 
-  function evalScript(options) {
+  // The `__PILOT__` prefix marks its frames as the bridge's, so an app
+  // function that happens to be called evalScript keeps its log source.
+  function __PILOT__evalScript(options) {
     var script = options && options.script;
     if (!script) throw new Error("No script provided");
     // Stage 1 — expression compile.
@@ -1979,7 +1982,7 @@
     url: url,
     title: title,
     state: state,
-    eval: evalScript,
+    eval: __PILOT__evalScript,
     wait: waitFor,
     screenshot: screenshot,
     consoleLogs: consoleLogs,
