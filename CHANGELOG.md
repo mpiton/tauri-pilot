@@ -90,6 +90,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `run` and MCP `pilot.run` check every scenario step before connecting. A key
+  the action does not read, such as `selector` on `assert-exists`, now fails
+  the load with `step 'assert-exists' does not accept 'selector'; use
+  'target'`. Unknown actions and missing required keys fail the same way. They
+  used to fail only when the step ran, after earlier steps had changed the app
+  and with a failure screenshot. A `wait` step now needs exactly one of
+  `target` or `selector`. Behavior change: a stray key next to the ones the
+  action needs, such as `value` on `click`, used to be ignored and now fails
+  the load, so a scenario that passed before may need cleaning up. The CLI
+  reference lists the keys each action takes. [#243]
+
 - MCP tool errors keep the app's structured `error.data` as fields instead of
   one text blob. A `pilot.state` call with an unknown `window` now returns
   `error: "WINDOW_NOT_FOUND"`, `message`, `rpc_code: -32602` and
@@ -1138,3 +1149,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#233]: https://github.com/mpiton/tauri-pilot/issues/233
 [#241]: https://github.com/mpiton/tauri-pilot/issues/241
 [#242]: https://github.com/mpiton/tauri-pilot/issues/242
+[#243]: https://github.com/mpiton/tauri-pilot/issues/243

@@ -126,8 +126,10 @@ server's working directory belongs to whichever client spawned it, so it is not
 a useful default, and a shared `/tmp` path would hand every other user on the
 host whatever the screenshots happen to show. A finished run
 including failed steps is a successful tool result with `ok` false; only parse,
-I/O, connect, and timeout failures are tool errors. The tool also returns
-`INVALID_PARAMS` for an empty `[[step]]` list, `eval`/`drop`/`ipc` steps unless
+step-key, I/O, connect, and timeout failures are tool errors. Step keys are
+checked against the table under `run`, and `drop` and `ipc` are not scenario
+actions, so they fail there as unknown actions. The tool also returns
+`INVALID_PARAMS` for an empty `[[step]]` list, `eval` steps unless
 `TAURI_PILOT_MCP_ENABLE_DANGEROUS_TOOLS` is set, `javascript:` navigate URLs,
 and screenshot steps that set `path`. The CLI example
 `docs/examples/login-flow.toml` includes a screenshot `path` and cannot be run
@@ -1489,6 +1491,40 @@ tauri-pilot run <scenario.toml> [OPTIONS]
 | `--no-fail-fast` | Keep running the remaining steps after a failure |
 | `--screenshots-dir <DIR>` | Directory for failure screenshots. Default `./tauri-pilot-failures`, resolved against the working directory |
 | `--json` | Print the JSON report on stdout. The text summary goes to stderr either way (global flag) |
+
+**Step keys:**
+
+Every `[[step]]` takes `action`, plus optional `name` and `timeout_ms`. The
+other keys depend on the action:
+
+| Action | Required | Optional |
+|--------|----------|----------|
+| `click`, `check` | `target` | |
+| `fill`, `select` | `target` | `value` |
+| `type` | `target` | `text` |
+| `press` | `key` | |
+| `scroll` | | `target`, `direction`, `amount` |
+| `navigate` | `url` | |
+| `wait` | `target` or `selector`, not both | `gone` |
+| `watch` | | `selector`, `stable`, `require_mutation` |
+| `eval` | `script` | |
+| `screenshot` | | `path`, `selector` |
+| `assert-exists`, `assert-visible`, `assert-hidden` | `target` | |
+| `assert-text`, `assert-value` | `target`, `expected` | |
+| `assert-url` | `expected` | |
+| `storage-get` | `key` | |
+
+`run` checks every step against this table before it connects. An unknown
+action, a missing required key, or a key the action does not read fails the
+whole file, and no step runs:
+
+```text
+Error: Failed to load scenario: sel.toml
+
+Caused by:
+    0: Invalid scenario
+    1: step 1: step 'assert-exists' does not accept 'selector'; use 'target'
+```
 
 A failed step captures a screenshot and reports where it landed as
 `screenshot`, or why it could not be written as `screenshot_error` — in

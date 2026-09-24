@@ -199,6 +199,61 @@ fn run_json_reports_absolute_path_under_the_default_directory() {
     assert!(saved.is_file(), "screenshot {} is missing", saved.display());
 }
 
+/// A step with a key its action does not read fails before `run` connects, so
+/// the valid step ahead of it never runs and no failure screenshot is taken
+/// (#243).
+#[test]
+fn run_rejects_an_invalid_step_before_connecting() {
+    let tmpdir = tempfile::tempdir().expect("tempdir");
+    let scenario_path = tmpdir.path().join("sel.toml");
+    std::fs::write(
+        &scenario_path,
+        "[[step]]\naction = \"click\"\ntarget = \"#go\"\n\n\
+         [[step]]\naction = \"assert-exists\"\nselector = \"#login-form\"\n",
+    )
+    .expect("write scenario");
+    // A live socket that never answers: a connect lands in the accept queue,
+    // checked below, and `--rpc-timeout` ends the run instead of a hang.
+    let socket = unique_socket_path("run-invalid-step");
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket).expect("bind mock socket");
+    let child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
+        .current_dir(tmpdir.path())
+        .args([
+            "--socket",
+            socket.to_str().expect("socket path is UTF-8"),
+            "--rpc-timeout",
+            "1",
+            "run",
+            scenario_path.to_str().expect("scenario path is UTF-8"),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tauri-pilot");
+    let output = wait_bounded(child);
+
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking listener");
+    let accepted = listener.accept();
+    let _ = std::fs::remove_file(&socket);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr={stderr}");
+    assert!(
+        matches!(&accepted, Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+        "run connected before rejecting the scenario: {accepted:?}"
+    );
+    assert!(
+        stderr.contains("step 2: step 'assert-exists' does not accept 'selector'; use 'target'"),
+        "stderr={stderr}"
+    );
+    assert!(
+        !tmpdir.path().join("tauri-pilot-failures").exists(),
+        "an invalid scenario must not leave a failure screenshot"
+    );
+}
+
 /// `run --json | head -1` must not turn a failing scenario into a 0, and the
 /// `JUnit` XML must survive the early exit (#213 meeting #215).
 #[test]

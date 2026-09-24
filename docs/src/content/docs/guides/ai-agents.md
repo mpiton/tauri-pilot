@@ -168,7 +168,8 @@ namespaced under `pilot.*`: `pilot.snapshot`, `pilot.click`, `pilot.fill`,
 `pilot.run`, and more. `pilot.run` takes a scenario `path` or inline TOML
 `content` and returns a JSON report (`ok`, counts, `summary`, `steps`). A
 finished run including failed steps is a successful tool result with `ok`
-false; only parse, I/O, connect, and timeout failures are tool errors.
+false; only parse, step-key, I/O, connect, and timeout failures are tool
+errors.
 `tools/list` advertises
 the prefixed names; bare names (e.g. `snapshot`) still resolve via `tools/call`
 for backwards compatibility. Tool calls return structured JSON content, so
