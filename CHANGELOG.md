@@ -90,6 +90,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MCP tool errors keep the app's structured `error.data` as fields instead of
+  one text blob. A `pilot.state` call with an unknown `window` now returns
+  `error: "WINDOW_NOT_FOUND"`, `message`, `rpc_code: -32602` and
+  `available_windows` in `structuredContent`, where it used to return the CLI's
+  printed error, JSON included, as a single `error` string. An app error with
+  no domain code puts its message under `error`. CLI output is unchanged. [#242]
+
 - The CLI no longer hangs forever when something accepts the connection but
   never answers, such as a wedged app or another process holding the socket
   path. Each command now gives up after 35 s, plus the `--timeout` of `wait`
@@ -1130,3 +1137,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#232]: https://github.com/mpiton/tauri-pilot/issues/232
 [#233]: https://github.com/mpiton/tauri-pilot/issues/233
 [#241]: https://github.com/mpiton/tauri-pilot/issues/241
+[#242]: https://github.com/mpiton/tauri-pilot/issues/242

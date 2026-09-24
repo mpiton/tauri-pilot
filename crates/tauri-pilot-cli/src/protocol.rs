@@ -42,6 +42,44 @@ pub struct RpcError {
     pub data: Option<serde_json::Value>,
 }
 
+impl std::fmt::Display for RpcError {
+    /// Renders the error as the CLI prints it, `data` under the message.
+    ///
+    /// Structured detail the plugin attaches under `error.data` is the only
+    /// way a caller learns, say, the real window ids behind a
+    /// `WINDOW_NOT_FOUND`. Render it under the message instead of dropping it
+    /// (#149). `message` is mirrored into `data` by the plugin, so drop that
+    /// key rather than printing it twice — but only when it really is the
+    /// duplicate: the two crates ship separately, so a producer carrying a
+    /// distinct `data.message` must not lose it in the very path that was
+    /// fixed to stop losing detail.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RPC error ({}): {}", self.code, self.message)?;
+        match &self.data {
+            Some(serde_json::Value::Object(obj)) => {
+                let mut obj = obj.clone();
+                if obj.get("message").and_then(serde_json::Value::as_str)
+                    == Some(self.message.as_str())
+                {
+                    obj.remove("message");
+                }
+                if obj.is_empty() {
+                    return Ok(());
+                }
+                let data = serde_json::Value::Object(obj);
+                match serde_json::to_string_pretty(&data) {
+                    Ok(pretty) => write!(f, "\n{pretty}"),
+                    Err(_) => write!(f, "\n{data}"),
+                }
+            }
+            Some(data) if !data.is_null() => write!(f, "\n{data}"),
+            _ => Ok(()),
+        }
+    }
+}
+
+impl std::error::Error for RpcError {}
+
 #[cfg(test)]
 impl Response {
     /// Create a success response.

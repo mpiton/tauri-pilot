@@ -20,8 +20,8 @@ use rmcp::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    build_scroll_params, build_wait_params, client::Client, export_replay_file, resolve_socket,
-    run_drop_command, run_replay_command, scenario, target_params, with_window,
+    build_scroll_params, build_wait_params, client::Client, export_replay_file, protocol::RpcError,
+    resolve_socket, run_drop_command, run_replay_command, scenario, target_params, with_window,
 };
 
 #[derive(Debug, Clone)]
@@ -115,7 +115,7 @@ impl PilotMcpServer {
     ) -> Result<CallToolResult, McpError> {
         Ok(match self.call_app(method, params, window).await {
             Ok(result) => tool_success(result),
-            Err(err) => tool_error(err),
+            Err(err) => tool_error(&err),
         })
     }
 
@@ -437,12 +437,12 @@ impl PilotMcpServer {
         }
         let mut client = match self.connect_client().await {
             Ok(client) => client,
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(&err)),
         };
         Ok(
             match run_drop_command(&mut client, &target, files, window.as_deref()).await {
                 Ok(result) => tool_success(result),
-                Err(err) => tool_error(err),
+                Err(err) => tool_error(&err),
             },
         )
     }
@@ -457,17 +457,17 @@ impl PilotMcpServer {
         if let Some(export) = export.as_deref() {
             return Ok(match export_replay_file(&path, export) {
                 Ok(result) => tool_success(result),
-                Err(err) => tool_error(err),
+                Err(err) => tool_error(&err),
             });
         }
         let mut client = match self.connect_client().await {
             Ok(client) => client,
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(&err)),
         };
         Ok(
             match run_replay_command(&mut client, &path, None, window.as_deref()).await {
                 Ok(result) => tool_success(result),
-                Err(err) => tool_error(err),
+                Err(err) => tool_error(&err),
             },
         )
     }
@@ -496,11 +496,11 @@ impl PilotMcpServer {
             }
             (Some(path), None) => match scenario::load_scenario(Path::new(&path)) {
                 Ok(scenario) => scenario,
-                Err(err) => return Ok(tool_error(format!("{err:#}"))),
+                Err(err) => return Ok(tool_error_msg(format!("{err:#}"))),
             },
             (None, Some(content)) => match scenario::parse_scenario(&content) {
                 Ok(scenario) => scenario,
-                Err(err) => return Ok(tool_error(format!("{err:#}"))),
+                Err(err) => return Ok(tool_error_msg(format!("{err:#}"))),
             },
         };
         if scenario.step.is_empty() {
@@ -509,7 +509,7 @@ impl PilotMcpServer {
         validate_run_scenario_steps(&scenario)?;
         let mut client = match self.connect_for_run(&scenario).await {
             Ok(client) => client,
-            Err(err) => return Ok(tool_error(format!("{err:#}"))),
+            Err(err) => return Ok(tool_error_msg(format!("{err:#}"))),
         };
         Ok(
             match scenario::run_scenario(
@@ -522,7 +522,7 @@ impl PilotMcpServer {
             .await
             {
                 Ok(report) => tool_success(scenario::report_to_json(&report)),
-                Err(err) => tool_error(format!("{err:#}")),
+                Err(err) => tool_error_msg(format!("{err:#}")),
             },
         )
     }
@@ -565,7 +565,7 @@ impl PilotMcpServer {
                     "expected string response, got {other}"
                 )));
             }
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(&err)),
         };
         let passed = if contains {
             actual.contains(&expected)
@@ -601,7 +601,7 @@ impl PilotMcpServer {
                     "expected string response, got {other}"
                 )));
             }
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(&err)),
         };
         if actual == expected {
             Ok(tool_success(json!({"ok": true})))
@@ -629,7 +629,7 @@ impl PilotMcpServer {
                 Some(value) => value,
                 None => return Ok(tool_error_msg(format!("missing boolean field '{field}'"))),
             },
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(&err)),
         };
         if actual == expected {
             Ok(tool_success(json!({"ok": true})))
@@ -663,7 +663,7 @@ impl PilotMcpServer {
                 Some(value) => value,
                 None => return Ok(tool_error_msg("missing 'count' field")),
             },
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(&err)),
         };
         if actual == expected {
             Ok(tool_success(json!({"ok": true})))
@@ -687,7 +687,7 @@ impl PilotMcpServer {
                     "expected string response, got {other}"
                 )));
             }
-            Err(err) => return Ok(tool_error(err)),
+            Err(err) => return Ok(tool_error(&err)),
         };
         if actual.contains(&expected) {
             Ok(tool_success(json!({"ok": true})))
@@ -1248,8 +1248,30 @@ fn tool_success(result: Value) -> CallToolResult {
     CallToolResult::structured(Value::Object(payload))
 }
 
-fn tool_error(err: impl std::fmt::Display) -> CallToolResult {
-    tool_error_msg(err.to_string())
+/// Turns a failed call into a tool error, keeping an app error's fields.
+///
+/// An [`RpcError`] anywhere in the chain comes out as its `data` object plus
+/// `message` and `rpc_code`, so a client reads `error: WINDOW_NOT_FOUND` and
+/// `available_windows` without parsing text (#242). `error` falls back to the
+/// message when the app sent no domain code. Anything else is its text.
+fn tool_error(err: &anyhow::Error) -> CallToolResult {
+    let Some(rpc) = err
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<RpcError>())
+    else {
+        return tool_error_msg(err.to_string());
+    };
+    let mut fields = match &rpc.data {
+        Some(Value::Object(data)) => data.clone(),
+        Some(data) if !data.is_null() => Map::from_iter([("data".to_owned(), data.clone())]),
+        _ => Map::new(),
+    };
+    fields
+        .entry("error")
+        .or_insert_with(|| Value::String(rpc.message.clone()));
+    fields.insert("message".to_owned(), Value::String(rpc.message.clone()));
+    fields.insert("rpc_code".to_owned(), json!(rpc.code));
+    CallToolResult::structured_error(Value::Object(fields))
 }
 
 fn tool_error_msg(message: impl Into<String>) -> CallToolResult {
@@ -2845,6 +2867,86 @@ path = "/tmp/out.png"
 
         server.await.expect("mock server task");
         let _ = std::fs::remove_file(&socket);
+    }
+
+    /// `error.data` reaches the MCP client as fields, not as JSON printed
+    /// inside the error text (#242).
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn rpc_error_data_stays_structured_in_the_tool_error() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-rpc-error-test-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let windows = json!([{"label": "main", "title": "Main", "url": "tauri://localhost"}]);
+        let data = json!({
+            "error": "WINDOW_NOT_FOUND",
+            "message": "Window 'nope' not found",
+            "available_windows": windows,
+        });
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            let mut response =
+                Response::error(json!(request.id), -32602, "Window 'nope' not found");
+            response.error.as_mut().expect("error response").data = Some(data);
+            let mut bytes = serde_json::to_vec(&response).expect("serialize response");
+            bytes.push(b'\n');
+            writer.write_all(&bytes).await.expect("write response");
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert("window".to_owned(), json!("nope"));
+        let result = pilot
+            .call_tool_by_name("state", args)
+            .await
+            .expect("tool call returns");
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content,
+            Some(json!({
+                "error": "WINDOW_NOT_FOUND",
+                "message": "Window 'nope' not found",
+                "rpc_code": -32602,
+                "available_windows": windows,
+            }))
+        );
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    /// Without a domain code, `error` carries the message; the RPC error is
+    /// found under added context, and its `message` beats `data.message`.
+    #[test]
+    fn rpc_error_without_domain_code_uses_its_message() {
+        let bare = anyhow::Error::from(RpcError {
+            code: -32603,
+            message: "boom".to_owned(),
+            data: None,
+        })
+        .context("while clicking");
+        assert_eq!(
+            tool_error(&bare).structured_content,
+            Some(json!({"error": "boom", "message": "boom", "rpc_code": -32603}))
+        );
+
+        let distinct = anyhow::Error::from(RpcError {
+            code: -32000,
+            message: "top".to_owned(),
+            data: Some(json!({"message": "inner", "hint": 1})),
+        });
+        assert_eq!(
+            tool_error(&distinct).structured_content,
+            Some(json!({"error": "top", "message": "top", "rpc_code": -32000, "hint": 1}))
+        );
     }
 
     #[tokio::test]
