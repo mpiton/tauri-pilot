@@ -1253,7 +1253,9 @@ fn tool_success(result: Value) -> CallToolResult {
 /// An [`RpcError`] anywhere in the chain comes out as its `data` object plus
 /// `message` and `rpc_code`, so a client reads `error: WINDOW_NOT_FOUND` and
 /// `available_windows` without parsing text (#242). `error` falls back to the
-/// message when the app sent no domain code. Anything else is its text.
+/// message when the app sent no string domain code. A distinct `data` value
+/// under one of those keys moves to `data_<key>` rather than being dropped:
+/// the plugin and CLI ship separately. Anything else is its text.
 fn tool_error(err: &anyhow::Error) -> CallToolResult {
     let Some(rpc) = err
         .chain()
@@ -1266,11 +1268,21 @@ fn tool_error(err: &anyhow::Error) -> CallToolResult {
         Some(data) if !data.is_null() => Map::from_iter([("data".to_owned(), data.clone())]),
         _ => Map::new(),
     };
-    fields
-        .entry("error")
-        .or_insert_with(|| Value::String(rpc.message.clone()));
-    fields.insert("message".to_owned(), Value::String(rpc.message.clone()));
-    fields.insert("rpc_code".to_owned(), json!(rpc.code));
+    let has_code = fields.get("error").is_some_and(Value::is_string);
+    let mut set = |key: &str, value: Value| {
+        if let Some(old) = fields.insert(key.to_owned(), value.clone())
+            && old != value
+            && !old.is_null()
+        {
+            fields.insert(format!("data_{key}"), old);
+        }
+    };
+    let message = Value::String(rpc.message.clone());
+    if !has_code {
+        set("error", message.clone());
+    }
+    set("message", message);
+    set("rpc_code", json!(rpc.code));
     CallToolResult::structured_error(Value::Object(fields))
 }
 
@@ -2923,8 +2935,9 @@ path = "/tmp/out.png"
         let _ = std::fs::remove_file(&socket);
     }
 
-    /// Without a domain code, `error` carries the message; the RPC error is
-    /// found under added context, and its `message` beats `data.message`.
+    /// Without a string domain code, `error` carries the message; the RPC
+    /// error is found under added context, and a distinct `data` value under
+    /// a key `tool_error` sets moves to `data_<key>`.
     #[test]
     fn rpc_error_without_domain_code_uses_its_message() {
         let bare = anyhow::Error::from(RpcError {
@@ -2941,11 +2954,48 @@ path = "/tmp/out.png"
         let distinct = anyhow::Error::from(RpcError {
             code: -32000,
             message: "top".to_owned(),
-            data: Some(json!({"message": "inner", "hint": 1})),
+            data: Some(json!({"message": "inner", "hint": 1, "rpc_code": 7})),
         });
         assert_eq!(
             tool_error(&distinct).structured_content,
-            Some(json!({"error": "top", "message": "top", "rpc_code": -32000, "hint": 1}))
+            Some(json!({
+                "error": "top",
+                "message": "top",
+                "rpc_code": -32000,
+                "hint": 1,
+                "data_message": "inner",
+                "data_rpc_code": 7,
+            }))
+        );
+
+        let top = |data| {
+            tool_error(&anyhow::Error::from(RpcError {
+                code: -32000,
+                message: "top".to_owned(),
+                data,
+            }))
+            .structured_content
+        };
+        assert_eq!(
+            top(Some(json!({"error": null}))),
+            Some(json!({"error": "top", "message": "top", "rpc_code": -32000}))
+        );
+        assert_eq!(
+            top(Some(json!({"error": 5}))),
+            Some(json!({"error": "top", "message": "top", "rpc_code": -32000, "data_error": 5}))
+        );
+        assert_eq!(
+            top(Some(json!(["a", "b"]))),
+            Some(json!({"error": "top", "message": "top", "rpc_code": -32000, "data": ["a", "b"]}))
+        );
+        assert_eq!(
+            top(Some(Value::Null)),
+            Some(json!({"error": "top", "message": "top", "rpc_code": -32000}))
+        );
+
+        assert_eq!(
+            tool_error(&anyhow::anyhow!("boom")).structured_content,
+            Some(json!({"error": "boom"}))
         );
     }
 
