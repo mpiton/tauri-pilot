@@ -237,6 +237,8 @@ tauri-pilot diff [OPTIONS]
 | `-s`, `--selector <sel>` | Scope to a CSS selector. Must match the reference snapshot, or `diff` refuses |
 | `-d`, `--depth <n>` | Maximum tree depth to traverse. Must match the reference snapshot, or `diff` refuses |
 
+A `--ref` file saved by 0.7.3 or earlier records no options. `diff` compares against it anyway and prints a warning.
+
 **Output format:**
 
 ```bash

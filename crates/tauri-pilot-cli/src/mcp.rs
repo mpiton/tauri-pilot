@@ -851,7 +851,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "diff",
-            description: "Compare the current page to the previous or supplied snapshot. interactive, selector and depth must match the options that snapshot was taken with, or diff refuses.",
+            description: "Compare the current page to the previous or supplied snapshot. interactive, selector and depth must match the options the snapshot was taken with, or diff refuses (a reference that doesn't record its options is diffed with a warning).",
             schema: diff_schema,
             read_only: true,
             destructive: false,

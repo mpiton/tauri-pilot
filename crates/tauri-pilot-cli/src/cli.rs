@@ -62,7 +62,9 @@ pub(crate) enum Command {
     /// Compare current page with previous snapshot, showing only differences
     ///
     /// `-i`, `-s` and `-d` must match the options of the reference snapshot
-    /// (the last snapshot, or the `--ref` file), or `diff` refuses.
+    /// (the last snapshot, or the `--ref` file), or `diff` refuses. A `--ref`
+    /// file saved by 0.7.3 or earlier records no options and is diffed with a
+    /// warning.
     Diff {
         /// Path to a saved snapshot file to compare against
         #[arg(long, value_name = "FILE")]
