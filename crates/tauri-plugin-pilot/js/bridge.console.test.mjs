@@ -442,3 +442,42 @@ test("a replacement that fakes the Pilot marker is still chained", () => {
   assert.deepEqual(seen, ["mine"], "the page's function must not be dropped");
   assert.deepEqual(messages(pilot), ["mine"]);
 });
+
+test("a log from a pilot eval names the eval, not the wrapper position", () => {
+  // JavaScriptCore writes eval and `new Function` frames with no location and
+  // ignores `//# sourceURL`, so the first frame with one was the eval wrapper
+  // and `logs` showed `tauri://localhost:1:143` (#245). Stacks captured on
+  // pilot-test-app under WebKitGTK 2.52: a stage that calls the script in
+  // tail position loses the `evalScript` frame, one that calls it inside
+  // `try` keeps it.
+  const head = ["extractSource@user-script:6:74:30", "view@user-script:6:162:60"];
+  for (const frames of [
+    ["eval code@", "eval@[native code]", "__PILOT_EVAL__@tauri://localhost:1:143"],
+    ["@", "anonymous@", "evalScript@user-script:6:1491:27", "__PILOT_EVAL__@tauri://localhost:1:165"],
+  ]) {
+    const pilot = loadBridge();
+    const saved = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => [...head, ...frames, "global code@tauri://localhost:1:435"].join("\n");
+    try {
+      console.log("from eval");
+    } finally {
+      Error.prepareStackTrace = saved;
+    }
+
+    const [entry] = pilot.consoleLogs({ level: "log" });
+    assert.equal(entry.source, "tauri-pilot-eval", frames.join(" | "));
+  }
+});
+
+test("a log from a pilot eval under V8 names the eval too", () => {
+  // V8 gives eval'd code a location (`eval at evalScript ...`), so without a
+  // check the entry pointed into the bridge instead of naming the eval.
+  const pilot = loadBridge();
+  function __PILOT_EVAL__() {
+    return pilot.eval({ script: 'console.log("from eval"); 1' });
+  }
+  __PILOT_EVAL__();
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(entry.source, "tauri-pilot-eval");
+});
