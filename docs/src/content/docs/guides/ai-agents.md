@@ -177,9 +177,10 @@ agents do not need to parse terminal output.
 A tool error the app raised keeps its fields: `error` holds the domain code
 when the app sent one (e.g. `WINDOW_NOT_FOUND`, else the message), next to
 `message`, the JSON-RPC `rpc_code` and any detail such as
-`available_windows`. If the app's detail holds its own value under one of
-those keys, that value moves to `data_<key>` (e.g. `data_message`). Other
-tool errors carry only `error`, as text.
+`available_windows`. If the app's detail holds a different, non-null
+`message` or `rpc_code`, or an `error` that is not a string, that value moves
+to `data_<key>` (e.g. `data_message`) instead of being dropped. Other tool
+errors carry only `error`, as text.
 
 Use global flags before `mcp` when an agent should target a specific app socket or
 window:

@@ -1254,8 +1254,9 @@ fn tool_success(result: Value) -> CallToolResult {
 /// `message` and `rpc_code`, so a client reads `error: WINDOW_NOT_FOUND` and
 /// `available_windows` without parsing text (#242). `error` falls back to the
 /// message when the app sent no string domain code. A distinct `data` value
-/// under one of those keys moves to `data_<key>` rather than being dropped:
-/// the plugin and CLI ship separately. Anything else is its text.
+/// under one of those keys moves to `data_<key>` (prefixed again while that
+/// key is taken) rather than being dropped: the plugin and CLI ship
+/// separately. Anything else is its text.
 fn tool_error(err: &anyhow::Error) -> CallToolResult {
     let Some(rpc) = err
         .chain()
@@ -1274,7 +1275,11 @@ fn tool_error(err: &anyhow::Error) -> CallToolResult {
             && old != value
             && !old.is_null()
         {
-            fields.insert(format!("data_{key}"), old);
+            let mut backup = format!("data_{key}");
+            while fields.contains_key(&backup) {
+                backup.insert_str(0, "data_");
+            }
+            fields.insert(backup, old);
         }
     };
     let message = Value::String(rpc.message.clone());
@@ -2983,6 +2988,16 @@ path = "/tmp/out.png"
         assert_eq!(
             top(Some(json!({"error": 5}))),
             Some(json!({"error": "top", "message": "top", "rpc_code": -32000, "data_error": 5}))
+        );
+        assert_eq!(
+            top(Some(json!({"message": "inner", "data_message": "detail"}))),
+            Some(json!({
+                "error": "top",
+                "message": "top",
+                "rpc_code": -32000,
+                "data_message": "detail",
+                "data_data_message": "inner",
+            }))
         );
         assert_eq!(
             top(Some(json!(["a", "b"]))),
