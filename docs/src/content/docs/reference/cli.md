@@ -1490,6 +1490,39 @@ tauri-pilot run <scenario.toml> [OPTIONS]
 | `--screenshots-dir <DIR>` | Directory for failure screenshots. Default `./tauri-pilot-failures`, resolved against the working directory |
 | `--json` | Print the JSON report on stdout. The text summary goes to stderr either way (global flag) |
 
+**Step keys:**
+
+Every `[[step]]` takes `action`, plus optional `name` and `timeout_ms`. The
+other keys depend on the action:
+
+| Action | Required | Optional |
+|--------|----------|----------|
+| `click`, `check` | `target` | |
+| `fill`, `select` | `target` | `value` |
+| `type` | `target` | `text` |
+| `press` | `key` | |
+| `scroll` | | `target`, `direction`, `amount` |
+| `navigate` | `url` | |
+| `wait` | | `target`, `selector`, `gone` |
+| `watch` | | `selector`, `stable`, `require_mutation` |
+| `eval` | `script` | |
+| `screenshot` | | `path`, `selector` |
+| `assert-exists`, `assert-visible`, `assert-hidden` | `target` | |
+| `assert-text`, `assert-value` | `target`, `expected` | |
+| `assert-url` | `expected` | |
+| `storage-get` | `key` | |
+
+`run` checks every step against this table before it connects. An unknown
+action, a missing required key, or a key the action does not read fails the
+whole file, and no step runs:
+
+```text
+Error: Invalid scenario: sel.toml
+
+Caused by:
+    step-1: step 'assert-exists' does not accept 'selector'; use 'target'
+```
+
 A failed step captures a screenshot and reports where it landed as
 `screenshot`, or why it could not be written as `screenshot_error` — in
 `run --json`, and as `<system-out>` in the JUnit XML. The reported path is

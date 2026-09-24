@@ -76,11 +76,88 @@ pub(crate) struct Step {
     pub(crate) path: Option<PathBuf>,
 }
 
+/// Keys each action reads, as `(action, required, optional)`.
+///
+/// `name`, `action` and `timeout_ms` apply to every action and are not listed.
+/// Checked when the file loads, so a key the action ignores fails the whole
+/// scenario before it connects instead of mid-run (#243). Mirrors what
+/// `dispatch_step` reads: add an action or key in both places.
+const STEP_KEYS: &[(&str, &[&str], &[&str])] = &[
+    ("click", &["target"], &[]),
+    ("fill", &["target"], &["value"]),
+    ("type", &["target"], &["text"]),
+    ("press", &["key"], &[]),
+    ("select", &["target"], &["value"]),
+    ("check", &["target"], &[]),
+    ("scroll", &[], &["target", "direction", "amount"]),
+    ("navigate", &["url"], &[]),
+    ("wait", &[], &["target", "selector", "gone"]),
+    ("watch", &[], &["selector", "stable", "require_mutation"]),
+    ("eval", &["script"], &[]),
+    ("screenshot", &[], &["path", "selector"]),
+    ("assert-text", &["target", "expected"], &[]),
+    ("assert-exists", &["target"], &[]),
+    ("assert-visible", &["target"], &[]),
+    ("assert-hidden", &["target"], &[]),
+    ("assert-value", &["target", "expected"], &[]),
+    ("assert-url", &["expected"], &[]),
+    ("storage-get", &["key"], &[]),
+];
+
 impl Step {
     fn display_name(&self, idx: usize) -> String {
         self.name
             .clone()
             .unwrap_or_else(|| format!("step-{}", idx + 1))
+    }
+
+    /// Keys set on this step, leaving out those every action accepts.
+    fn set_keys(&self) -> Vec<&'static str> {
+        [
+            ("target", self.target.is_some()),
+            ("value", self.value.is_some()),
+            ("text", self.text.is_some()),
+            ("key", self.key.is_some()),
+            ("url", self.url.is_some()),
+            ("script", self.script.is_some()),
+            ("expected", self.expected.is_some()),
+            ("selector", self.selector.is_some()),
+            ("direction", self.direction.is_some()),
+            ("amount", self.amount.is_some()),
+            ("gone", self.gone.is_some()),
+            ("stable", self.stable.is_some()),
+            ("require_mutation", self.require_mutation.is_some()),
+            ("path", self.path.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(key, set)| set.then_some(key))
+        .collect()
+    }
+
+    /// Checks the action is known and its keys match [`STEP_KEYS`].
+    ///
+    /// `selector` and `target` look alike to a scenario author, so rejecting
+    /// one names the other when the action takes it.
+    fn check_keys(&self) -> Result<(), String> {
+        let action = self.action.as_str();
+        let Some(&(_, required, optional)) = STEP_KEYS.iter().find(|(name, ..)| *name == action)
+        else {
+            return Err(format!("unknown step action: {action:?}"));
+        };
+        let accepts = |key: &str| required.contains(&key) || optional.contains(&key);
+        let set = self.set_keys();
+        if let Some(&key) = set.iter().find(|&&key| !accepts(key)) {
+            let hint = match key {
+                "selector" if accepts("target") => "; use 'target'",
+                "target" if accepts("selector") => "; use 'selector'",
+                _ => "",
+            };
+            return Err(format!("step '{action}' does not accept '{key}'{hint}"));
+        }
+        match required.iter().find(|&&key| !set.contains(&key)) {
+            Some(key) => Err(format!("step '{action}' requires '{key}'")),
+            None => Ok(()),
+        }
     }
 }
 
@@ -170,12 +247,25 @@ pub(crate) const DEFAULT_SCREENSHOT_DIR: &str = "tauri-pilot-failures";
 pub(crate) fn load_scenario(path: &Path) -> Result<Scenario> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read scenario file: {}", path.display()))?;
-    toml::from_str(&content)
-        .with_context(|| format!("Failed to parse scenario TOML: {}", path.display()))
+    let scenario = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse scenario TOML: {}", path.display()))?;
+    validate_steps(&scenario).with_context(|| format!("Invalid scenario: {}", path.display()))?;
+    Ok(scenario)
 }
 
 pub(crate) fn parse_scenario(content: &str) -> Result<Scenario> {
-    toml::from_str(content).context("Failed to parse scenario TOML")
+    let scenario = toml::from_str(content).context("Failed to parse scenario TOML")?;
+    validate_steps(&scenario).context("Invalid scenario")?;
+    Ok(scenario)
+}
+
+/// Rejects the first step whose keys do not fit its action.
+fn validate_steps(scenario: &Scenario) -> Result<()> {
+    for (idx, step) in scenario.step.iter().enumerate() {
+        step.check_keys()
+            .map_err(|reason| anyhow::anyhow!("{}: {reason}", step.display_name(idx)))?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn run_scenario(
@@ -1055,6 +1145,82 @@ urls = "http://example.com"
                 "unexpected error for {field}: {msg}"
             );
         }
+    }
+
+    /// Asserts `parse_scenario` rejects `toml_str` with every part of `want`.
+    fn assert_invalid(toml_str: &str, want: &[&str]) {
+        let err = parse_scenario(toml_str).expect_err(toml_str);
+        let msg = format!("{err:#}");
+        for part in want {
+            assert!(msg.contains(part), "missing {part:?} in: {msg}");
+        }
+    }
+
+    /// A known key the action does not read fails the load, not the step (#243).
+    #[test]
+    fn parse_scenario_rejects_selector_where_target_is_required() {
+        assert_invalid(
+            "[[step]]\naction = \"assert-exists\"\nselector = \"#login-form\"\n",
+            &[
+                "Invalid scenario",
+                "step-1: step 'assert-exists' does not accept 'selector'; use 'target'",
+            ],
+        );
+    }
+
+    #[test]
+    fn parse_scenario_rejects_keys_the_action_ignores() {
+        assert_invalid(
+            "[[step]]\naction = \"click\"\ntarget = \"#btn\"\nvalue = \"x\"\n",
+            &["step 'click' does not accept 'value'"],
+        );
+        assert_invalid(
+            "[[step]]\nname = \"settle\"\naction = \"watch\"\ntarget = \"#list\"\n",
+            &["settle: step 'watch' does not accept 'target'; use 'selector'"],
+        );
+    }
+
+    #[test]
+    fn parse_scenario_rejects_missing_required_keys() {
+        assert_invalid(
+            "[[step]]\naction = \"press\"\n",
+            &["step 'press' requires 'key'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"click\"\ntarget = \"#a\"\n\n[[step]]\naction = \"assert-text\"\ntarget = \"h1\"\n",
+            &["step-2: step 'assert-text' requires 'expected'"],
+        );
+    }
+
+    #[test]
+    fn parse_scenario_rejects_unknown_actions() {
+        assert_invalid(
+            "[[step]]\naction = \"assert-exist\"\ntarget = \"#a\"\n",
+            &["unknown step action: \"assert-exist\""],
+        );
+    }
+
+    #[test]
+    fn load_scenario_rejects_invalid_steps_with_the_path() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("sel.toml");
+        std::fs::write(&path, "[[step]]\naction = \"click\"\nselector = \"#a\"\n")
+            .expect("write scenario");
+        let err = load_scenario(&path).expect_err("selector on click");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(&path.display().to_string()) && msg.contains("use 'target'"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    /// Every key the shipped example uses must stay valid for its action.
+    #[test]
+    fn bundled_example_scenario_passes_validation() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/login-flow.toml");
+        let scenario = load_scenario(&path).expect("example scenario is valid");
+        assert!(!scenario.step.is_empty());
     }
 
     #[test]

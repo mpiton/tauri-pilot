@@ -199,6 +199,45 @@ fn run_json_reports_absolute_path_under_the_default_directory() {
     assert!(saved.is_file(), "screenshot {} is missing", saved.display());
 }
 
+/// A step with a key its action does not read fails before `run` connects, so
+/// no step runs and no failure screenshot is taken (#243).
+#[test]
+fn run_rejects_an_invalid_step_before_connecting() {
+    let tmpdir = tempfile::tempdir().expect("tempdir");
+    let scenario_path = tmpdir.path().join("sel.toml");
+    std::fs::write(
+        &scenario_path,
+        "[[step]]\naction = \"assert-exists\"\nselector = \"#login-form\"\n",
+    )
+    .expect("write scenario");
+    // Nothing listens here: reaching the connect step would fail differently.
+    let socket = tmpdir.path().join("absent.sock");
+    let child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
+        .current_dir(tmpdir.path())
+        .args([
+            "--socket",
+            socket.to_str().expect("socket path is UTF-8"),
+            "run",
+            scenario_path.to_str().expect("scenario path is UTF-8"),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tauri-pilot");
+    let output = wait_bounded(child);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr={stderr}");
+    assert!(
+        stderr.contains("step 'assert-exists' does not accept 'selector'; use 'target'"),
+        "stderr={stderr}"
+    );
+    assert!(
+        !tmpdir.path().join("tauri-pilot-failures").exists(),
+        "an invalid scenario must not leave a failure screenshot"
+    );
+}
+
 /// `run --json | head -1` must not turn a failing scenario into a 0, and the
 /// `JUnit` XML must survive the early exit (#213 meeting #215).
 #[test]
