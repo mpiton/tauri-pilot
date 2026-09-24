@@ -1493,7 +1493,11 @@ tauri-pilot run <scenario.toml> [OPTIONS]
 A failed step captures a screenshot and reports where it landed as
 `screenshot`, or why it could not be written as `screenshot_error` — in
 `run --json`, and as `<system-out>` in the JUnit XML. The reported path is
-always absolute, so a CI job can upload it from any directory.
+always absolute, so a CI job can upload it from any directory. A step that
+timed out, by its `timeout_ms` or by `--rpc-timeout`, gets no screenshot: the
+app may still answer the abandoned request on that connection, so
+`screenshot_error` says the connection is out of sync. The next step opens a
+fresh connection.
 
 **Example:**
 

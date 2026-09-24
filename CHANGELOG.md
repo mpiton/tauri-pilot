@@ -98,7 +98,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--rpc-timeout <secs>` or `TAURI_PILOT_RPC_TIMEOUT`. A connection whose
   request was abandoned, for example by a scenario step's `timeout_ms`, now
   refuses further requests instead of pairing the late answer with the next
-  one; the failure screenshot of such a step used to hang the run. [#241]
+  one. Such a step gets no failure screenshot: it reports `screenshot_error`
+  right away, where the screenshot used to hang the run. With
+  `--no-fail-fast`, the next step opens a fresh connection. [#241]
 
 - On Windows, quitting the app with Ctrl+C or Ctrl+Break, or by closing the
   console running `cargo tauri dev`, now removes

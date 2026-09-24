@@ -34,6 +34,9 @@ const FOCUS_POLL_MS: u64 = 5;
 static PRESS_ORDER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest fixed bound. The CLI's `DEFAULT_RPC_TIMEOUT` in
+/// `crates/tauri-pilot-cli/src/client/mod.rs` sits above it so the CLI never
+/// gives up first. The crates ship separately, so change both together.
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default JS-side timeout when params omit it. Mirrors the bridge default
 /// (`waitFor`/`watch` both fall back to `10_000` ms in `bridge.js`).
@@ -56,6 +59,9 @@ const BRIDGE_TIMEOUT_BUFFER_MS: u64 = 2_000;
 /// honors `options.timeout` (currently `wait` and `watch`). Pads the user
 /// value with [`BRIDGE_TIMEOUT_BUFFER_MS`] so the bridge always gets to surface
 /// its own well-formed rejection before the channel goes silent.
+///
+/// The CLI's `rpc_budget` in `crates/tauri-pilot-cli/src/client/mod.rs`
+/// adds the same `timeout` to its own deadline; change both together.
 fn bridge_eval_timeout(params: Option<&serde_json::Value>) -> Duration {
     let timeout_ms = params
         .and_then(|p| p.get("timeout"))
@@ -70,6 +76,9 @@ fn bridge_eval_timeout(params: Option<&serde_json::Value>) -> Duration {
 /// clamp mirror `drag()` in `bridge.js`. Without this, a caller tuning the gesture past
 /// [`DEFAULT_TIMEOUT`] gets an RPC timeout while the bridge is still mid-drag,
 /// and the pending result is dropped.
+///
+/// The CLI's `rpc_budget` in `crates/tauri-pilot-cli/src/client/mod.rs`
+/// adds this gesture time to its own deadline; change both together.
 fn drag_eval_timeout(params: Option<&serde_json::Value>) -> Duration {
     // Values `bridge.js` itself rejects (NaN, negative) fall back to its own
     // default here too. The shapes `Number()` accepts and Rust doesn't —

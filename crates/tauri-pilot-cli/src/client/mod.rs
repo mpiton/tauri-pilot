@@ -51,7 +51,7 @@ pub(crate) struct Client {
     /// Socket or pipe path, named when the app does not answer.
     endpoint: PathBuf,
     /// How long a call waits for its answer, before `rpc_budget` extends it.
-    deadline: Duration,
+    rpc_timeout: Duration,
     /// Set while a request awaits its answer; still set after a call gave up.
     in_flight: bool,
 }
@@ -60,13 +60,35 @@ impl Client {
     /// Connect to the tauri-pilot transport.
     pub async fn connect(path: &Path) -> Result<Self> {
         #[cfg(unix)]
-        {
-            unix::connect(path).await
-        }
+        let (reader, writer) = unix::connect(path).await?;
         #[cfg(windows)]
-        {
-            windows::connect(path).await
+        let (reader, writer) = windows::connect(path).await?;
+        Ok(Self {
+            reader: BufReader::new(reader),
+            writer,
+            next_id: 1,
+            endpoint: path.to_owned(),
+            rpc_timeout: rpc_timeout(),
+            in_flight: false,
+        })
+    }
+
+    /// Replaces a connection left out of sync by an unfinished call.
+    ///
+    /// A no-op while the connection is usable. A scenario calls this before
+    /// each step, so a step cut off by its `timeout_ms` or by `--rpc-timeout`
+    /// does not fail every step after it (#241).
+    ///
+    /// # Errors
+    ///
+    /// Returns the connection error when the endpoint no longer accepts.
+    pub(crate) async fn resync(&mut self) -> Result<()> {
+        if self.in_flight {
+            let rpc_timeout = self.rpc_timeout;
+            *self = Self::connect(&self.endpoint).await?;
+            self.rpc_timeout = rpc_timeout;
         }
+        Ok(())
     }
 
     /// Send a JSON-RPC request and return the result value.
@@ -81,7 +103,7 @@ impl Client {
         let id = self.next_id;
         self.next_id += 1;
 
-        let budget = rpc_budget(self.deadline, params.as_ref());
+        let budget = rpc_budget(method, self.rpc_timeout, params.as_ref());
         let bytes = encode(id, method, params)?;
         if bytes.len() > MAX_REQUEST_LEN {
             bail!(
@@ -180,24 +202,31 @@ impl Client {
     }
 }
 
-/// Time a call may wait: `deadline`, plus the time in ms the request asks
+/// Time a call may wait: `rpc_timeout`, plus the time in ms `method` asks
 /// the webview to spend before the plugin can answer.
 ///
 /// That is the `timeout` of a `wait` or `watch`, or the gesture of a `drag`:
 /// up to 60 moves spaced by `stepDelayMs`, then `settleMs`. The plugin
-/// stretches its own bound the same way, so the client must not cut first.
-fn rpc_budget(deadline: Duration, params: Option<&serde_json::Value>) -> Duration {
+/// stretches its own bound for the same methods, in `bridge_eval_timeout`
+/// and `drag_eval_timeout` of its `handler.rs`; change both together. At the
+/// default `rpc_timeout` the client never cuts before the plugin; a lower
+/// `--rpc-timeout` is the caller asking to give up sooner.
+fn rpc_budget(method: &str, rpc_timeout: Duration, params: Option<&serde_json::Value>) -> Duration {
     let ms = |key: &str| {
         params
             .and_then(|p| p.get(key))
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0)
     };
-    // ponytail: counts the 60-move clamp, not `steps`; over-waits only when the app is wedged.
-    let in_webview = ms("timeout")
-        .saturating_add(ms("stepDelayMs").saturating_mul(60))
-        .saturating_add(ms("settleMs"));
-    deadline.saturating_add(Duration::from_millis(in_webview))
+    let in_webview = match method {
+        "wait" | "watch" => ms("timeout"),
+        // ponytail: counts the 60-move clamp, not `steps`; over-waits only when the app is wedged.
+        "drag" => ms("stepDelayMs")
+            .saturating_mul(60)
+            .saturating_add(ms("settleMs")),
+        _ => 0,
+    };
+    rpc_timeout.saturating_add(Duration::from_millis(in_webview))
 }
 
 /// Serialize a request as one line, trailing newline included.
@@ -483,7 +512,7 @@ mod tests {
         let handle = silent_server(&socket);
 
         let mut client = connect_with_retry(&socket).await;
-        client.deadline = Duration::from_millis(100);
+        client.rpc_timeout = Duration::from_millis(100);
         let err = tokio::time::timeout(Duration::from_secs(5), client.call("ping", None))
             .await
             .expect("bounded by the client deadline")
@@ -495,6 +524,16 @@ mod tests {
                  answer. Raise --rpc-timeout if the command needs longer.",
                 socket.display()
             )
+        );
+        // The unanswered ping may still arrive, so the next call must not
+        // read it as its own answer, nor wait a second full deadline.
+        let err = tokio::time::timeout(Duration::from_secs(5), client.call("screenshot", None))
+            .await
+            .expect("refused without waiting for the app")
+            .expect_err("connection out of sync");
+        assert_eq!(
+            err.to_string(),
+            "Connection is out of sync: an earlier request on it did not complete"
         );
 
         handle.abort();
@@ -526,16 +565,46 @@ mod tests {
         let _ = std::fs::remove_file(&socket);
     }
 
+    #[tokio::test]
+    async fn test_client_waits_out_the_wait_timeout() {
+        // `call` must pass the extended budget to its timer, not the bare
+        // `rpc_timeout`: a lower bound on the elapsed time never flakes.
+        let socket = unique_socket_path("t05k");
+        let handle = silent_server(&socket);
+
+        let mut client = connect_with_retry(&socket).await;
+        client.rpc_timeout = Duration::from_millis(50);
+        let started = std::time::Instant::now();
+        let params = serde_json::json!({"selector": "#a", "timeout": 200});
+        let err = tokio::time::timeout(Duration::from_secs(5), client.call("wait", Some(params)))
+            .await
+            .expect("bounded by the client deadline")
+            .expect_err("silent server");
+        assert!(
+            started.elapsed() >= Duration::from_millis(250),
+            "gave up after {:?}, before the wait timeout ran out: {err}",
+            started.elapsed()
+        );
+
+        handle.abort();
+        let _ = std::fs::remove_file(&socket);
+    }
+
     #[test]
     fn test_rpc_budget_adds_the_wait_timeout() {
         // `wait` and `watch` run for their own `timeout` in the webview, so
         // the client deadline only covers the time around it.
         let base = Duration::from_secs(35);
         let wait = serde_json::json!({"selector": "#a", "timeout": 60_000});
-        assert_eq!(rpc_budget(base, Some(&wait)), Duration::from_secs(95));
-        let click = serde_json::json!({"selector": "#a"});
-        assert_eq!(rpc_budget(base, Some(&click)), base);
-        assert_eq!(rpc_budget(base, None), base);
+        assert_eq!(
+            rpc_budget("wait", base, Some(&wait)),
+            Duration::from_secs(95)
+        );
+        assert_eq!(
+            rpc_budget("watch", base, Some(&wait)),
+            Duration::from_secs(95)
+        );
+        assert_eq!(rpc_budget("wait", base, None), base);
     }
 
     #[test]
@@ -544,7 +613,20 @@ mod tests {
         // slow gesture over MCP must not hit the client deadline first.
         let base = Duration::from_secs(35);
         let drag = serde_json::json!({"steps": 60, "stepDelayMs": 1_000, "settleMs": 5_000});
-        assert_eq!(rpc_budget(base, Some(&drag)), Duration::from_secs(100));
+        assert_eq!(
+            rpc_budget("drag", base, Some(&drag)),
+            Duration::from_secs(100)
+        );
+    }
+
+    #[test]
+    fn test_rpc_budget_ignores_timing_keys_of_other_methods() {
+        // Only the methods the plugin stretches its own bound for get more
+        // time; a `timeout` key elsewhere must not lengthen the deadline.
+        let base = Duration::from_secs(35);
+        let params = serde_json::json!({"timeout": 60_000, "stepDelayMs": 1_000});
+        assert_eq!(rpc_budget("click", base, Some(&params)), base);
+        assert_eq!(rpc_budget("ping", base, None), base);
     }
 
     #[tokio::test]
