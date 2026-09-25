@@ -133,7 +133,9 @@ pub(crate) fn current_url<R: tauri::Runtime>(webview: &tauri::WebviewWindow<R>) 
     // Android `url()` posts to the main thread and waits. Desktop returns on
     // the caller, so a test window named below blocks here instead, while the
     // command is still on the stack.
-    #[cfg(test)]
+    // Same cfg as the handler tests that arm the gate. On Windows those
+    // tests are absent, and clippy `-D warnings` rejects the unused methods.
+    #[cfg(all(test, unix, not(target_os = "android"), debug_assertions))]
     url_gate::wait_if_installed(webview.label());
 
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| webview.url()))
@@ -146,7 +148,7 @@ pub(crate) fn current_url<R: tauri::Runtime>(webview: &tauri::WebviewWindow<R>) 
 /// `WebviewWindow::url` on the mock runtime returns immediately, which hides
 /// the deadlock. A window labeled [`LABEL`] waits here until the test releases
 /// the gate.
-#[cfg(test)]
+#[cfg(all(test, unix, not(target_os = "android"), debug_assertions))]
 pub(crate) mod url_gate {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
