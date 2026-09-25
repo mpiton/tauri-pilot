@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -123,7 +123,8 @@ pub(crate) struct EvalEngine {
     ///
     /// Written from `on_page_load` (`Started`) and read by the callback
     /// commands. Both run under the plugin store lock, so a navigation cannot
-    /// replace this URL while a hello is being recorded.
+    /// replace this URL while a hello is being recorded. Entries leave with
+    /// the webview: see [`EvalEngine::forget_closed_webviews`].
     pages: Arc<Mutex<HashMap<String, Url>>>,
 }
 
@@ -156,6 +157,25 @@ impl EvalEngine {
             .expect("page url lock poisoned")
             .get(label)
             .cloned()
+    }
+
+    /// Drop URLs for webview labels that are no longer open.
+    ///
+    /// `live` is the labels still in Tauri's webview map. A destroyed window's
+    /// webviews are already gone from that map when the plugin sees
+    /// `WindowEvent::Destroyed`. A child webview closed on its own has no
+    /// destroy event in Tauri 2.11, so the next `on_page_load` passes the
+    /// same set.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the page-url lock is poisoned.
+    pub(crate) fn forget_closed_webviews<'a>(&self, live: impl IntoIterator<Item = &'a str>) {
+        let live: HashSet<&str> = live.into_iter().collect();
+        self.pages
+            .lock()
+            .expect("page url lock poisoned")
+            .retain(|label, _| live.contains(label.as_str()));
     }
 
     /// Record a hello from `page` (the invoking webview's URL).
@@ -659,6 +679,22 @@ mod tests {
             engine.page_at_start("settings").as_ref().map(Url::as_str),
             Some("https://example.com/")
         );
+    }
+
+    #[test]
+    fn test_forget_closed_webviews_drops_destroyed_labels() {
+        let engine = EvalEngine::new();
+        let url = |text| Url::parse(text).expect("valid test URL");
+        engine.record_page_start("main", url("tauri://localhost/"));
+        engine.record_page_start("popup", url("https://example.com/"));
+        engine.forget_closed_webviews(["main"]);
+        assert_eq!(
+            engine.page_at_start("main").as_ref().map(Url::as_str),
+            Some("tauri://localhost/")
+        );
+        assert!(engine.page_at_start("popup").is_none());
+        engine.forget_closed_webviews(std::iter::empty());
+        assert!(engine.page_at_start("main").is_none());
     }
 
     #[test]
