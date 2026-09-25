@@ -1068,6 +1068,12 @@ pub(crate) fn handle_callback(
 }
 
 /// Tauri IPC command for the eval callback handler.
+///
+/// Synchronous, so Tauri holds the plugin store lock until it returns. The
+/// page is the last load that `Started` on this webview. `webview.url()` is
+/// not called: on Android that waits for the main thread, and navigation
+/// needs the same lock (#252). A new load cannot be recorded until this
+/// returns, so an in-flight hello still names the page it came from.
 #[tauri::command]
 #[allow(
     clippy::needless_pass_by_value,
@@ -1080,22 +1086,16 @@ pub(crate) fn callback<R: tauri::Runtime>(
     result: Option<String>,
     error: Option<String>,
 ) {
-    handle_callback(
-        &eval_engine,
-        id,
-        result,
-        error,
-        crate::webview::current_url(&webview).as_ref(),
-    );
+    finish_callback(&eval_engine, &webview, id, result, error);
 }
 
 /// Legacy Tauri IPC command for the `__callback` handler.
 ///
-/// `#[tauri::command]` binds `State<'_, T>` by value — the generated wrapper
-/// is the true consumer, so clippy's view of the body is incomplete. Cannot
-/// be rewritten as `&State` (tauri command macro rejects it). Documented
-/// here rather than suppressed; this is the only call site that cannot
-/// satisfy `needless_pass_by_value`.
+/// Same lock and page rules as [`callback`].
+///
+/// `#[tauri::command]` binds `State<'_, T>` by value. The generated wrapper is
+/// the true consumer, so clippy's view of the body is incomplete. Cannot be
+/// rewritten as `&State` (tauri command macro rejects it).
 #[tauri::command]
 #[allow(
     clippy::needless_pass_by_value,
@@ -1108,13 +1108,19 @@ pub(crate) fn __callback<R: tauri::Runtime>(
     result: Option<String>,
     error: Option<String>,
 ) {
-    handle_callback(
-        &eval_engine,
-        id,
-        result,
-        error,
-        crate::webview::current_url(&webview).as_ref(),
-    );
+    finish_callback(&eval_engine, &webview, id, result, error);
+}
+
+/// Record the callback against the page saved when its load started.
+fn finish_callback<R: tauri::Runtime>(
+    eval_engine: &EvalEngine,
+    webview: &tauri::WebviewWindow<R>,
+    id: u64,
+    result: Option<String>,
+    error: Option<String>,
+) {
+    let page = eval_engine.page_at_start(webview.label());
+    handle_callback(eval_engine, id, result, error, page.as_ref());
 }
 
 #[cfg(test)]
@@ -3123,5 +3129,139 @@ mod tests {
             "took {:?}",
             start.elapsed()
         );
+    }
+
+    /// An in-flight hello with no client result must not mark the destination.
+    ///
+    /// The live webview URL is already the destination. Reading it would tag
+    /// that origin, and on Android it would also wait on the main thread
+    /// while the plugin store lock is held (#252). The hello has to use the
+    /// URL recorded when the previous page started loading.
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    #[test]
+    fn in_flight_hello_without_result_does_not_mark_destination() {
+        use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+        use crate::webview::url_gate::{LABEL, UrlGate};
+
+        let gate = UrlGate::install();
+        let _gate_guard = scopeguard_release(gate.clone());
+        let (_socket, app) = callback_test_app();
+        let window =
+            WebviewWindowBuilder::new(&app, LABEL, WebviewUrl::External(url(FOREIGN_PAGE)))
+                .data_directory(std::env::temp_dir())
+                .build()
+                .expect("url-wait window");
+        let live = window.url().expect("live url");
+        assert_eq!(
+            origin_key(&live),
+            origin_key(&url(FOREIGN_PAGE)),
+            "the fixture's live URL must be the destination"
+        );
+
+        let engine = app.state::<EvalEngine>();
+        engine.record_page_start(LABEL, url(APP_PAGE));
+        for command in ["plugin:pilot|__callback", "plugin:pilot|callback"] {
+            let before = engine.hellos();
+            invoke_hello(&window, &gate, command);
+            assert!(!gate.entered(), "{command} read the live webview URL");
+            assert_eq!(
+                engine.hellos(),
+                before + 1,
+                "{command} did not record the hello"
+            );
+            assert!(
+                engine.has_bridge(&url(APP_PAGE)),
+                "{command} dropped the page recorded at start"
+            );
+            assert!(
+                !engine.has_bridge(&url(FOREIGN_PAGE)),
+                "{command} marked the destination from an in-flight hello with no result"
+            );
+        }
+    }
+
+    /// App whose plugin socket is removed when the guard drops.
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    fn callback_test_app() -> (SocketCleanup, tauri::App<tauri::test::MockRuntime>) {
+        let identifier = format!("com.pilot.issue252-{}", std::process::id());
+        let address = crate::server::socket_address(&identifier).expect("socket address");
+        let path = address
+            .as_pathname()
+            .expect("pathname socket")
+            .to_path_buf();
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = identifier;
+        for command in ["plugin:pilot|__callback", "plugin:pilot|callback"] {
+            context.runtime_authority_mut().__allow_command(
+                command.to_owned(),
+                tauri::utils::acl::ExecutionContext::Local,
+            );
+        }
+        let app = tauri::test::mock_builder()
+            .plugin(crate::init())
+            .build(context)
+            .expect("app starts");
+        (SocketCleanup(path), app)
+    }
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    struct SocketCleanup(std::path::PathBuf);
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    impl Drop for SocketCleanup {
+        fn drop(&mut self) {
+            crate::server::unix::cleanup_bind_files(&self.0);
+        }
+    }
+
+    /// Send a hello with no result. Returns once the command does.
+    ///
+    /// A command that calls `current_url` blocks in the URL gate, so this
+    /// waits only long enough for a lock-free callback to finish.
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    fn invoke_hello(
+        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        gate: &crate::webview::url_gate::UrlGate,
+        command: &str,
+    ) {
+        let window = window.clone();
+        let command_owned = command.to_owned();
+        let ipc = std::thread::spawn(move || {
+            window.on_message(
+                tauri::webview::InvokeRequest {
+                    cmd: command_owned,
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: url(APP_PAGE),
+                    body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "id": 0 })),
+                    headers: tauri::http::HeaderMap::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.to_owned(),
+                },
+                Box::new(|_webview, _cmd, _response, _callback, _error| {}),
+            );
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !ipc.is_finished() {
+            assert!(!gate.entered(), "{command} read the live webview URL");
+            assert!(
+                std::time::Instant::now() <= deadline,
+                "{command} did not return; it is waiting on the webview URL"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        ipc.join().expect("callback thread");
+    }
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    fn scopeguard_release(gate: crate::webview::url_gate::UrlGate) -> impl Drop {
+        struct Guard(crate::webview::url_gate::UrlGate);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.release();
+                crate::webview::url_gate::clear();
+            }
+        }
+        Guard(gate)
     }
 }

@@ -130,6 +130,31 @@ fn on_pilot_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: &tauri::R
     {
         guard.release();
     }
+    if let tauri::RunEvent::WindowEvent {
+        event: tauri::WindowEvent::Destroyed,
+        ..
+    } = event
+    {
+        forget_closed_pages(app);
+    }
+}
+
+/// Drop page URLs for webviews Tauri has already removed.
+///
+/// `WindowEvent::Destroyed` runs after Tauri drops that window's webviews, so
+/// this keeps only labels still in the webview map. A child webview closed on
+/// its own has no destroy event in Tauri 2.11; `on_page_load` runs this too.
+#[cfg(all(any(unix, windows), debug_assertions))]
+fn forget_closed_pages<R, M>(manager: &M)
+where
+    R: tauri::Runtime,
+    M: tauri::Manager<R>,
+{
+    let Some(engine) = manager.try_state::<crate::eval::EvalEngine>() else {
+        return;
+    };
+    let live = manager.webviews();
+    engine.forget_closed_webviews(live.keys().map(String::as_str));
 }
 
 /// Initialize the tauri-pilot plugin.
@@ -191,6 +216,18 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 if let Err(err) = webview.eval(BRIDGE_JS) {
                     tracing::warn!(error = %err, "failed to inject tauri-pilot bridge on webview ready");
                 }
+            })
+            // `Started` runs under the plugin store lock and does not call
+            // `webview.url()`. The callback commands read this record (#252).
+            .on_page_load(|webview, payload| {
+                forget_closed_pages(webview);
+                if payload.event() != tauri::webview::PageLoadEvent::Started {
+                    return;
+                }
+                let Some(engine) = webview.try_state::<EvalEngine>() else {
+                    return;
+                };
+                engine.record_page_start(webview.label(), payload.url().clone());
             })
             .setup(|app, _api| {
                 let engine = EvalEngine::new();
@@ -761,6 +798,59 @@ mod tests {
         let left = path.exists();
         super::server::unix::cleanup_bind_files(&path);
         assert!(!left, "RunEvent::Exit must unlink the socket (#194)");
+    }
+
+    #[cfg(all(unix, not(target_os = "android"), debug_assertions))]
+    #[test]
+    fn closed_webview_drops_its_page_url_and_keeps_live_ones() {
+        use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+        struct SocketCleanup(std::path::PathBuf);
+        impl Drop for SocketCleanup {
+            fn drop(&mut self) {
+                super::server::unix::cleanup_bind_files(&self.0);
+            }
+        }
+
+        let identifier = format!("com.pilot.pages-{}", std::process::id());
+        let address = super::server::socket_address(&super::sanitize_identifier(&identifier))
+            .expect("socket address");
+        let path = address
+            .as_pathname()
+            .expect("pathname socket")
+            .to_path_buf();
+        super::server::unix::cleanup_bind_files(&path);
+        let _cleanup = SocketCleanup(path);
+
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = identifier;
+        let app = tauri::test::mock_builder()
+            .plugin(super::init())
+            .build(context)
+            .expect("app starts");
+        let main = tauri::Url::parse("https://main.test/").expect("valid test URL");
+        let gone = tauri::Url::parse("https://gone.test/").expect("valid test URL");
+        WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(main.clone()))
+            .data_directory(std::env::temp_dir())
+            .build()
+            .expect("main window");
+
+        let engine = app.state::<super::eval::EvalEngine>();
+        engine.record_page_start("main", main);
+        engine.record_page_start("gone", gone);
+        super::forget_closed_pages(app.handle());
+
+        assert_eq!(
+            engine
+                .page_at_start("main")
+                .as_ref()
+                .map(tauri::Url::as_str),
+            Some("https://main.test/")
+        );
+        assert!(
+            engine.page_at_start("gone").is_none(),
+            "a label with no live webview must be dropped"
+        );
     }
 
     #[cfg(all(any(unix, windows), debug_assertions))]
