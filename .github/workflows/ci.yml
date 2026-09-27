@@ -65,12 +65,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-v2-
 
+      # Lint mobile with and without the `press` feature. The default build is
+      # the one #256 fixed, and no other step compiles it for mobile.
       - name: Check Android plugin
         if: runner.os == 'Linux'
         run: |
           rustup target add aarch64-linux-android
           cargo check -p tauri-plugin-pilot --target aarch64-linux-android --no-default-features
           cargo clippy -p tauri-plugin-pilot --target aarch64-linux-android --no-default-features -- -D warnings
+          cargo clippy -p tauri-plugin-pilot --target aarch64-linux-android -- -D warnings
 
       - name: Check iOS plugin
         if: runner.os == 'macOS'
@@ -78,6 +81,7 @@ jobs:
           rustup target add aarch64-apple-ios-sim
           cargo check -p tauri-plugin-pilot --target aarch64-apple-ios-sim --no-default-features
           cargo clippy -p tauri-plugin-pilot --target aarch64-apple-ios-sim --no-default-features -- -D warnings
+          cargo clippy -p tauri-plugin-pilot --target aarch64-apple-ios-sim -- -D warnings
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
