@@ -35,7 +35,7 @@ owo-colors = { version = "4.4.0", features = ["supports-colors"] }
 indicatif = "0.18"
 rmcp = { version = "3.4.0", default-features = false, features = ["server", "transport-io"] }
 quick-xml = "0.42"
-toml = "1"
+toml = "1.0.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"

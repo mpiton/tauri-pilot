@@ -396,9 +396,18 @@
     return { cleared: true };
   }
 
+  // Sizes are UTF-8 bytes, not String.length, which counts UTF-16 code units
+  // and under-reports non-ASCII text (#253). An XHR text response is measured
+  // after the browser decoded it, so a compressed body does not match the
+  // bytes on the wire.
+  const _utf8 = new TextEncoder();
+  function utf8Size(text) {
+    return _utf8.encode(text).length;
+  }
+
   function bodySize(body) {
     if (!body) return 0;
-    if (typeof body === "string") return body.length;
+    if (typeof body === "string") return utf8Size(body);
     if (body instanceof URLSearchParams) return body.toString().length;
     if (body instanceof Blob) return body.size;
     if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return body.byteLength;
@@ -412,6 +421,15 @@
     if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
     const n = Number(raw);
     return Number.isSafeInteger(n) ? n : null;
+  }
+
+  // XHR decodes text with the Content-Type charset, UTF-8 when it names none.
+  // Re-encoding a windows-1252 or Shift_JIS body as UTF-8 does not give its
+  // size, so only a UTF-8 body is measured. A charset forced with
+  // overrideMimeType() does not show in the header and is missed.
+  function isUtf8Text(xhr) {
+    const m = /;\s*charset\s*=\s*"?([^";\s]+)/i.exec(xhr.getResponseHeader("Content-Type") || "");
+    return !m || /^utf-?8$/i.test(m[1]);
   }
 
   // Tauri convertFileSrc(cmd, "ipc") produces `ipc://localhost/<cmd>` on
@@ -544,12 +562,13 @@
       };
       onLoad = () => {
         // A responseType of "json" or "document" hands back a plain object,
-        // so neither branch below measures it — fall back to the header, and
-        // to null when it is missing, like the fetch wrapper does (#232).
+        // and non-UTF-8 text cannot be re-measured, so neither branch below
+        // measures them — fall back to the header, and to null when it is
+        // missing, like the fetch wrapper does (#232, #253).
         const cl = headerSize(this.getResponseHeader("Content-Length"));
         const r = this.response;
         const responseSize = (this.responseType === "" || this.responseType === "text")
-          ? (typeof r === "string" ? r.length : cl)
+          ? (typeof r === "string" && isUtf8Text(this) ? utf8Size(r) : cl)
           : (r instanceof ArrayBuffer ? r.byteLength : (r instanceof Blob ? r.size : cl));
         pushEntry(this.status, null, responseSize);
       };

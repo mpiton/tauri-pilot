@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `tauri` floor raised from 2.11.3 to 2.12.0. `tauri-runtime` 2.12.0 changed
+  its monitor and window traits, and `tauri` 2.11.3 accepts it through a caret
+  requirement, so a fresh resolve of 2.11.3 no longer compiles. `tauri` 2.12.0
+  pins its sibling crates with `~`. `serde` moves to 1.0.228 and `toml` to
+  1.0.1, the floors `cargo_toml` 1.0 asks for once `tauri-build` 2.7 pulls it
+  in. Apps consuming the plugin must now be on `tauri` 2.12.0 or newer.
+
+### Fixed
+
+- `network` reports `request_size` and `response_size` in bytes for text
+  bodies. They counted UTF-16 code units, so non-ASCII text came out smaller
+  than on the wire, and an XHR text response got a different size than the
+  same request with `responseType = "blob"`. An XHR text response in a
+  charset other than UTF-8 falls back to `Content-Length`. [#253]
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
@@ -1179,3 +1196,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#243]: https://github.com/mpiton/tauri-pilot/issues/243
 [#244]: https://github.com/mpiton/tauri-pilot/issues/244
 [#245]: https://github.com/mpiton/tauri-pilot/issues/245
+[#253]: https://github.com/mpiton/tauri-pilot/issues/253
