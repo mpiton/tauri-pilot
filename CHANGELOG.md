@@ -16,12 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.0.1, the floors `cargo_toml` 1.0 asks for once `tauri-build` 2.7 pulls it
   in. Apps consuming the plugin must now be on `tauri` 2.12.0 or newer.
 
-- `screenshot_native` on Linux, Windows, Android and iOS answers with
-  `error.data.error = "UNSUPPORTED_PLATFORM"` instead of `PERMISSION_DENIED`,
-  and the message names `screenshot_native` rather than `screenshot`. No
-  permission grant makes native capture work off macOS, so the old code sent
-  agents asking the user for one. Callers matching on `PERMISSION_DENIED`
-  must switch to the new code. [#254]
+- **Breaking:** `screenshot_native` on Linux, Windows, Android and iOS
+  answers with `error.data.error = "UNSUPPORTED_PLATFORM"` instead of
+  `PERMISSION_DENIED`, and the message names `screenshot_native` rather than
+  `screenshot`. No permission grant makes native capture work off macOS, so
+  the old code sent agents asking the user for one. Callers matching on
+  `PERMISSION_DENIED` must switch to the new code. [#254]
 
 ### Fixed
 

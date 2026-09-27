@@ -466,9 +466,14 @@ fn capture_with_fallback(
                 ))
             }
         },
-        ScreenshotBackend::WkWebViewSnapshot | ScreenshotBackend::PlatformUnsupported => {
-            Err(unsupported_platform())
-        }
+        // The host is macOS here; only the backend is missing.
+        ScreenshotBackend::WkWebViewSnapshot => Err(rpc_error(
+            RPC_INTERNAL_ERROR,
+            codes::CAPTURE_FAILED,
+            "WKWebView snapshot backend is not wired yet",
+            Value::Null,
+        )),
+        ScreenshotBackend::PlatformUnsupported => Err(unsupported_platform()),
     }
 }
 
