@@ -4,7 +4,7 @@
 //! surfaced as metadata) is implemented in [`handle_screenshot`]. The handler
 //! validates the request shape on every platform, then dispatches to the
 //! macOS-only native capture pipeline; non-macOS callers always receive
-//! `PERMISSION_DENIED` so the contract surface is identical on every host.
+//! `UNSUPPORTED_PLATFORM` so the contract surface is identical on every host.
 
 #[cfg(target_os = "macos")]
 use std::path::Path;
@@ -34,7 +34,17 @@ pub(crate) mod codes {
         allow(dead_code, reason = "only referenced by the macOS capture path")
     )]
     pub(crate) const CAPTURE_FAILED: &str = "CAPTURE_FAILED";
-    pub(crate) const PERMISSION_DENIED: &str = "PERMISSION_DENIED";
+    pub(crate) const UNSUPPORTED_PLATFORM: &str = "UNSUPPORTED_PLATFORM";
+}
+
+/// Error for a host without native capture: every OS but macOS today.
+fn unsupported_platform() -> RpcError {
+    rpc_error(
+        RPC_INTERNAL_ERROR,
+        codes::UNSUPPORTED_PLATFORM,
+        "screenshot_native is only available on macOS in this release",
+        Value::Null,
+    )
 }
 
 /// Build a JSON-RPC error response with the given numeric code, message, and
@@ -246,12 +256,7 @@ pub(crate) async fn handle_screenshot(params: Option<&Value>) -> Result<Value, R
         // The validators above always run so non-macOS callers see contract
         // violations (bad format, relative path) ahead of the platform error.
         let _ = req;
-        Err(rpc_error(
-            RPC_INTERNAL_ERROR,
-            codes::PERMISSION_DENIED,
-            "screenshot is only available on macOS in this release",
-            Value::Null,
-        ))
+        Err(unsupported_platform())
     }
 }
 
@@ -275,12 +280,7 @@ fn run_macos(req: ScreenshotRequest) -> Result<Value, RpcError> {
         available: discovered,
         target_bounds,
     } = enumerate_layer_zero_windows(window_id).map_err(|err| match err {
-        ScreenshotError::PlatformUnsupported => rpc_error(
-            RPC_INTERNAL_ERROR,
-            codes::PERMISSION_DENIED,
-            "screenshot is only available on macOS in this release",
-            Value::Null,
-        ),
+        ScreenshotError::PlatformUnsupported => unsupported_platform(),
         ScreenshotError::CaptureFailed { message } => rpc_error(
             RPC_INTERNAL_ERROR,
             codes::CAPTURE_FAILED,
@@ -467,12 +467,7 @@ fn capture_with_fallback(
             }
         },
         ScreenshotBackend::WkWebViewSnapshot | ScreenshotBackend::PlatformUnsupported => {
-            Err(rpc_error(
-                RPC_INTERNAL_ERROR,
-                codes::PERMISSION_DENIED,
-                "screenshot is only available on macOS in this release",
-                Value::Null,
-            ))
+            Err(unsupported_platform())
         }
     }
 }
@@ -680,6 +675,36 @@ mod tests {
         assert_eq!(
             err_data(&err).get("error").and_then(Value::as_str),
             Some(codes::UNSUPPORTED_FORMAT)
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[tokio::test]
+    async fn non_macos_host_reports_unsupported_platform() {
+        // #254: no permission grant makes native capture work off macOS, so
+        // the code must not send an agent asking the user for one.
+        let path = std::env::temp_dir().join(format!(
+            "tauri-pilot-test-screenshot-unsupported-{}.png",
+            std::process::id()
+        ));
+        let params = json!({
+            "window_id": 42_u32,
+            "output_path": path.display().to_string(),
+        });
+        let err = handle_screenshot(Some(&params))
+            .await
+            .expect_err("native capture is macOS-only");
+        assert_eq!(err.code, RPC_INTERNAL_ERROR);
+        assert_eq!(
+            err_data(&err).get("error").and_then(Value::as_str),
+            Some("UNSUPPORTED_PLATFORM")
+        );
+        // Bare `screenshot` works on every host, so the message must name
+        // the command that does not.
+        assert!(
+            err.message.contains("screenshot_native"),
+            "message must name screenshot_native, got: {}",
+            err.message
         );
     }
 

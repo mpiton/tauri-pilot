@@ -11,7 +11,7 @@ pub(crate) enum ScreenshotBackend {
     CgWindowList,
     ScreencaptureProbe,
     /// Sentinel matched by the macOS dispatcher to surface a
-    /// `PERMISSION_DENIED` IPC error. Never constructed today; the non-macOS
+    /// `UNSUPPORTED_PLATFORM` IPC error. Never constructed today; the non-macOS
     /// IPC branch short-circuits before reaching the probe.
     #[allow(
         dead_code,

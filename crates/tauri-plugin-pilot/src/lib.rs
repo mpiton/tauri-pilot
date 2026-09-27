@@ -16,7 +16,7 @@ pub(crate) mod protocol;
 #[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod recorder;
 // Native screenshot capture for the `screenshot_native` JSON-RPC method.
-// macOS-only today; non-macOS callers receive `PERMISSION_DENIED`.
+// macOS-only today; non-macOS callers receive `UNSUPPORTED_PLATFORM`.
 #[cfg(all(any(unix, windows), debug_assertions))]
 pub(crate) mod screenshot;
 #[cfg(all(any(unix, windows), debug_assertions))]
