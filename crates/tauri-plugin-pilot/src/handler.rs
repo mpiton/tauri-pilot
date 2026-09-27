@@ -654,7 +654,7 @@ fn press_unsupported_error() -> RpcError {
         code: RPC_INTERNAL_ERROR,
         message: "press is not supported on Android/iOS (use `fill` or `type` for text input)"
             .to_owned(),
-        data: Some(serde_json::json!({"error": "UNSUPPORTED_PLATFORM"})),
+        data: Some(serde_json::json!({"error": screenshot::ipc::codes::UNSUPPORTED_PLATFORM})),
     }
 }
 
@@ -1261,11 +1261,9 @@ mod tests {
         // the `press` feature or blame another app for holding focus.
         let err = press_unsupported_error();
         assert_eq!(err.code, RPC_INTERNAL_ERROR);
-        assert!(
-            err.message
-                .starts_with("press is not supported on Android/iOS"),
-            "got: {}",
-            err.message
+        assert_eq!(
+            err.message,
+            "press is not supported on Android/iOS (use `fill` or `type` for text input)"
         );
         assert_eq!(
             err.data

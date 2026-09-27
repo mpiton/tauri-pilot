@@ -41,7 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Android/iOS` and `error.data.error = "UNSUPPORTED_PLATFORM"`, whatever the
   feature flags. Without the `press` feature it told the user to recompile
   with it, and with the feature it blamed another application for holding
-  focus, because the focus check always fails on mobile. [#256]
+  focus, because the focus check always fails on mobile. The JSON-RPC code
+  without the feature moves from -32601 to -32603. [#256]
 
 ## [0.8.0] - 2026-09-24
 
