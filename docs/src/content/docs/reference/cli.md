@@ -949,7 +949,7 @@ current scroll position is not reflected in the image — what you get is the
 entire page from the top. Use `--selector` to capture a single element
 (works for elements below the fold too). For a pixel-exact capture of the
 native window, use `screenshot_native` — macOS only, it returns
-`PERMISSION_DENIED` on Linux, Windows, Android and iOS. A Simulator build is an
+`UNSUPPORTED_PLATFORM` on Linux, Windows, Android and iOS. A Simulator build is an
 iOS build even though the host is a Mac, so use `screenshot` there.
 
 The bridge also copies only an allowlist of painted CSS properties onto the

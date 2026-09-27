@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub(crate) enum ScreenshotError {
     // Never constructed today; the non-macOS IPC branch returns
-    // `PERMISSION_DENIED` directly without going through this enum. Kept so
+    // `UNSUPPORTED_PLATFORM` directly without going through this enum. Kept so
     // the macOS dispatcher's exhaustive match stays honest if a future stub
     // ever surfaces an unsupported-platform error from the macOS code path.
     #[allow(

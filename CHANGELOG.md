@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.0.1, the floors `cargo_toml` 1.0 asks for once `tauri-build` 2.7 pulls it
   in. Apps consuming the plugin must now be on `tauri` 2.12.0 or newer.
 
+- **Breaking:** `screenshot_native` on Linux, Windows, Android and iOS
+  answers with `error.data.error = "UNSUPPORTED_PLATFORM"` instead of
+  `PERMISSION_DENIED`, and the message names `screenshot_native` rather than
+  `screenshot`. No permission grant makes native capture work off macOS, so
+  the old code sent agents asking the user for one. Callers matching on
+  `PERMISSION_DENIED` must switch to the new code. [#254]
+
 ### Fixed
 
 - `network` reports `request_size` and `response_size` in bytes for text
@@ -1197,3 +1204,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#244]: https://github.com/mpiton/tauri-pilot/issues/244
 [#245]: https://github.com/mpiton/tauri-pilot/issues/245
 [#253]: https://github.com/mpiton/tauri-pilot/issues/253
+[#254]: https://github.com/mpiton/tauri-pilot/issues/254
