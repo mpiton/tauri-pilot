@@ -139,3 +139,18 @@ test("clone carries the live selected option of a select", async () => {
   assert.equal(find(clone, "monthly").hasAttribute("selected"), true);
   assert.equal(find(clone, "yearly").hasAttribute("selected"), false);
 });
+
+test("clone marks only the live option when two options share a value", async () => {
+  // `<option>Other</option><option value="Other">`: both report the value
+  // "Other", only the first has no `value` attribute. The user picked the
+  // first, so matching the select's value against the attribute would mark
+  // the second instead.
+  const select = el(HTMLSelectElement, "select", {}, { value: "Other" }, [
+    el(HTMLOptionElement, "option", {}, { value: "Other", selected: true }),
+    el(HTMLOptionElement, "option", { value: "Other" }, { value: "Other", selected: false }),
+  ]);
+
+  const clone = await renderClone(select);
+
+  assert.deepEqual(clone.childNodes.map((option) => option.hasAttribute("selected")), [true, false]);
+});

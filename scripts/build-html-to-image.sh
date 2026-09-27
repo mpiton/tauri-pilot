@@ -4,7 +4,7 @@ set -euo pipefail
 # Build html-to-image as a self-contained IIFE bundle for embedding via include_str!().
 # Output: crates/tauri-plugin-pilot/js/vendor/html-to-image.iife.js
 #
-# Prerequisites: Node.js + npm
+# Prerequisites: Node.js + npm, patch
 # Run from project root: bash scripts/build-html-to-image.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,8 +24,14 @@ npm install --save-dev --save-exact html-to-image@1.11.13 > /dev/null 2>&1
 npm install --save-dev --save-exact esbuild@0.25.1 > /dev/null 2>&1
 
 # The clone step drops the live checked/selected state of form controls (#255).
-# Fails loudly if a version bump moves the patched lines.
-patch --forward --fuzz=0 -p1 -d node_modules/html-to-image < "$SCRIPT_DIR/html-to-image.patch"
+# Fails loudly if a version bump changes the patched lines or their context
+# (--fuzz=0) or moves them (patch would still apply them at an offset).
+if ! PATCH_LOG=$(LC_ALL=C patch --forward --fuzz=0 -p1 -d node_modules/html-to-image < "$SCRIPT_DIR/html-to-image.patch" 2>&1) \
+  || grep -q offset <<< "$PATCH_LOG"; then
+  echo "$PATCH_LOG" >&2
+  echo "scripts/html-to-image.patch no longer matches html-to-image; regenerate it" >&2
+  exit 1
+fi
 
 mkdir -p "$VENDOR_DIR"
 
