@@ -320,3 +320,35 @@ test("an XHR that never got a response reports an unknown size", () => {
   assert.equal(entry.response_size, null);
   assert.equal(entry.error, "Timeout");
 });
+
+// "é" is 1 UTF-16 code unit but 2 UTF-8 bytes; "😀" is 2 code units, 4 bytes.
+const NON_ASCII = "café 😀";
+const NON_ASCII_BYTES = 10;
+
+test("an XHR text response reports its size in bytes, not UTF-16 code units", () => {
+  // responseText.length under-reported non-ASCII bodies, so the same response
+  // got a different size with responseType "blob" (#253).
+  const pilot = loadBridge();
+  sendXhr("https://app.example/text", { response: NON_ASCII });
+  sendXhr("https://app.example/text", { responseType: "text", response: NON_ASCII });
+
+  const sizes = pilot.networkRequests().map((e) => e.response_size);
+  assert.deepEqual(sizes, [NON_ASCII_BYTES, NON_ASCII_BYTES]);
+});
+
+test("string and URLSearchParams request bodies report their size in bytes", async () => {
+  const pilot = loadBridge();
+  await window.fetch("https://app.example/api", { method: "POST", body: NON_ASCII });
+  await window.fetch("https://app.example/api", {
+    method: "POST",
+    body: new URLSearchParams({ q: "é" }),
+  });
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "https://app.example/api");
+  xhr.send(NON_ASCII);
+  xhr.dispatchEvent({ type: "load" });
+
+  // URLSearchParams serializes "é" as "%C3%A9", which is already ASCII.
+  const sizes = pilot.networkRequests().map((e) => e.request_size);
+  assert.deepEqual(sizes, [NON_ASCII_BYTES, "q=%C3%A9".length, NON_ASCII_BYTES]);
+});

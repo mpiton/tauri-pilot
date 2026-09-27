@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `network` reports `request_size` and `response_size` in bytes for text
+  bodies. They counted UTF-16 code units, so non-ASCII text came out smaller
+  than on the wire, and an XHR text response got a different size than the
+  same request with `responseType = "blob"`. [#253]
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
@@ -1179,3 +1186,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#243]: https://github.com/mpiton/tauri-pilot/issues/243
 [#244]: https://github.com/mpiton/tauri-pilot/issues/244
 [#245]: https://github.com/mpiton/tauri-pilot/issues/245
+[#253]: https://github.com/mpiton/tauri-pilot/issues/253

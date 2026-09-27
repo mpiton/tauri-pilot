@@ -1251,11 +1251,12 @@ $ tauri-pilot network --clear
 ]
 ```
 
-`response_size` is `number | null`: `null` means the size is unknown, not
-zero. A response carries no size when it has no `Content-Length` (`tauri://`
-never sends one), when the body is of a type the bridge cannot measure
-without buffering it, or when no response arrived at all (network error,
-timeout, abort). An explicit `Content-Length: 0` reports `0`.
+`request_size` and `response_size` are in bytes, for text bodies as well as
+binary ones. `response_size` is `number | null`: `null` means the size is
+unknown, not zero. A response carries no size when it has no `Content-Length`
+(`tauri://` never sends one), when the body is of a type the bridge cannot
+measure without buffering it, or when no response arrived at all (network
+error, timeout, abort). An explicit `Content-Length: 0` reports `0`.
 
 **JSON-RPC examples:**
 

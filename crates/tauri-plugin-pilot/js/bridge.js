@@ -396,9 +396,16 @@
     return { cleared: true };
   }
 
+  // Sizes are bytes on the wire. String.length counts UTF-16 code units and
+  // under-reports non-ASCII text (#253).
+  const _utf8 = new TextEncoder();
+  function utf8Size(text) {
+    return _utf8.encode(text).length;
+  }
+
   function bodySize(body) {
     if (!body) return 0;
-    if (typeof body === "string") return body.length;
+    if (typeof body === "string") return utf8Size(body);
     if (body instanceof URLSearchParams) return body.toString().length;
     if (body instanceof Blob) return body.size;
     if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) return body.byteLength;
@@ -549,7 +556,7 @@
         const cl = headerSize(this.getResponseHeader("Content-Length"));
         const r = this.response;
         const responseSize = (this.responseType === "" || this.responseType === "text")
-          ? (typeof r === "string" ? r.length : cl)
+          ? (typeof r === "string" ? utf8Size(r) : cl)
           : (r instanceof ArrayBuffer ? r.byteLength : (r instanceof Blob ? r.size : cl));
         pushEntry(this.status, null, responseSize);
       };
