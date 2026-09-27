@@ -1,0 +1,27 @@
+--- a/es/clone-node.js
++++ b/es/clone-node.js
+@@ -114,15 +114,18 @@
+     }
+     if (isInstanceOfElement(nativeNode, HTMLInputElement)) {
+         clonedNode.setAttribute('value', nativeNode.value);
++        // tauri-pilot (#255): checkedness lives in a property, the serializer
++        // only sees attributes.
++        clonedNode.toggleAttribute('checked', nativeNode.checked);
+     }
+ }
+ function cloneSelectValue(nativeNode, clonedNode) {
+-    if (isInstanceOfElement(nativeNode, HTMLSelectElement)) {
+-        const clonedSelect = clonedNode;
+-        const selectedOption = Array.from(clonedSelect.children).find((child) => nativeNode.value === child.getAttribute('value'));
+-        if (selectedOption) {
+-            selectedOption.setAttribute('selected', '');
+-        }
++    // tauri-pilot (#255): same for selectedness, per option. Options are
++    // decorated before their select, so each already mirrors its live state.
++    // Upstream's select-level match on the `value` attribute is dropped: it
++    // marked the wrong option when two share a value.
++    if (isInstanceOfElement(nativeNode, HTMLOptionElement)) {
++        clonedNode.toggleAttribute('selected', nativeNode.selected);
+     }
+ }
+ function decorate(nativeNode, clonedNode, options) {
