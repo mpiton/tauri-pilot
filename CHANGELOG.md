@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The vendored html-to-image is now built with `scripts/html-to-image.patch`,
   which copies both properties onto the cloned elements. [#255]
 
+- `press` on Android and iOS fails with `press is not supported on
+  Android/iOS` and `error.data.error = "UNSUPPORTED_PLATFORM"`, whatever the
+  feature flags. Without the `press` feature it told the user to recompile
+  with it, and with the feature it blamed another application for holding
+  focus, because the focus check always fails on mobile. [#256]
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
@@ -1212,3 +1218,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#253]: https://github.com/mpiton/tauri-pilot/issues/253
 [#254]: https://github.com/mpiton/tauri-pilot/issues/254
 [#255]: https://github.com/mpiton/tauri-pilot/issues/255
+[#256]: https://github.com/mpiton/tauri-pilot/issues/256

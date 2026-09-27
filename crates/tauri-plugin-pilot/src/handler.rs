@@ -209,6 +209,11 @@ pub(crate) async fn dispatch(
             Ok(result)
         }
         "diff" => handle_diff(params, engine, webviews, win).await,
+        // Checked before the feature arms: no feature flag makes `press` work
+        // on mobile, and with it on the focus check always fails there (#256).
+        "press" if cfg!(any(target_os = "android", target_os = "ios")) => {
+            Err(press_unsupported_error())
+        }
         #[cfg(feature = "press")]
         "press" => handle_press(params, webviews, win).await,
         #[cfg(not(feature = "press"))]
@@ -637,6 +642,19 @@ fn press_unfocused_error(label: &str) -> RpcError {
             "cannot press: window '{label}' did not gain focus (another application has it)"
         ),
         data: None,
+    }
+}
+
+/// Error for `press` on Android and iOS, which have no OS keyboard backend.
+///
+/// `data.error` carries the same `UNSUPPORTED_PLATFORM` code as
+/// `screenshot_native` off macOS, so callers match one code for both.
+fn press_unsupported_error() -> RpcError {
+    RpcError {
+        code: RPC_INTERNAL_ERROR,
+        message: "press is not supported on Android/iOS (use `fill` or `type` for text input)"
+            .to_owned(),
+        data: Some(serde_json::json!({"error": "UNSUPPORTED_PLATFORM"})),
     }
 }
 
@@ -1235,6 +1253,27 @@ mod tests {
         .await;
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32602);
+    }
+
+    #[test]
+    fn test_press_unsupported_error_says_mobile_is_unsupported() {
+        // #256: on mobile the error must not send the user to recompile with
+        // the `press` feature or blame another app for holding focus.
+        let err = press_unsupported_error();
+        assert_eq!(err.code, RPC_INTERNAL_ERROR);
+        assert!(
+            err.message
+                .starts_with("press is not supported on Android/iOS"),
+            "got: {}",
+            err.message
+        );
+        assert_eq!(
+            err.data
+                .as_ref()
+                .and_then(|d| d.get("error"))
+                .and_then(serde_json::Value::as_str),
+            Some("UNSUPPORTED_PLATFORM")
+        );
     }
 
     #[cfg(feature = "press")]
