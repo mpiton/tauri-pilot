@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `tauri` floor raised from 2.11.3 to 2.12.0. `tauri-runtime` 2.12.0 changed
+  its monitor and window traits, and `tauri` 2.11.3 accepts it through a caret
+  requirement, so a fresh resolve of 2.11.3 no longer compiles. `tauri` 2.12.0
+  pins its sibling crates with `~`. `serde` moves to 1.0.228 and `toml` to
+  1.0.1, the floors `cargo_toml` 1.0 asks for once `tauri-build` 2.7 pulls it
+  in. Apps consuming the plugin must now be on `tauri` 2.12.0 or newer.
+
 ### Fixed
 
 - `network` reports `request_size` and `response_size` in bytes for text
