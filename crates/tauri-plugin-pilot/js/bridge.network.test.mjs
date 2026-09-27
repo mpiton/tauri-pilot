@@ -51,8 +51,9 @@ function makeXhrClass() {
   };
   // The real API answers null for a header the response does not carry —
   // `tauri://` never sends Content-Length.
-  XMLHttpRequestStub.prototype.getResponseHeader = function () {
-    return this._contentLength === undefined ? null : this._contentLength;
+  XMLHttpRequestStub.prototype.getResponseHeader = function (name) {
+    const value = name.toLowerCase() === "content-type" ? this._contentType : this._contentLength;
+    return value === undefined ? null : value;
   };
   XMLHttpRequestStub.prototype.dispatchEvent = function (event) {
     const list = this._listeners[event.type] || [];
@@ -91,13 +92,14 @@ function loadBridge({ fetchImpl } = {}) {
   return globalThis.window.__PILOT__;
 }
 
-function sendXhr(url, { status = 200, errorEvent, responseType = "", response = "", contentLength } = {}) {
+function sendXhr(url, { status = 200, errorEvent, responseType = "", response = "", contentLength, contentType } = {}) {
   const xhr = new XMLHttpRequest();
   xhr.open("POST", url);
   xhr.status = status;
   xhr.responseType = responseType;
   xhr.response = response;
   xhr._contentLength = contentLength;
+  xhr._contentType = contentType;
   xhr.send();
   xhr.dispatchEvent({ type: errorEvent || "load" });
   return xhr;
@@ -331,9 +333,23 @@ test("an XHR text response reports its size in bytes, not UTF-16 code units", ()
   const pilot = loadBridge();
   sendXhr("https://app.example/text", { response: NON_ASCII });
   sendXhr("https://app.example/text", { responseType: "text", response: NON_ASCII });
+  sendXhr("https://app.example/text", { responseType: "blob", response: new Blob([NON_ASCII]) });
 
   const sizes = pilot.networkRequests().map((e) => e.response_size);
-  assert.deepEqual(sizes, [NON_ASCII_BYTES, NON_ASCII_BYTES]);
+  assert.deepEqual(sizes, [NON_ASCII_BYTES, NON_ASCII_BYTES, NON_ASCII_BYTES]);
+});
+
+test("an XHR text response in another charset falls back to Content-Length", () => {
+  // windows-1252 puts "é" in 1 byte, UTF-8 in 2, so re-encoding the decoded
+  // text would over-report. Only a UTF-8 or unlabelled body is measured.
+  const pilot = loadBridge();
+  const latin1 = "text/plain; charset=windows-1252";
+  sendXhr("https://app.example/text", { response: "café", contentType: latin1, contentLength: "4" });
+  sendXhr("https://app.example/text", { response: "café", contentType: latin1 });
+  sendXhr("https://app.example/text", { response: "café", contentType: 'text/plain; charset="UTF-8"' });
+
+  const sizes = pilot.networkRequests().map((e) => e.response_size);
+  assert.deepEqual(sizes, [4, null, 5]);
 });
 
 test("string and URLSearchParams request bodies report their size in bytes", async () => {
