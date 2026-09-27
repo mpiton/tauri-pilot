@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same request with `responseType = "blob"`. An XHR text response in a
   charset other than UTF-8 falls back to `Content-Length`. [#253]
 
+- `screenshot` draws checkboxes, radios and `<option>`s in their live state.
+  It drew the `checked` and `selected` attributes from the initial HTML, so a
+  capture taken after `check`, `select` or a click showed the old choice.
+  The vendored html-to-image is now built with `scripts/html-to-image.patch`,
+  which copies both properties onto the cloned elements. [#255]
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
@@ -1205,3 +1211,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#245]: https://github.com/mpiton/tauri-pilot/issues/245
 [#253]: https://github.com/mpiton/tauri-pilot/issues/253
 [#254]: https://github.com/mpiton/tauri-pilot/issues/254
+[#255]: https://github.com/mpiton/tauri-pilot/issues/255

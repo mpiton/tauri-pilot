@@ -1,0 +1,20 @@
+--- a/es/clone-node.js
++++ b/es/clone-node.js
+@@ -114,9 +114,17 @@
+     }
+     if (isInstanceOfElement(nativeNode, HTMLInputElement)) {
+         clonedNode.setAttribute('value', nativeNode.value);
++        // tauri-pilot (#255): checkedness lives in a property, the serializer
++        // only sees attributes.
++        clonedNode.toggleAttribute('checked', nativeNode.checked);
+     }
+ }
+ function cloneSelectValue(nativeNode, clonedNode) {
++    // tauri-pilot (#255): same for selectedness, per option, so a leftover
++    // `selected` from the initial HTML cannot win.
++    if (isInstanceOfElement(nativeNode, HTMLOptionElement)) {
++        clonedNode.toggleAttribute('selected', nativeNode.selected);
++    }
+     if (isInstanceOfElement(nativeNode, HTMLSelectElement)) {
+         const clonedSelect = clonedNode;
+         const selectedOption = Array.from(clonedSelect.children).find((child) => nativeNode.value === child.getAttribute('value'));
