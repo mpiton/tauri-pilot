@@ -13,22 +13,27 @@ mod common;
 use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixListener;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 
-use common::{unique_socket_path, wait_bounded};
+use common::{SERVER_DONE_TIMEOUT, unique_socket_path, wait_bounded};
 
 #[test]
 fn ping_against_a_socket_that_hangs_up_hints_at_a_stale_forward() {
     let socket = unique_socket_path("hangs-up");
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).expect("bind socket");
-    let server = thread::spawn(move || {
+    let (done_tx, done_rx) = mpsc::channel();
+    // Detached: a binary that never connects leaves this thread blocked on
+    // `accept()`, and the bounded `recv_timeout` below fails the test instead.
+    thread::spawn(move || {
         let (stream, _) = listener.accept().expect("accept");
         // Read the request so the close is not a reset mid-write.
         let mut line = String::new();
         BufReader::new(&stream)
             .read_line(&mut line)
             .expect("read request");
+        let _ = done_tx.send(());
     });
 
     let child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
@@ -41,8 +46,12 @@ fn ping_against_a_socket_that_hangs_up_hints_at_a_stale_forward() {
         .spawn()
         .expect("spawn tauri-pilot");
     let output = wait_bounded(child);
-    server.join().expect("server thread");
+    let server_done = done_rx.recv_timeout(SERVER_DONE_TIMEOUT);
     let _ = std::fs::remove_file(&socket);
+    assert!(
+        server_done.is_ok(),
+        "mock server did not read the request within {SERVER_DONE_TIMEOUT:?}"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");

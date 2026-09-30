@@ -121,11 +121,19 @@ impl<R: tauri::Runtime> Webviews for TauriWebviews<R> {
                 url: TargetWindow::url(&window)
                     .map(|url| url.to_string())
                     .unwrap_or_default(),
-                title: window.title().ok().filter(|title| !title.is_empty()),
+                title: window_title(window.title()),
                 label,
             })
             .collect()
     }
+}
+
+/// The `windows.list` title for a runtime title result.
+///
+/// Empty and failed reads both mean the window has no title (#257): mobile
+/// runtimes report `""`, and the row then leaves `title` out.
+fn window_title(raw: tauri::Result<String>) -> Option<String> {
+    raw.ok().filter(|title| !title.is_empty())
 }
 
 /// Read the current URL of a webview, or `None` when the runtime cannot report it.
@@ -701,8 +709,23 @@ pub(crate) mod fake {
 
 #[cfg(test)]
 mod tests {
-    use super::{TauriWebviews, Webviews};
+    use super::{TauriWebviews, Webviews, window_title};
     use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    #[test]
+    fn window_title_keeps_a_native_title() {
+        assert_eq!(window_title(Ok("Main".to_owned())), Some("Main".to_owned()));
+    }
+
+    #[test]
+    fn window_title_drops_an_empty_title() {
+        assert_eq!(window_title(Ok(String::new())), None);
+    }
+
+    #[test]
+    fn window_title_drops_a_failed_read() {
+        assert_eq!(window_title(Err(tauri::Error::WindowNotFound)), None);
+    }
 
     /// Resolve `label` in a mock app with one window per entry of `windows`,
     /// each showing `https://<label>.test/`, and return the host it shows.
