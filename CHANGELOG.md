@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   focus, because the focus check always fails on mobile. The JSON-RPC code
   without the feature moves from -32601 to -32603. [#256]
 
+- `windows` leaves out `title` for a window with no native title instead of
+  reporting `""`. Android and iOS windows never have one; `title` still reads
+  the page's `document.title`. The rows of `error.data.available_windows`
+  follow. [#257]
+
+- A connection the app side closes without answering now reports `Server
+  closed the connection` with a hint: the app may have restarted, and on
+  Android an old `adb forward` points at the socket name of the previous
+  launch. [#257]
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
@@ -1220,3 +1230,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#254]: https://github.com/mpiton/tauri-pilot/issues/254
 [#255]: https://github.com/mpiton/tauri-pilot/issues/255
 [#256]: https://github.com/mpiton/tauri-pilot/issues/256
+[#257]: https://github.com/mpiton/tauri-pilot/issues/257

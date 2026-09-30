@@ -22,6 +22,16 @@ pub(crate) const MAX_REQUEST_LEN: usize = 1_048_576;
 /// report (#241).
 pub(crate) const DEFAULT_RPC_TIMEOUT: Duration = Duration::from_secs(35);
 
+/// Error for a connection the app side closed without answering.
+///
+/// A live plugin always answers, so the usual cause is a socket that outlived
+/// its app. On Android the abstract socket name changes on every launch and
+/// an old `adb forward` still accepts, then hangs up (#257).
+const CLOSED_CONNECTION: &str = "Server closed the connection\n\
+    hint: the app may have restarted. On Android, the socket name changes on every \
+    launch: re-run `adb forward` with the new name from the `tauri-pilot socket \
+    listening` log line.";
+
 /// Deadline set once from `--rpc-timeout`, read by every `Client` the process opens.
 static RPC_TIMEOUT: OnceLock<Duration> = OnceLock::new();
 
@@ -162,7 +172,7 @@ impl Client {
         let mut line = String::new();
         let n = self.reader.read_line(&mut line).await?;
         if n == 0 {
-            bail!("Server closed the connection");
+            bail!("{CLOSED_CONNECTION}");
         }
         Ok(line)
     }
@@ -573,7 +583,11 @@ mod tests {
             .call("click", None)
             .await
             .expect_err("the app hung up");
-        assert_eq!(err.to_string(), "Server closed the connection");
+        assert!(
+            err.to_string()
+                .starts_with("Server closed the connection\n"),
+            "got: {err}"
+        );
         client.resync().await.expect("reconnect");
         let result = client.call("ping", None).await.expect("ping");
         assert_eq!(result, serde_json::json!({"status": "ok"}));

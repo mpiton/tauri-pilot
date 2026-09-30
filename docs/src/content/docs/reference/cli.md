@@ -143,7 +143,9 @@ resolves and connects to the tauri-pilot Unix socket lazily, using `--socket`,
 
 ### `windows`
 
-List all open windows with their label, URL, and title.
+List all open windows with their label, URL, and title. A window with no
+native title, which is every window on Android and iOS, has no `title` field;
+`tauri-pilot title` reads the page's `document.title`.
 
 ```bash
 tauri-pilot windows

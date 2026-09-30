@@ -14,7 +14,12 @@ pub(crate) struct WindowInfo {
     pub(crate) label: String,
     /// Empty when the runtime cannot report the URL.
     pub(crate) url: String,
-    pub(crate) title: String,
+    /// Absent when the runtime has no title for the window.
+    ///
+    /// Mobile windows have no native title, and Tauri reports an empty one
+    /// there (#257). `title` reads the page's `document.title` instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) title: Option<String>,
 }
 
 /// The webview windows of the host app.
@@ -116,7 +121,7 @@ impl<R: tauri::Runtime> Webviews for TauriWebviews<R> {
                 url: TargetWindow::url(&window)
                     .map(|url| url.to_string())
                     .unwrap_or_default(),
-                title: window.title().unwrap_or_default(),
+                title: window.title().ok().filter(|title| !title.is_empty()),
                 label,
             })
             .collect()
@@ -425,7 +430,7 @@ pub(crate) mod fake {
                 .map(|(label, url)| WindowInfo {
                     label: label.clone(),
                     url: url.as_ref().map(Url::to_string).unwrap_or_default(),
-                    title: String::new(),
+                    title: None,
                 })
                 .collect()
         }
@@ -742,6 +747,24 @@ mod tests {
     fn target_with_unknown_label_does_not_fall_back() {
         let host = target_host(&["main"], Some("settings"));
         assert_eq!(host, Err("Window 'settings' not found".to_owned()));
+    }
+
+    #[test]
+    fn list_omits_the_title_the_runtime_leaves_empty() {
+        // #257: mobile windows have no native title. The mock runtime
+        // reports "" the same way, and `title` would otherwise read "".
+        let app = tauri::test::mock_app();
+        let url = "tauri://localhost/".parse().expect("valid test URL");
+        WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url))
+            .data_directory(std::env::temp_dir())
+            .build()
+            .expect("build mock window");
+        let rows = serde_json::to_value(TauriWebviews(app.handle().clone()).list())
+            .expect("rows serialize");
+        assert_eq!(
+            rows,
+            serde_json::json!([{"label": "main", "url": "tauri://localhost/"}])
+        );
     }
 
     #[test]
