@@ -17,7 +17,7 @@ pub(crate) struct WindowInfo {
     /// Absent when the runtime has no title for the window.
     ///
     /// Mobile windows have no native title, and Tauri reports an empty one
-    /// there (#257). `title` reads the page's `document.title` instead.
+    /// there (#257). The `title` method reads the page's `document.title`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) title: Option<String>,
 }
