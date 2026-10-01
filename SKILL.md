@@ -62,7 +62,7 @@ Three target formats, auto-detected:
 | Command | Description |
 |---------|-------------|
 | `ping` | Check connectivity |
-| `windows` | List all open windows (label, URL, title) |
+| `windows` | List all open windows (label, URL, title; title omitted when the window has none, e.g. Android/iOS) |
 | `state` | Get app state (URL, title, viewport, scroll) |
 | `url` | Get current URL |
 | `title` | Get page title |

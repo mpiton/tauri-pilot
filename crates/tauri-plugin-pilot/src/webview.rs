@@ -14,7 +14,12 @@ pub(crate) struct WindowInfo {
     pub(crate) label: String,
     /// Empty when the runtime cannot report the URL.
     pub(crate) url: String,
-    pub(crate) title: String,
+    /// Absent when the runtime has no title for the window.
+    ///
+    /// Mobile windows have no native title, and Tauri reports an empty one
+    /// there (#257). The `title` method reads the page's `document.title`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) title: Option<String>,
 }
 
 /// The webview windows of the host app.
@@ -116,11 +121,19 @@ impl<R: tauri::Runtime> Webviews for TauriWebviews<R> {
                 url: TargetWindow::url(&window)
                     .map(|url| url.to_string())
                     .unwrap_or_default(),
-                title: window.title().unwrap_or_default(),
+                title: window_title(window.title()),
                 label,
             })
             .collect()
     }
+}
+
+/// The `windows.list` title for a runtime title result.
+///
+/// Empty and failed reads both mean the window has no title (#257): mobile
+/// runtimes report `""`, and the row then leaves `title` out.
+fn window_title(raw: tauri::Result<String>) -> Option<String> {
+    raw.ok().filter(|title| !title.is_empty())
 }
 
 /// Read the current URL of a webview, or `None` when the runtime cannot report it.
@@ -425,7 +438,7 @@ pub(crate) mod fake {
                 .map(|(label, url)| WindowInfo {
                     label: label.clone(),
                     url: url.as_ref().map(Url::to_string).unwrap_or_default(),
-                    title: String::new(),
+                    title: None,
                 })
                 .collect()
         }
@@ -696,8 +709,23 @@ pub(crate) mod fake {
 
 #[cfg(test)]
 mod tests {
-    use super::{TauriWebviews, Webviews};
+    use super::{TauriWebviews, Webviews, window_title};
     use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    #[test]
+    fn window_title_keeps_a_native_title() {
+        assert_eq!(window_title(Ok("Main".to_owned())), Some("Main".to_owned()));
+    }
+
+    #[test]
+    fn window_title_drops_an_empty_title() {
+        assert_eq!(window_title(Ok(String::new())), None);
+    }
+
+    #[test]
+    fn window_title_drops_a_failed_read() {
+        assert_eq!(window_title(Err(tauri::Error::WindowNotFound)), None);
+    }
 
     /// Resolve `label` in a mock app with one window per entry of `windows`,
     /// each showing `https://<label>.test/`, and return the host it shows.
@@ -742,6 +770,24 @@ mod tests {
     fn target_with_unknown_label_does_not_fall_back() {
         let host = target_host(&["main"], Some("settings"));
         assert_eq!(host, Err("Window 'settings' not found".to_owned()));
+    }
+
+    #[test]
+    fn list_omits_the_title_the_runtime_leaves_empty() {
+        // #257: mobile windows have no native title. The mock runtime
+        // reports "" the same way, and `title` would otherwise read "".
+        let app = tauri::test::mock_app();
+        let url = "tauri://localhost/".parse().expect("valid test URL");
+        WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(url))
+            .data_directory(std::env::temp_dir())
+            .build()
+            .expect("build mock window");
+        let rows = serde_json::to_value(TauriWebviews(app.handle().clone()).list())
+            .expect("rows serialize");
+        assert_eq!(
+            rows,
+            serde_json::json!([{"label": "main", "url": "tauri://localhost/"}])
+        );
     }
 
     #[test]

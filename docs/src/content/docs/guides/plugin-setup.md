@@ -189,6 +189,10 @@ Use the same `-s "$pilot_device"` for all ADB commands when multiple devices are
 
 If forwarding succeeds but the CLI cannot connect, check `adb -s "$pilot_device" shell cat /proc/net/unix | grep tauri-pilot` and compare the name with the current startup log. The plugin only listens in debug builds.
 
+After the app restarts, the old forwarding still accepts connections but has no socket behind it, so every command fails with `Server closed the connection` and a hint about a restarted app. Read the new name from the `tauri-pilot socket listening` log line and run the `adb forward` command above again. `adb forward --list` shows the stale entry.
+
+`windows` omits `title` on Android and iOS, where windows have no native title. Use `tauri-pilot title` for the page's `document.title`.
+
 Remove the forwarding created above when finished:
 
 ```sh
