@@ -74,8 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The bridge's `visible` takes a `missingOk` option for this. An unknown ref
   (`@e5`) still fails, since it usually means a stale snapshot. Callers that
   relied on `assert hidden` failing for a missing element must add a presence
-  check before it: `assert count <selector> N` (exact count) in the CLI or
-  MCP, or an `assert-exists` step in a scenario. [#281]
+  check before it: `assert count <selector> N` (exact count) in the CLI, the
+  MCP tool `assert_count` (`selector`, `expected: N`), or an `assert-exists`
+  step in a scenario. [#281]
 
 ### Fixed
 
