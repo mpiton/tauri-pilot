@@ -124,6 +124,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   had stayed on the old page. When the window landed on another page than the
   destination, the error now names that page. The old message remains when
   the window reached the destination and no bridge answers there. [#278]
+- A cross-origin `navigate` whose destination has not loaded when the wait
+  ends, such as a server that refuses the connection, fails with `navigate
+  to <url> did not load in time: the window still shows <page> after
+  <limit>`. It said `navigated to <url>` and told the user to allow the
+  origin in a capability's `remote.urls`, while the window had stayed on the
+  old page. When the window landed on another page than the destination, the
+  error now names that page, and a redirect onto an origin whose bridge says
+  hello reports ok. The old message remains when the window reached the
+  destination and no bridge answers there. [#278]
 
 ### Security
 

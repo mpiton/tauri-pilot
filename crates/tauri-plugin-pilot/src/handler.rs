@@ -741,7 +741,8 @@ async fn handle_navigate(
         }
         (None, Some(dest)) => {
             engine.resolve(id, Err("waiting for destination bridge".to_owned()));
-            // No start URL to compare against: keep the "navigated to" error.
+            // No start URL: a window left on a bridged origin with no new
+            // hello still counts as never left (see `never_left`).
             wait_dest_bridge(engine, target, None, dest, since).await
         }
         (None, None) => wait(engine, id, rx, DEFAULT_TIMEOUT).await,
@@ -972,15 +973,18 @@ async fn await_departure(engine: &EvalEngine, id: u64, rx: ReplyReceiver) -> Res
 /// Wait for the target window's hello from `dest`.
 ///
 /// The wait lasts [`DEFAULT_TIMEOUT`] when `dest`'s origin already said
-/// hello, [`BRIDGE_GRACE`] on a first visit. `page` is the URL the navigate
-/// started from, when known.
+/// hello, [`BRIDGE_GRACE`] on a first visit. A redirect can land the window
+/// on another origin whose bridge works, so a hello after `since` from the
+/// origin the window now shows counts too, as in [`wait_same_origin_hello`].
+/// `page` is the URL the navigate started from, when known.
 ///
 /// # Errors
 ///
-/// Fails when no hello arrives in time. If the window still shows `page`,
-/// the error says the navigation did not load (a refused connection keeps
-/// the old document, #278). Otherwise it says no bridge answered on the
-/// page the window shows, naming it when it is not `dest`.
+/// Fails when no hello arrives in time. If the window never left its
+/// document (see [`never_left`]), the error says the navigation did not
+/// load in time (a refused connection keeps the old document, #278).
+/// Otherwise it says no bridge answered on the page the window shows,
+/// naming it when it is not `dest`.
 async fn wait_dest_bridge(
     engine: &EvalEngine,
     target: Box<dyn TargetWindow + '_>,
@@ -993,32 +997,74 @@ async fn wait_dest_bridge(
     } else {
         BRIDGE_GRACE
     };
-    if engine.wait_bridge(target.label(), dest, since, limit).await {
-        return Ok(serde_json::json!({"ok": true}));
+    let deadline = tokio::time::Instant::now() + limit;
+    let label = target.label();
+    loop {
+        // Read the count before checking, so a hello landing in between
+        // wakes the wait below instead of being missed.
+        let seen = engine.hellos();
+        let redirected_hello = target
+            .url()
+            .is_some_and(|now| engine.said_hello_since(label, &now, since));
+        if engine.said_hello_since(label, dest, since) || redirected_hello {
+            return Ok(serde_json::json!({"ok": true}));
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() || !engine.wait_hello_after(seen, remaining).await {
+            break;
+        }
     }
     let what = match target.url() {
-        Some(now) if Some(&now) == page => {
-            return Err(dest_not_loaded_error(&now, dest, limit));
+        Some(now) if now != *dest && never_left(engine, page, &now) => {
+            return Err(dest_not_loaded_error(engine, &now, dest, limit));
         }
         Some(now) if now != *dest => format!(
-            "navigate to {dest} loaded {now}, but no pilot bridge answered there within {limit:?}"
+            "navigate to {dest}: the window shows {now}, but no pilot bridge answered there \
+             within {limit:?}"
         ),
         _ => format!("navigated to {dest}, but no pilot bridge answered there within {limit:?}"),
     };
     Err(no_bridge_error(engine, &what))
 }
 
+/// Whether a window showing `now` after a silent wait never left `page`.
+///
+/// True when `now` is `page`. Also true when `now` is on an origin whose
+/// bridge answers and that is `page`'s origin, or `page` is unknown: a new
+/// document there would have said hello, so only the URL of the old
+/// document changed (`history.pushState`).
+fn never_left(engine: &EvalEngine, page: Option<&tauri::Url>, now: &tauri::Url) -> bool {
+    if page == Some(now) {
+        return true;
+    }
+    let bridged = engine.hellos() > 0 && engine.has_bridge(now);
+    bridged && page.is_none_or(|page| origin_key(page) == origin_key(now))
+}
+
 /// Error for a cross-origin navigate whose window never left `page`.
 ///
-/// The old document is still loaded and its bridge still answers, so the
-/// "allow this origin in `remote.urls`" hint of [`no_bridge_error`] does not
-/// apply: the destination did not load at all (#278).
-fn dest_not_loaded_error(page: &tauri::Url, dest: &tauri::Url, limit: Duration) -> RpcError {
+/// The destination did not load in time (#278), so the "allow this origin
+/// in `remote.urls`" hint of [`no_bridge_error`] does not apply. When
+/// `page` has no bridge, the error still names the origins that work.
+fn dest_not_loaded_error(
+    engine: &EvalEngine,
+    page: &tauri::Url,
+    dest: &tauri::Url,
+    limit: Duration,
+) -> RpcError {
+    let way_back = if engine.has_bridge(page) {
+        String::new()
+    } else {
+        let origins = engine.bridge_origins().join(", ");
+        format!(". Bridge commands only work on {origins}: navigate back there")
+    };
+    let message = format!(
+        "navigate to {dest} did not load in time: the window still shows {page} after \
+         {limit:?}{way_back}"
+    );
     RpcError {
         code: -32603,
-        message: format!(
-            "navigate to {dest} did not load: the window still shows {page} after {limit:?}"
-        ),
+        message,
         data: None,
     }
 }
@@ -2974,7 +3020,7 @@ mod tests {
         assert_eq!(err.code, -32603);
         assert_eq!(
             err.message,
-            "navigate to http://127.0.0.1:1/ did not load: the window still shows \
+            "navigate to http://127.0.0.1:1/ did not load in time: the window still shows \
              tauri://localhost/ after 3s"
         );
     }
@@ -3035,10 +3081,255 @@ mod tests {
 
         assert_eq!(
             err.message,
-            "navigate to https://example.com/ loaded https://example.com/login, but no \
+            "navigate to https://example.com/: the window shows https://example.com/login, \
+             but no pilot bridge answered there within 3s. Bridge commands only work on \
+             tauri://localhost: navigate back there, or allow this origin in a \
+             capability's remote.urls"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_redirected_to_bridged_origin_reports_ok() {
+        // A redirect (an OAuth hop) can bring the window back to an origin
+        // whose bridge answers: its hello proves commands work there.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || {
+            engine_clone.resolve(1, Ok(json!({"ok": true})));
+            webviews_clone.set_url("main", Some("tauri://localhost/login"));
+        });
+        hello_later(
+            &engine,
+            "main",
+            "tauri://localhost/login",
+            Duration::from_millis(500),
+        );
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": FOREIGN_PAGE})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("a hello from the bridged origin the window reached is the proof");
+
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() < BRIDGE_GRACE,
+            "must return on the hello, took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_without_start_url_reports_page_never_left() {
+        // The start URL could not be read, but the window shows a page of an
+        // origin whose bridge answers and that said no new hello: the
+        // destination did not load, the capability hint does not apply.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", None);
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || webviews_clone.set_url("main", Some(APP_PAGE)));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "http://127.0.0.1:1/"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a navigation that never left the page must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to http://127.0.0.1:1/ did not load in time: the window still shows \
+             tauri://localhost/ after 3s"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_reports_page_never_left_after_url_change() {
+        // The start page changed only its URL (`history.pushState`) during
+        // the wait: the window still never left its bridged document.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || {
+            engine_clone.resolve(1, Ok(json!({"ok": true})));
+            webviews_clone.set_url("main", Some("tauri://localhost/other"));
+        });
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "http://127.0.0.1:1/"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a navigation that never left the document must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to http://127.0.0.1:1/ did not load in time: the window still shows \
+             tauri://localhost/other after 3s"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_redirected_to_other_bridged_origin_names_it() {
+        // The window moved to another bridged origin than the start page's
+        // and no hello came from it: it left the page, so this is no
+        // "did not load".
+        let engine = engine_with_app_bridge();
+        handle_callback(
+            &engine,
+            "other",
+            HELLO_ID,
+            None,
+            None,
+            Some(&url("http://localhost:1420/")),
+        );
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || {
+            engine_clone.resolve(1, Ok(json!({"ok": true})));
+            webviews_clone.set_url("main", Some("http://localhost:1420/login"));
+        });
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": FOREIGN_PAGE})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a silent redirect target must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to https://example.com/: the window shows http://localhost:1420/login, \
+             but no pilot bridge answered there within 3s. Bridge commands only work on \
+             http://localhost:1420, tauri://localhost: navigate back there, or allow this \
+             origin in a capability's remote.urls"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_without_start_url_reaching_dest_keeps_navigated_to() {
+        // No start URL and the window shows `dest` itself: it navigated.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", None);
+        let webviews_clone = webviews.clone();
+        let webviews = webviews
+            .on_eval(move || webviews_clone.set_url("main", Some("tauri://localhost/settings")));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "tauri://localhost/settings"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a silent destination must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigated to tauri://localhost/settings, but no pilot bridge answered there \
+             within 10s. Bridge commands only work on tauri://localhost: navigate back \
+             there, or allow this origin in a capability's remote.urls"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_without_start_url_on_bridgeless_page_names_it() {
+        // No start URL and the window shows a page whose origin never said
+        // hello: its silence proves nothing, so the window may have moved.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", None);
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || webviews_clone.set_url("main", Some(FOREIGN_PAGE)));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "http://127.0.0.1:1/"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a silent destination must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to http://127.0.0.1:1/: the window shows https://example.com/, but no \
              pilot bridge answered there within 3s. Bridge commands only work on \
              tauri://localhost: navigate back there, or allow this origin in a \
              capability's remote.urls"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_without_start_url_or_hello_does_not_claim_never_left() {
+        // Before any hello the engine cannot tell which origins answer, so
+        // it cannot conclude the window never left.
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", None);
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || webviews_clone.set_url("main", Some(APP_PAGE)));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": FOREIGN_PAGE})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a silent destination must not report ok");
+
+        assert!(
+            err.message.starts_with(
+                "navigate to https://example.com/: the window shows tauri://localhost/, but no \
+                 pilot bridge answered there"
+            ),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_from_bridgeless_page_names_working_origins() {
+        // Stuck on a page without a bridge, the user still needs to know
+        // where commands work, but not the capability hint.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", Some(FOREIGN_PAGE));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "http://127.0.0.1:1/"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a navigation that never left the page must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to http://127.0.0.1:1/ did not load in time: the window still shows \
+             https://example.com/ after 3s. Bridge commands only work on tauri://localhost: \
+             navigate back there"
         );
     }
 
@@ -3971,7 +4262,7 @@ mod tests {
 
         assert_eq!(
             err.message,
-            "navigate to http://127.0.0.1:1/ did not load: the window still shows \
+            "navigate to http://127.0.0.1:1/ did not load in time: the window still shows \
              tauri://localhost/ after 3s"
         );
     }
