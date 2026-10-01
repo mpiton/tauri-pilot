@@ -61,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Android an old `adb forward` points at the socket name of the previous
   launch. [#257]
 
+- `navigate` returns once the destination document's bridge says hello, even
+  when its origin already said hello before. It returned on the departing
+  page's answer, which is sent before the load starts, so the next `eval`,
+  `snapshot` or `click` could run on the page being left. A `javascript:` URL
+  or a fragment-only change still returns on the page's answer. [#260]
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
@@ -1237,4 +1243,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#254]: https://github.com/mpiton/tauri-pilot/issues/254
 [#255]: https://github.com/mpiton/tauri-pilot/issues/255
 [#256]: https://github.com/mpiton/tauri-pilot/issues/256
+<<<<<<< HEAD
 [#257]: https://github.com/mpiton/tauri-pilot/issues/257
+=======
+[#260]: https://github.com/mpiton/tauri-pilot/issues/260
+>>>>>>> 709a4e1 (fix(plugin): navigate waits for the destination document's hello (#260))
