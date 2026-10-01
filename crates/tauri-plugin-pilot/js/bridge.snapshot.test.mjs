@@ -420,15 +420,94 @@ test("snapshot keeps another control's options out of a shared label (#277)", ()
   const qty = makeEl("input", { attrs: { type: "number" } });
   const unit = makeSelect(["Small", "Medium", "Large"], { value: "Small" });
   const label = makeLabel(["Size ", qty, " ", unit]);
+  // With no `for`, a label is associated with its first labelable
+  // descendant only, so the DOM gives it to `qty` and not to `unit`.
   qty.labels = [label];
-  unit.labels = [label];
+  unit.labels = [];
   const body = makeEl("body", { children: [label] });
   const pilot = loadBridge(body);
 
   const [qtyEl, unitEl] = pilot.snapshot({ interactive: true }).elements;
 
   assert.equal(qtyEl.name, "Size");
-  assert.equal(unitEl.name, "Size");
+  assert.equal("name" in unitEl, false);
+});
+
+test("snapshot keeps a textarea's text out of a shared label (#277)", () => {
+  const bio = makeEl("input", { attrs: { type: "text" } });
+  const notes = makeEl("textarea", { text: "draft text" });
+  const label = makeLabel(["Bio ", bio, " ", notes]);
+  bio.labels = [label];
+  notes.labels = [];
+  const body = makeEl("body", { children: [label] });
+  const pilot = loadBridge(body);
+
+  const [bioEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(bioEl.name, "Bio");
+});
+
+test("snapshot names a labelled button from its label then its own text (#277)", () => {
+  // HTML-AAM: a button's associated <label> comes before its subtree, and the
+  // label's text includes the button's own text.
+  const button = makeEl("button", { text: "OK" });
+  const label = makeLabel(["Confirm ", button]);
+  button.labels = [label];
+  const body = makeEl("body", { children: [label] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.role, "button");
+  assert.equal(entry.name, "Confirm OK");
+});
+
+test("snapshot drops hidden label text from the name (#277)", () => {
+  const email = makeEl("input", { attrs: { type: "email" } });
+  const star = makeEl("span", { text: "*", attrs: { "aria-hidden": "true" } });
+  const emailLabel = makeLabel(["Email ", star, " ", email]);
+  email.labels = [emailLabel];
+  const phone = makeEl("input", { attrs: { type: "tel" } });
+  const hint = makeEl("span", { text: "(optional)", attrs: { hidden: "" } });
+  const phoneLabel = makeLabel(["Phone ", hint, " ", phone]);
+  phone.labels = [phoneLabel];
+  const body = makeEl("body", { children: [emailLabel, phoneLabel] });
+  const pilot = loadBridge(body);
+
+  const [emailEl, phoneEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(emailEl.name, "Email", "aria-hidden text is not part of the name");
+  assert.equal(phoneEl.name, "Phone", "hidden text is not part of the name");
+});
+
+test("snapshot keeps a button's text ahead of its title (#277)", () => {
+  const button = makeEl("button", { text: "Close", attrs: { title: "Close dialog" } });
+  button.labels = [];
+  const body = makeEl("body", { children: [button] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.name, "Close");
+});
+
+test("snapshot names an input from its title before its placeholder (#277)", () => {
+  // HTML-AAM for text inputs and textareas: label, then title, then placeholder.
+  const input = makeEl("input", {
+    attrs: { type: "search", title: "Search the docs", placeholder: "e.g. tauri" },
+  });
+  input.labels = [];
+  const notes = makeEl("textarea", {
+    attrs: { title: "Release notes", placeholder: "Write here" },
+  });
+  notes.labels = [];
+  const body = makeEl("body", { children: [input, notes] });
+  const pilot = loadBridge(body);
+
+  const [inputEl, notesEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(inputEl.name, "Search the docs");
+  assert.equal(notesEl.name, "Release notes");
 });
 
 test("snapshot names an input from a <label for> elsewhere in the page (#277)", () => {

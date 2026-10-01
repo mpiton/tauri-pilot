@@ -683,6 +683,13 @@
     const fromLabels = labelText(el);
     if (fromLabels) return fromLabels.slice(0, 50);
 
+    // HTML-AAM: text inputs and textareas take `title` before `placeholder`.
+    // Other elements keep their text ahead of `title` (checked last below).
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      const title = el.getAttribute("title");
+      if (title && title.trim()) return title.trim().slice(0, 50);
+    }
+
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
       const placeholder = el.getAttribute("placeholder");
       if (placeholder) return placeholder.trim().slice(0, 50);
@@ -704,17 +711,23 @@
   // both a wrapping label and `<label for=...>` (#277). Nested <select> and
   // <textarea> subtrees are skipped, the control's own and any other, so a
   // wrapping label does not leak their options or contents into the name.
+  // A labelled button keeps its own text after the label's, as in accname.
+  // Subtrees marked `aria-hidden="true"` or `hidden` are not part of the name
+  // (accname step 2A), e.g. a required-field asterisk.
   function labelText(el) {
     const labels = el.labels;
     if (!labels || labels.length === 0) return "";
     const parts = [];
     function collect(node) {
-      if (node === el || node.tagName === "SELECT" || node.tagName === "TEXTAREA") return;
+      if (node.tagName === "SELECT" || node.tagName === "TEXTAREA") return;
       if (node.nodeType === Node.TEXT_NODE) {
         parts.push(node.nodeValue || "");
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.getAttribute("aria-hidden") === "true" || node.hasAttribute("hidden")) {
+        return;
+      }
       for (const child of node.childNodes || []) collect(child);
     }
     for (const label of labels) {

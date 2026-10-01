@@ -220,7 +220,7 @@ e3  button    "Refresh"
 
 `options` records the capture options so `diff` can refuse a reference taken with different ones.
 
-An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt` on images, its `<label>` (wrapping or `for=`, without the text of the controls inside it), `placeholder` on form controls, its text content (never for `<select>`, whose text is its options), then `title`. A label that is only a visual sibling, with no `for`, does not name the control.
+An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt` on images, its `<label>` (wrapping or `for=`, without the text of the controls inside it or of `hidden` / `aria-hidden="true"` parts), `title` then `placeholder` on text inputs and textareas, `placeholder` on `<select>`, its text content (never for `<select>`, whose text is its options), then `title`. A label that is only a visual sibling, with no `for`, does not name the control.
 
 ---
 
