@@ -198,7 +198,7 @@ script before sending it, so inject minified builds, not development ones.
 | `record start` | Start recording interactions |
 | `record stop --output <file>` | Save recorded interactions to JSON (exits 1 if no recording is in progress) |
 | `record status` | Check if recording is active |
-| `replay <file>` | Replay recorded session with original timing |
+| `replay <file>` | Replay recorded session with original timing; prints each failed step's error, `--json` adds a `steps` array, exits 1 if any step fails |
 | `replay <file> --export sh` | Export recording as executable shell script |
 
 ### Declarative Scenarios

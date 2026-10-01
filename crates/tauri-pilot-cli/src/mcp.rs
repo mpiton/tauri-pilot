@@ -979,7 +979,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "replay",
-            description: "Replay or export a recorded tauri-pilot session file.",
+            description: "Replay or export a recorded tauri-pilot session file. A replay returns `status`, counts, and `steps` (`action`, `status`, and `message` for a failed step, the same key as `pilot.run`). A finished replay including failed steps is a successful tool result with `status` \"failed\"; only read, parse, and connect failures are tool errors.",
             schema: replay_schema,
             read_only: false,
             destructive: false,
@@ -2841,6 +2841,53 @@ path = "/tmp/out.png"
         assert!(script.contains("tauri-pilot click '@e1'"));
 
         let _ = std::fs::remove_file(&recording);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn replay_reports_per_step_errors_as_a_successful_result() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let recording = dir.path().join("rec.json");
+        std::fs::write(
+            &recording,
+            r#"[{"action":"click","timestamp":0,"ref":"e1"},{"action":"click","timestamp":0,"ref":"e2"}]"#,
+        )
+        .expect("write recording");
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-replay-fail-{}.sock",
+            std::process::id()
+        ));
+        // First click fails with "click failed", the second one passes.
+        let _methods = spawn_failing_click_server(&socket);
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert("path".to_owned(), json!(recording.display().to_string()));
+
+        let result = pilot
+            .call_tool_by_name("replay", args)
+            .await
+            .expect("tool call succeeds");
+        let _ = std::fs::remove_file(&socket);
+
+        assert_eq!(result.is_error, Some(false));
+        let report = result
+            .structured_content
+            .as_ref()
+            .and_then(|content| content.get("result"))
+            .cloned()
+            .expect("structured result");
+        assert_eq!(report["status"], "failed");
+        assert_eq!(
+            report["steps"],
+            json!([
+                {
+                    "action": "click",
+                    "status": "failed",
+                    "message": "RPC error (-32000): click failed",
+                },
+                {"action": "click", "status": "passed"},
+            ])
+        );
     }
 
     #[tokio::test]
