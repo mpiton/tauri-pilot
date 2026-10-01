@@ -183,6 +183,7 @@ enum OutputKind {
     Watch,
     Storage,
     StorageGet,
+    StorageDelete,
     Forms,
     Windows,
     Record,
@@ -203,6 +204,10 @@ impl From<&Command> for OutputKind {
                 action: StorageAction::Get { .. },
                 ..
             }) => OutputKind::StorageGet,
+            Command::Storage(StorageArgs {
+                action: StorageAction::Delete { .. },
+                ..
+            }) => OutputKind::StorageDelete,
             Command::Storage(..) => OutputKind::Storage,
             Command::Forms(..) => OutputKind::Forms,
             Command::Windows => OutputKind::Windows,
@@ -246,6 +251,9 @@ fn format_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) 
             }
         }
         OutputKind::StorageGet => output::format_storage_value(result),
+        // `storage delete` succeeds whether or not the key existed; `--json`
+        // keeps the `deleted` flag (#284).
+        OutputKind::StorageDelete => outln!("{}", crate::style::success("ok")),
         OutputKind::Forms => output::format_forms(result),
         OutputKind::Windows => output::format_windows(result),
         OutputKind::Record => {
@@ -977,43 +985,24 @@ async fn run_storage_command(
     window: Option<&str>,
 ) -> Result<serde_json::Value> {
     let session = args.session;
-    match args.action {
-        StorageAction::Get { key } => {
-            client
-                .call(
-                    "storage.get",
-                    with_window(Some(json!({"key": key, "session": session})), window),
-                )
-                .await
+    let (method, params) = match args.action {
+        StorageAction::Get { key } => ("storage.get", json!({"key": key, "session": session})),
+        StorageAction::Set { key, value } => (
+            "storage.set",
+            json!({"key": key, "value": value, "session": session}),
+        ),
+        StorageAction::List => ("storage.list", json!({"session": session})),
+        StorageAction::Delete { key } => {
+            let params = json!({"key": key, "session": session});
+            let result = client
+                .call("storage.delete", with_window(Some(params), window))
+                .await?;
+            scenario::check_storage_delete_result(&result)?;
+            return Ok(result);
         }
-        StorageAction::Set { key, value } => {
-            client
-                .call(
-                    "storage.set",
-                    with_window(
-                        Some(json!({"key": key, "value": value, "session": session})),
-                        window,
-                    ),
-                )
-                .await
-        }
-        StorageAction::List => {
-            client
-                .call(
-                    "storage.list",
-                    with_window(Some(json!({"session": session})), window),
-                )
-                .await
-        }
-        StorageAction::Clear => {
-            client
-                .call(
-                    "storage.clear",
-                    with_window(Some(json!({"session": session})), window),
-                )
-                .await
-        }
-    }
+        StorageAction::Clear => ("storage.clear", json!({"session": session})),
+    };
+    client.call(method, with_window(Some(params), window)).await
 }
 
 pub(crate) async fn run_drop_command(

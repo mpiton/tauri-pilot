@@ -337,6 +337,8 @@ pub(crate) enum StorageAction {
     Set { key: String, value: String },
     /// List all key-value pairs.
     List,
+    /// Remove one key. Succeeds when the key is missing.
+    Delete { key: String },
     /// Clear all storage.
     Clear,
 }
@@ -979,6 +981,29 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn test_parse_storage_delete_session() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/t.sock",
+            "storage",
+            "--session",
+            "delete",
+            "tab_id",
+        ]);
+        if let Command::Storage(StorageArgs {
+            session,
+            action: StorageAction::Delete { key },
+        }) = cli.command
+        {
+            assert!(session);
+            assert_eq!(key, "tab_id");
+        } else {
+            panic!("Expected Storage Delete command with session flag");
+        }
     }
 
     #[test]

@@ -76,6 +76,7 @@ pub(crate) struct Step {
     pub(crate) stable: Option<u64>,
     pub(crate) require_mutation: Option<bool>,
     pub(crate) path: Option<PathBuf>,
+    pub(crate) session: Option<bool>,
 }
 
 /// Keys each action reads, as `(action, required, optional)`.
@@ -104,6 +105,7 @@ const STEP_KEYS: &[(&str, &[&str], &[&str])] = &[
     ("assert-value", &["target", "expected"], &[]),
     ("assert-url", &["expected"], &[]),
     ("storage-get", &["key"], &[]),
+    ("storage-delete", &["key"], &["session"]),
 ];
 
 impl Step {
@@ -134,6 +136,7 @@ impl Step {
             stable,
             require_mutation,
             path,
+            session,
         } = self;
         [
             ("target", target.is_some()),
@@ -150,6 +153,7 @@ impl Step {
             ("stable", stable.is_some()),
             ("require_mutation", require_mutation.is_some()),
             ("path", path.is_some()),
+            ("session", session.is_some()),
         ]
         .into_iter()
         .filter_map(|(field, set)| set.then_some(field))
@@ -617,6 +621,7 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
             Ok(json!({"ok": true}))
         }
         "storage-get" => storage_get_step(client, step, window).await,
+        "storage-delete" => storage_delete_step(client, step, window).await,
         other => anyhow::bail!("unknown step action: {other:?}"),
     }
 }
@@ -655,6 +660,53 @@ async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>
         anyhow::bail!("storage key {key:?} was not found");
     }
     Ok(result)
+}
+
+/// Remove a storage key; the step passes whether or not it existed.
+///
+/// Matches `tauri-pilot storage delete`: localStorage by default,
+/// sessionStorage with `session = true`. The result goes through
+/// [`check_storage_delete_result`].
+async fn storage_delete_step(
+    client: &mut Client,
+    step: &Step,
+    window: Option<&str>,
+) -> Result<Value> {
+    let key = step
+        .key
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("storage-delete step requires 'key'"))?;
+    let result = client
+        .call(
+            "storage.delete",
+            with_window(
+                Some(json!({"key": key, "session": step.session.unwrap_or(false)})),
+                window,
+            ),
+        )
+        .await?;
+    check_storage_delete_result(&result)?;
+    Ok(result)
+}
+
+/// Checks a `storage.delete` result carries a boolean `deleted`.
+///
+/// Shared by the CLI command, the MCP tool and the scenario step so all three
+/// give one verdict. A null or `{"ok": true}` result from a mismatched bridge
+/// would otherwise pass as a deletion the app never confirmed, for the same
+/// reason [`storage_get_step`] checks `found`.
+///
+/// # Errors
+///
+/// Returns an error when `deleted` is missing or not a boolean.
+pub(crate) fn check_storage_delete_result(result: &Value) -> Result<()> {
+    result
+        .get("deleted")
+        .and_then(Value::as_bool)
+        .map(|_| ())
+        .ok_or_else(|| {
+            anyhow::anyhow!("storage.delete returned invalid response: missing boolean 'deleted'")
+        })
 }
 
 // ── Screenshot on failure ─────────────────────────────────────────────────────
@@ -1359,10 +1411,15 @@ expected = "/home"
 [[step]]
 action = "storage-get"
 key = "theme"
+
+[[step]]
+action = "storage-delete"
+key = "theme"
+session = true
 "##,
         )
         .expect("every documented key loads");
-        assert_eq!(scenario.step.len(), 20);
+        assert_eq!(scenario.step.len(), 21);
     }
 
     #[test]
@@ -1467,6 +1524,7 @@ action = "ping"
             stable: None,
             require_mutation: None,
             path: None,
+            session: None,
         };
         assert_eq!(step.display_name(0), "my step");
     }
@@ -1491,6 +1549,7 @@ action = "ping"
             stable: None,
             require_mutation: None,
             path: None,
+            session: None,
         };
         assert_eq!(step.display_name(2), "step-3");
     }

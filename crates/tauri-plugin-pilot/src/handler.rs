@@ -332,6 +332,17 @@ pub(crate) async fn dispatch(
             )
             .await
         }
+        "storage.delete" => {
+            handle_eval_method(
+                "storageDelete",
+                params,
+                engine,
+                webviews,
+                win,
+                DEFAULT_TIMEOUT,
+            )
+            .await
+        }
         "storage.clear" => {
             handle_eval_method(
                 "storageClear",
@@ -2444,6 +2455,35 @@ mod tests {
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview"));
+    }
+
+    /// An unknown method answers -32601; reaching the webview lookup proves
+    /// `storage.delete` is routed to the bridge (#284).
+    #[tokio::test]
+    async fn test_dispatch_storage_delete_without_webview() {
+        let engine = EvalEngine::new();
+        let params = json!({"key": "auth_token", "session": false});
+        let result = dispatch(
+            "storage.delete",
+            Some(&params),
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await;
+        let err = result.expect_err("dispatch returns Err");
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains("No webview"));
+    }
+
+    #[test]
+    fn test_build_bridge_call_storage_delete() {
+        let params = json!({"key": "auth_token", "session": true});
+        let script = build_bridge_call("storageDelete", Some(&params)).expect("build_bridge_call");
+        assert_eq!(
+            script,
+            r#"window.__PILOT__.storageDelete({"key":"auth_token","session":true})"#
+        );
     }
 
     #[test]

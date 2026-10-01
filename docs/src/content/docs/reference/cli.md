@@ -126,7 +126,9 @@ Use global flags before `mcp` to pin the server to a socket or default window:
 The MCP server exposes tools for the CLI's app-facing commands, including
 `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`,
 `drag`, `drop`, `text`, `html`, `value`, `attrs`, `eval`, `ipc`, `screenshot`,
-`navigate`, `url`, `title`, `wait`, `watch`, `logs`, `network`, `storage_*`,
+`navigate`, `url`, `title`, `wait`, `watch`, `logs`, `network`, `storage_*`
+(`storage_get`, `storage_set`, `storage_list`, `storage_delete`,
+`storage_clear`),
 `forms`, `assert_*`, `record_*`, `replay`, and `run`.
 
 `pilot.screenshot` returns the PNG as one MCP `image` content block
@@ -1396,6 +1398,7 @@ tauri-pilot storage <subcommand> [OPTIONS]
 | `get` | `<key>` | Read a single key |
 | `set` | `<key> <value>` | Write a key-value pair |
 | `list` | | Dump all key-value pairs |
+| `delete` | `<key>` | Remove one key. A missing key still succeeds |
 | `clear` | | Clear all storage |
 
 **Options:**
@@ -1433,6 +1436,16 @@ auth_token = eyJhbGciOiJIUzI1NiJ9...
 theme      = dark
 locale     = en
 
+# Remove one key; a missing key also prints "✓ ok" and exits 0
+$ tauri-pilot storage delete "auth_token"
+✓ ok
+
+# With --json, "deleted" says whether the key existed
+$ tauri-pilot storage delete "auth_token" --json
+{
+  "deleted": false
+}
+
 # Clear localStorage
 $ tauri-pilot storage clear
 ✓ cleared
@@ -1442,6 +1455,7 @@ $ tauri-pilot storage clear
 $ tauri-pilot storage list --session
 $ tauri-pilot storage get "csrf_token" --session
 $ tauri-pilot storage --session list
+$ tauri-pilot storage --session delete "tab_id"
 
 # JSON output
 $ tauri-pilot storage list --json
@@ -1460,8 +1474,11 @@ $ tauri-pilot storage list --json
 // List all
 {"jsonrpc":"2.0","id":3,"method":"storage.list","params":{"session":false}}
 
+// Delete a key (result: {"deleted": true|false})
+{"jsonrpc":"2.0","id":4,"method":"storage.delete","params":{"key":"auth_token","session":false}}
+
 // Clear
-{"jsonrpc":"2.0","id":4,"method":"storage.clear","params":{"session":false}}
+{"jsonrpc":"2.0","id":5,"method":"storage.clear","params":{"session":false}}
 ```
 
 ---
@@ -1672,6 +1689,7 @@ other keys depend on the action:
 | `assert-text`, `assert-value` | `target`, `expected` | |
 | `assert-url` | `expected` | |
 | `storage-get` | `key` | |
+| `storage-delete` | `key` | `session` |
 
 `assert-hidden` passes when a selector matches nothing, like `assert hidden`.
 

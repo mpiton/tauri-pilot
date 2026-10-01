@@ -42,10 +42,20 @@ fn unique_socket_path(tag: &str) -> PathBuf {
 /// Run `storage <args>` against a mock server that expects `method` and
 /// answers with `result`.
 fn run_storage(args: &[&str], method: &'static str, result: serde_json::Value) -> Output {
+    run_storage_capture(args, method, result).0
+}
+
+/// Like [`run_storage`], also returning the request params the binary sent.
+fn run_storage_capture(
+    args: &[&str],
+    method: &'static str,
+    result: serde_json::Value,
+) -> (Output, serde_json::Value) {
     let socket = unique_socket_path("storage");
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).expect("bind mock socket");
     let (done_tx, done_rx) = mpsc::channel();
+    let (params_tx, params_rx) = mpsc::channel();
     thread::spawn(move || {
         let (stream, _) = listener.accept().expect("accept");
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
@@ -54,6 +64,7 @@ fn run_storage(args: &[&str], method: &'static str, result: serde_json::Value) -
         reader.read_line(&mut line).expect("read line");
         let req: serde_json::Value = serde_json::from_str(line.trim()).expect("parse request");
         assert_eq!(req["method"], method);
+        let _ = params_tx.send(req["params"].clone());
         let resp = serde_json::json!({"jsonrpc": "2.0", "id": req["id"], "result": result});
         let mut bytes = serde_json::to_vec(&resp).expect("serialize");
         bytes.push(b'\n');
@@ -83,7 +94,8 @@ fn run_storage(args: &[&str], method: &'static str, result: serde_json::Value) -
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    output
+    let params = params_rx.try_recv().unwrap_or(serde_json::Value::Null);
+    (output, params)
 }
 
 #[test]
@@ -160,6 +172,78 @@ fn storage_set_exits_0() {
     );
 
     assert!(output.status.success(), "storage set must exit 0");
+}
+
+#[test]
+fn storage_delete_prints_ok_and_sends_the_key() {
+    let (output, params) = run_storage_capture(
+        &["--session", "delete", "auth_token"],
+        "storage.delete",
+        serde_json::json!({"deleted": true}),
+    );
+
+    assert!(output.status.success(), "storage delete must exit 0");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "✓ ok\n");
+    assert_eq!(
+        params,
+        serde_json::json!({"key": "auth_token", "session": true})
+    );
+}
+
+#[test]
+fn storage_delete_missing_key_exits_0_with_ok() {
+    let output = run_storage(
+        &["delete", "missing"],
+        "storage.delete",
+        serde_json::json!({"deleted": false}),
+    );
+
+    assert!(
+        output.status.success(),
+        "deleting a missing key must exit 0"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "✓ ok\n");
+}
+
+#[test]
+fn storage_delete_json_keeps_the_deleted_flag() {
+    let output = run_storage(
+        &["delete", "missing", "--json"],
+        "storage.delete",
+        serde_json::json!({"deleted": false}),
+    );
+
+    assert!(
+        output.status.success(),
+        "deleting a missing key must exit 0"
+    );
+    let stdout: serde_json::Value = serde_json::from_slice(&output.stdout).expect("stdout is JSON");
+    assert_eq!(stdout, serde_json::json!({"deleted": false}));
+}
+
+#[test]
+fn storage_delete_without_boolean_deleted_exits_1() {
+    let output = run_storage(
+        &["delete", "some-key"],
+        "storage.delete",
+        serde_json::json!({"ok": true}),
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a response without boolean deleted must exit 1"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "no success line on a malformed response, got {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("deleted"),
+        "error must name the missing deleted field, got: {stderr}"
+    );
 }
 
 #[test]
