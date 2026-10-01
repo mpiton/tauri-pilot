@@ -250,7 +250,7 @@ An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt`
 
 Password inputs display `value=[redacted]` in human-readable output, like `forms`. The raw value stays in `--json` mode, in `--save` files and in MCP results, where the element carries `"sensitive": true`. `value @ref` still reads it.
 
-The `sensitive` flag is set by the app's bridge, so masking needs both the CLI and the app's `tauri-plugin-pilot` at the same version. Against an app built with an older plugin, `snapshot` prints the password in clear.
+The `sensitive` flag is set by the app's bridge, so masking needs both the CLI and the app's `tauri-plugin-pilot` at this version or later; they need not match each other. Against an app built with an older plugin, `snapshot` prints the password in clear.
 
 ---
 

@@ -210,7 +210,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `"sensitive": true`; `--save` files and the MCP `snapshot` and `diff`
   tools return that raw JSON too. The flag comes from the app's bridge, so
   masking needs both the CLI and the app's `tauri-plugin-pilot` at this
-  version: an app built with an older plugin still prints the password. A
+  version or later: an app built with an older plugin still prints the
+  password. A
   `diff --ref` file saved by an older version has no flag either, so a
   password input removed since then prints in clear; re-save it. [#279]
 
