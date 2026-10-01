@@ -257,7 +257,7 @@ impl EvalEngine {
     /// Also `true` before any hello: without one the engine cannot tell app
     /// origins from foreign ones, so callers keep the plain eval path.
     /// Scheme-specific: a previous `https` hello does not make `http` look
-    /// callable. [`wait_bridge`] still accepts a fresh `https` upgrade.
+    /// callable. [`Self::said_hello_since`] still accepts a fresh `https` upgrade.
     pub fn has_bridge(&self, url: &Url) -> bool {
         let bridges = self.bridges.borrow();
         bridges.hellos == 0 || bridges.latest.contains_key(&origin_key(url))
@@ -270,25 +270,11 @@ impl EvalEngine {
         origins
     }
 
-    /// Wait for webview `label` to say hello from the origin of `url` after hello number `since`.
-    ///
-    /// Returns `false` when none arrives within `limit`. A hello from another
-    /// window on the same origin does not count. An `http` destination also
-    /// succeeds when the hello comes from the `https` upgrade of the same
-    /// host and port.
-    pub async fn wait_bridge(&self, label: &str, url: &Url, since: u64, limit: Duration) -> bool {
-        let keys = origin_keys(url);
-        let label = label.to_owned();
-        let mut rx = self.bridges.subscribe();
-        let hello = rx.wait_for(move |b| b.window_said_hello_since(&label, &keys, since));
-        tokio::time::timeout(limit, hello)
-            .await
-            .is_ok_and(|seen| seen.is_ok())
-    }
-
     /// Whether webview `label` said hello from the origin of `url` after hello number `since`.
     ///
-    /// Accepts the `https` upgrade of an `http` URL, like [`Self::wait_bridge`].
+    /// A hello from another window on the same origin does not count. An
+    /// `http` URL also matches a hello from the `https` upgrade of the same
+    /// host and port.
     pub fn said_hello_since(&self, label: &str, url: &Url, since: u64) -> bool {
         self.bridges
             .borrow()
@@ -696,36 +682,26 @@ mod tests {
         );
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn test_wait_bridge_http_dest_matches_fresh_https_hello() {
+    #[test]
+    fn test_said_hello_since_http_dest_matches_fresh_https_hello() {
         let engine = EvalEngine::new();
         let https = Url::parse("https://example.com/").expect("valid test URL");
         let http = Url::parse("http://example.com/").expect("valid test URL");
         engine.bridge_hello("main", https.as_str());
         let since = engine.hellos();
         assert!(
-            !engine
-                .wait_bridge("main", &http, since, Duration::from_secs(1))
-                .await,
+            !engine.said_hello_since("main", &http, since),
             "an old https hello must not count as this navigation's upgrade"
         );
         engine.bridge_hello("main", https.as_str());
         assert!(
-            engine
-                .wait_bridge("main", &http, since, Duration::from_secs(1))
-                .await,
+            engine.said_hello_since("main", &http, since),
             "a hello after since from the https upgrade must count"
         );
         let http80 = Url::parse("http://example.com:80/").expect("valid test URL");
         assert!(
             engine.said_hello_since("main", &http80, since),
             "http://host:80 must match a hello stored as https://host:443"
-        );
-        assert!(
-            engine
-                .wait_bridge("main", &http80, since, Duration::from_secs(1))
-                .await,
-            "wait_bridge must use the same :80 upgrade as said_hello_since"
         );
     }
 
@@ -741,8 +717,8 @@ mod tests {
         assert_eq!(origin_key(&https), "https://example.com:443");
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn test_wait_bridge_ignores_hello_from_another_origin() {
+    #[test]
+    fn test_said_hello_since_ignores_hello_from_another_origin() {
         let engine = EvalEngine::new();
         let app = Url::parse("tauri://localhost/").expect("valid test URL");
         let foreign = Url::parse("https://example.com/").expect("valid test URL");
@@ -750,31 +726,23 @@ mod tests {
         let since = engine.hellos();
         engine.bridge_hello("main", app.as_str());
         assert!(
-            !engine
-                .wait_bridge("main", &foreign, since, Duration::from_secs(1))
-                .await,
+            !engine.said_hello_since("main", &foreign, since),
             "a later hello from the app origin must not count for a foreign dest"
         );
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn test_wait_bridge_ignores_hellos_before_since() {
+    #[test]
+    fn test_said_hello_since_ignores_hellos_before_since() {
         let engine = EvalEngine::new();
         let app = Url::parse("tauri://localhost/").expect("valid test URL");
         engine.bridge_hello("main", app.as_str());
         let since = engine.hellos();
         assert!(
-            !engine
-                .wait_bridge("main", &app, since, Duration::from_secs(1))
-                .await,
+            !engine.said_hello_since("main", &app, since),
             "an old hello must not count as the new page's"
         );
         engine.bridge_hello("main", app.as_str());
-        assert!(
-            engine
-                .wait_bridge("main", &app, since, Duration::from_secs(1))
-                .await
-        );
+        assert!(engine.said_hello_since("main", &app, since));
     }
 
     #[test]

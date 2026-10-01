@@ -1040,14 +1040,22 @@ answer. In all other cases, the page being left
 gets up to 3 seconds to answer first. If
 the destination origin has never said hello, `navigate` then waits up to 3
 seconds for one and fails without it; otherwise it waits up to 10 seconds, so
-the worst case is up to about 13 seconds. A same-origin `navigate` also
-accepts a hello from another bridged origin the window was redirected to.
+the worst case is up to about 13 seconds. A `navigate` also accepts a
+hello from another bridged origin the window was redirected to.
 For a same-origin `navigate`, the error says whether the
 window never left the page (the navigation was cancelled or blocked) or
-loaded a document whose bridge stayed silent; a cross-origin destination
-fails with a "no pilot bridge answered there" error either way. A slow
-page allowed by `remote.urls` can miss that window on its first visit; later
-commands succeed once the hello arrives. On an origin that cannot call back,
+loaded a document whose bridge stayed silent. A cross-origin destination
+that has not loaded when the wait ends (for example, a server that refuses
+the connection) fails with "did not load in time" and names the page the
+window still shows; if that page has no bridge, the error also names the
+origins that work. A start page that only changed its URL during the wait
+(`history.pushState`) on its own bridged origin counts as never left. A
+page that loads without a bridge fails with a "no pilot bridge answered
+there" error that names it. The "did not load" verdict is what the window
+showed when the wait ended: a slow destination may still load after it. A
+slow page allowed by `remote.urls` can miss that window on its first visit;
+later commands succeed once the hello arrives. On an origin that cannot
+call back,
 later commands fail at once with an error that names the page and the origins
 that work. Run `tauri-pilot navigate` with an app URL to get the session
 back.
