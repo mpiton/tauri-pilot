@@ -1722,6 +1722,17 @@
   }
 
   function visible(params) {
+    // `missingOk` lets `assert hidden` pass once a selector matches nothing:
+    // a removed node is not visible (#281). Refs keep throwing, since an
+    // unknown ref usually means a stale snapshot, not a removed element.
+    if (
+      params.missingOk &&
+      !params.ref &&
+      params.selector &&
+      !document.querySelector(params.selector)
+    ) {
+      return { visible: false };
+    }
     const el = resolveTarget(params);
     const style = getComputedStyle(el);
     const isVisible =

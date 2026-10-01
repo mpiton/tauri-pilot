@@ -67,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   data object under the message on stderr. Clients that matched
   `error == "No webview available"` must match `error == "NO_WEBVIEW"` (or
   read `message`, which is unchanged). [#273]
+- `assert hidden`, the scenario step `assert-hidden` and the MCP tool
+  `assert_hidden` pass when a CSS selector matches nothing, like Playwright's
+  `toBeHidden()`. They failed with `No element matches selector`, so checking
+  that a modal or toast had been removed needed `assert count <selector> 0`.
+  The bridge's `visible` takes a `missingOk` option for this. An unknown ref
+  (`@e5`) still fails, since it usually means a stale snapshot. Callers that
+  relied on `assert hidden` failing for a missing element must add a presence
+  check before it: `assert count <selector> N` (exact count) in the CLI, the
+  MCP tool `assert_count` (`selector`, `expected: N`), or an `assert-exists`
+  step in a scenario. [#281]
 
 ### Fixed
 
@@ -1383,3 +1393,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#280]: https://github.com/mpiton/tauri-pilot/issues/280
 [#273]: https://github.com/mpiton/tauri-pilot/issues/273
 [#274]: https://github.com/mpiton/tauri-pilot/issues/274
+[#281]: https://github.com/mpiton/tauri-pilot/issues/281
