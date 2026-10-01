@@ -237,6 +237,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --session` or `storage get <key> --session`, like `--json` and `--window`.
   Clap rejected it there with `unexpected argument '--session' found`; only
   `storage --session <command>` worked, and still does. [#283]
+- The docs give the socket's real location:
+  `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` when that directory is
+  private, `/tmp` otherwise, and a Named Pipe on Windows. They said `/tmp`
+  only, so on most Linux desktops a user who looked for
+  `/tmp/tauri-pilot-*.sock` found nothing. The plugin setup and architecture
+  guides give the socket path per platform, the CLI reference and `SKILL.md`
+  list the full auto-detection order, including `--socket` and the Windows
+  instance files, and the `socat`, MCP `--socket` and `login-flow.toml`
+  examples use the default path. The plugin setup guide notes that the
+  socket log lines need a `tracing` subscriber and gives a check per
+  platform that works without one. Docs only. [#285]
 
 ### Security
 
@@ -1439,3 +1450,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#283]: https://github.com/mpiton/tauri-pilot/issues/283
 [#284]: https://github.com/mpiton/tauri-pilot/issues/284
 [#286]: https://github.com/mpiton/tauri-pilot/issues/286
+[#285]: https://github.com/mpiton/tauri-pilot/issues/285

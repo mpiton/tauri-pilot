@@ -222,11 +222,13 @@ Use global flags before `mcp` to pin a specific app socket or window:
   "mcpServers": {
     "tauri-pilot": {
       "command": "tauri-pilot",
-      "args": ["--socket", "/tmp/tauri-pilot-myapp.sock", "--window", "main", "mcp"]
+      "args": ["--socket", "/run/user/1000/tauri-pilot-com.myapp.dev.sock", "--window", "main", "mcp"]
     }
   }
 }
 ```
+
+The path is the default on a Linux desktop: replace `1000` with your user ID (`id -u`) and `com.myapp.dev` with your app's identifier. On macOS, where `$XDG_RUNTIME_DIR` is usually unset, use `/tmp/tauri-pilot-com.myapp.dev.sock`. On Windows, use the Named Pipe, with each backslash doubled in JSON: `"\\\\.\\pipe\\tauri-pilot-com.myapp.dev"`.
 
 ## Requirements
 

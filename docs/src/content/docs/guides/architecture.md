@@ -28,12 +28,14 @@ Three components:
 
 ## Unix Socket Protocol
 
-Communication happens over a Unix socket at `/tmp/tauri-pilot-{identifier}.sock`.
+Communication happens over a Unix socket at `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock`, or `/tmp/tauri-pilot-{identifier}.sock` when `$XDG_RUNTIME_DIR` is unset, empty or not private. On Windows it is the Named Pipe `\\.\pipe\tauri-pilot-{identifier}`. See [Socket path](/tauri-pilot/guides/plugin-setup/#4-socket-path).
 
 Messages are **newline-delimited JSON-RPC 2.0** — each message ends with `\n`. This framing makes the protocol compatible with `socat` and `nc` for manual debugging:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:/tmp/tauri-pilot-myapp.sock
+echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/tauri-pilot-com.myapp.dev.sock"
+# after the /tmp fallback (macOS, or no private $XDG_RUNTIME_DIR):
+echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:/tmp/tauri-pilot-com.myapp.dev.sock
 ```
 
 ## JSON-RPC Message Format
