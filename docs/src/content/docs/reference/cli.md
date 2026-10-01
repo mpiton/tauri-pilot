@@ -156,6 +156,11 @@ and screenshot steps that set `path`. The CLI example
 `docs/examples/login-flow.toml` includes a screenshot `path` and cannot be run
 over MCP as written. JUnit XML is not written; the JSON report is the output.
 
+The `snapshot`, `diff` and `forms` tools return the app's JSON as `--json`
+does: password values are raw, flagged `"sensitive": true` on snapshot
+elements, and land in the agent's transcript. Only the CLI's text output masks
+them.
+
 The server starts even if no Tauri app is currently running. Each tool call
 resolves and connects to the tauri-pilot Unix socket lazily, using `--socket`,
 `TAURI_PILOT_SOCKET`, or the normal socket auto-detection rules.
@@ -243,6 +248,10 @@ e3  button    "Refresh"
 
 An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt` on images, its `<label>` (wrapping or `for=`, without the text of any nested `<select>` or `<textarea>` or of hidden parts: `hidden`, `aria-hidden="true"`, `display: none`, `visibility: hidden`; a labelled button adds its own text after the label's), `title` then `placeholder` on text inputs and textareas, `placeholder` on `<select>`, its text content (never for `<select>`, whose text is its options), then `title`. A label that is only a visual sibling, with no `for`, does not name the control.
 
+Password inputs display `value=[redacted]` in human-readable output, like `forms`. The raw value stays in `--json` mode, in `--save` files and in MCP results, where the element carries `"sensitive": true`. `value @ref` still reads it.
+
+The `sensitive` flag is set by the app's bridge, so masking needs both the CLI and the app's `tauri-plugin-pilot` at this version or later; they need not match each other. Against an app built with an older plugin, `snapshot` prints the password in clear.
+
 ---
 
 ### `diff`
@@ -263,6 +272,10 @@ tauri-pilot diff [OPTIONS]
 | `-d`, `--depth <n>` | Maximum tree depth to traverse. Must match the reference snapshot, or `diff` refuses |
 
 A `--ref` file saved by 0.7.3 or earlier records no options. `diff` compares against it anyway and prints a warning.
+
+`diff` compares password values raw but prints `[redacted]` on both sides of a change, as `snapshot` does. `--json` keeps the raw values.
+
+A `--ref` file saved before password masking carries no `sensitive` flag. A password input that has since left the page shows up as a `-` line with its value in clear. Re-save the reference with the current version.
 
 **Output format:**
 
@@ -1468,6 +1481,7 @@ tauri-pilot forms [OPTIONS]
 **Notes:**
 
 - Password fields display `[redacted]` in human-readable output (raw values are available in `--json` mode)
+- `snapshot` and `diff` mask password inputs the same way
 - Output is limited to 100 forms and 500 fields per form; a truncation warning appears if exceeded
 - The `--selector` must match a `<form>` element; other elements are rejected with an error
 

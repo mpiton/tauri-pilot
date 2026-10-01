@@ -120,14 +120,43 @@ fn text_status_flag(value: &serde_json::Value) -> Option<&'static str> {
 
 /// Format a snapshot result as an indented accessibility tree.
 pub(crate) fn format_snapshot(value: &serde_json::Value) {
+    // `StdoutWriter` exits on a closed pipe, so the result is always `Ok`.
+    let _ = write_snapshot(&mut StdoutWriter, value);
+}
+
+/// `fmt::Write` over stdout that exits quietly on a closed pipe, like `out!`.
+///
+/// Renderers write through it line by line, so `snapshot | head -1` stops
+/// at the first line instead of rendering the whole tree first.
+struct StdoutWriter;
+
+impl Write for StdoutWriter {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        write_stdout(format_args!("{s}"));
+        Ok(())
+    }
+}
+
+/// Render a snapshot result as an indented accessibility tree, one line per element.
+#[cfg(test)]
+fn snapshot_text(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    let _ = write_snapshot(&mut out, value);
+    out
+}
+
+/// Write a snapshot result as an indented accessibility tree, one line per element.
+///
+/// # Errors
+///
+/// Stops at the first write error of `out`.
+fn write_snapshot(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::Result {
     let Some(elements) = value.get("elements").and_then(|e| e.as_array()) else {
-        outln!("(empty snapshot)");
-        return;
+        return writeln!(out, "(empty snapshot)");
     };
 
     if elements.is_empty() {
-        outln!("(empty snapshot)");
-        return;
+        return writeln!(out, "(empty snapshot)");
     }
 
     for el in elements {
@@ -156,7 +185,8 @@ pub(crate) fn format_snapshot(value: &serde_json::Value) {
         let _ = write!(line, " {}", crate::style::dim(format!("[ref={ref}]")));
 
         if let Some(val) = el.get("value").and_then(serde_json::Value::as_str) {
-            let _ = write!(line, " {}", crate::style::dim(format!("value=\"{val}\"")));
+            let shown = display_value(val, is_sensitive(el));
+            let _ = write!(line, " {}", crate::style::dim(format!("value={shown}")));
         }
         if el.get("checked").and_then(serde_json::Value::as_bool) == Some(true) {
             let _ = write!(line, " {}", crate::style::dim("checked"));
@@ -165,7 +195,27 @@ pub(crate) fn format_snapshot(value: &serde_json::Value) {
             let _ = write!(line, " {}", crate::style::dim("disabled"));
         }
 
-        outln!("{line}");
+        writeln!(out, "{line}")?;
+    }
+    Ok(())
+}
+
+/// Placeholder printed instead of a password value in text output.
+const REDACTED: &str = "[redacted]";
+
+/// Whether a snapshot element is flagged as holding a secret (a password input).
+fn is_sensitive(el: &serde_json::Value) -> bool {
+    el.get("sensitive").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
+/// Quote a snapshot value for text output, or mask it as `forms` does.
+///
+/// An empty value stays `""`, so the reader still sees the field is blank.
+fn display_value(value: &str, sensitive: bool) -> String {
+    if sensitive && !value.is_empty() {
+        REDACTED.to_owned()
+    } else {
+        format!("\"{value}\"")
     }
 }
 
@@ -401,7 +451,7 @@ fn format_form_field(field: &serde_json::Value) {
         if field_value.is_empty() {
             let _ = write!(line, " = \"\"");
         } else {
-            let _ = write!(line, " = {}", crate::style::dim("[redacted]"));
+            let _ = write!(line, " = {}", crate::style::dim(REDACTED));
         }
     } else if let Some(is_checked) = checked {
         let _ = write!(line, " = \"{field_value}\"");
@@ -584,6 +634,24 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
     if let Some(warning) = value.get("warning").and_then(serde_json::Value::as_str) {
         eprintln!("{}", crate::style::warn(warning));
     }
+    // `StdoutWriter` exits on a closed pipe, so the result is always `Ok`.
+    let _ = write_diff(&mut StdoutWriter, value);
+}
+
+/// Render the added, removed, and changed lines of a diff result.
+#[cfg(test)]
+fn diff_text(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    let _ = write_diff(&mut out, value);
+    out
+}
+
+/// Write the added, removed, and changed lines of a diff result.
+///
+/// # Errors
+///
+/// Stops at the first write error of `out`.
+fn write_diff(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::Result {
     let added = value.get("added").and_then(|v| v.as_array());
     let removed = value.get("removed").and_then(|v| v.as_array());
     let changed_entries = value.get("changed").and_then(|v| v.as_array());
@@ -593,89 +661,106 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
         && changed_entries.is_none_or(Vec::is_empty);
 
     if is_empty {
-        outln!("{}", crate::style::dim("No changes detected."));
-        return;
+        return writeln!(out, "{}", crate::style::dim("No changes detected."));
     }
 
     if let Some(entries) = removed {
         for el in entries {
-            outln!("{}", format_diff_entry("-", el, &crate::style::error));
+            writeln!(out, "{}", format_diff_entry("-", el, &crate::style::error))?;
         }
     }
 
     if let Some(entries) = added {
         for el in entries {
-            outln!("{}", format_diff_entry("+", el, &crate::style::success));
+            writeln!(
+                out,
+                "{}",
+                format_diff_entry("+", el, &crate::style::success)
+            )?;
         }
     }
 
     if let Some(entries) = changed_entries {
         for entry in entries {
-            let el = entry.get("new").unwrap_or(entry);
-            let role = strip_ansi(
-                el.get("role")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("?"),
-            );
-            let r#ref = strip_ansi(
-                el.get("ref")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("?"),
-            );
-            let name = el
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(strip_ansi);
-
-            let old = entry.get("old");
-            let field_changes = entry.get("changes").and_then(|c| c.as_array());
-
-            if let Some(fields) = field_changes {
-                for field in fields {
-                    let field_name = field.as_str().unwrap_or("?");
-                    let old_val = strip_ansi(
-                        &old.and_then(|o| o.get(field_name))
-                            .map(|v| match v {
-                                serde_json::Value::String(s) => s.clone(),
-                                other => other.to_string(),
-                            })
-                            .unwrap_or_default(),
-                    );
-                    let new_val = strip_ansi(
-                        &el.get(field_name)
-                            .map(|v| match v {
-                                serde_json::Value::String(s) => s.clone(),
-                                other => other.to_string(),
-                            })
-                            .unwrap_or_default(),
-                    );
-
-                    let mut line =
-                        format!("{} {} ", crate::style::warn("~"), crate::style::info(&role));
-                    if let Some(ref n) = name {
-                        let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
-                    }
-                    let _ = write!(
-                        line,
-                        "{} {}: {} \u{2192} {}",
-                        crate::style::dim(format!("[ref={ref}]")),
-                        field_name,
-                        crate::style::dim(format!("\"{old_val}\"")),
-                        crate::style::dim(format!("\"{new_val}\"")),
-                    );
-                    outln!("{line}");
-                }
-            } else {
-                let mut line =
-                    format!("{} {} ", crate::style::warn("~"), crate::style::info(&role));
-                if let Some(ref n) = name {
-                    let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
-                }
-                let _ = write!(line, "{}", crate::style::dim(format!("[ref={ref}]")));
-                outln!("{line}");
-            }
+            write_changed_entry(out, entry)?;
         }
     }
+    Ok(())
+}
+
+/// Write the `~` lines of one changed diff entry, one per changed field.
+///
+/// A `value` change on a password input prints `[redacted]` on both sides.
+///
+/// # Errors
+///
+/// Stops at the first write error of `out`.
+fn write_changed_entry(out: &mut impl Write, entry: &serde_json::Value) -> std::fmt::Result {
+    let el = entry.get("new").unwrap_or(entry);
+    let role = strip_ansi(
+        el.get("role")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?"),
+    );
+    let r#ref = strip_ansi(
+        el.get("ref")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?"),
+    );
+    let name = el
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(strip_ansi);
+
+    let old = entry.get("old");
+    let field_changes = entry.get("changes").and_then(|c| c.as_array());
+    // Mask both sides if either snapshot saw a password input (#279).
+    let sensitive = is_sensitive(el) || old.is_some_and(is_sensitive);
+
+    if let Some(fields) = field_changes {
+        for field in fields {
+            let field_name = field.as_str().unwrap_or("?");
+            let old_val = strip_ansi(
+                &old.and_then(|o| o.get(field_name))
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_default(),
+            );
+            let new_val = strip_ansi(
+                &el.get(field_name)
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_default(),
+            );
+
+            let masked = sensitive && field_name == "value";
+            let mut line = format!("{} {} ", crate::style::warn("~"), crate::style::info(&role));
+            if let Some(ref n) = name {
+                let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
+            }
+            let _ = write!(
+                line,
+                "{} {}: {} \u{2192} {}",
+                crate::style::dim(format!("[ref={ref}]")),
+                field_name,
+                crate::style::dim(display_value(&old_val, masked)),
+                crate::style::dim(display_value(&new_val, masked)),
+            );
+            writeln!(out, "{line}")?;
+        }
+    } else {
+        let mut line = format!("{} {} ", crate::style::warn("~"), crate::style::info(&role));
+        if let Some(ref n) = name {
+            let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
+        }
+        let _ = write!(line, "{}", crate::style::dim(format!("[ref={ref}]")));
+        writeln!(out, "{line}")?;
+    }
+    Ok(())
 }
 
 fn format_diff_entry(
@@ -700,7 +785,8 @@ fn format_diff_entry(
     let _ = write!(line, "{}", crate::style::dim(format!("[ref={ref}]")));
 
     if let Some(val) = el.get("value").and_then(serde_json::Value::as_str) {
-        let _ = write!(line, " {}", crate::style::dim(format!("value=\"{val}\"")));
+        let shown = display_value(val, is_sensitive(el));
+        let _ = write!(line, " {}", crate::style::dim(format!("value={shown}")));
     }
     if el.get("checked").and_then(serde_json::Value::as_bool) == Some(true) {
         let _ = write!(line, " {}", crate::style::dim("checked"));
@@ -979,6 +1065,83 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_text_redacts_sensitive_value() {
+        // #279: a password field's value must not reach the text output.
+        let snapshot = json!({
+            "elements": [
+                {"ref": "e1", "role": "textbox", "depth": 0, "value": "user@example.com"},
+                {"ref": "e2", "role": "textbox", "depth": 0, "value": "s3cret!", "sensitive": true},
+            ]
+        });
+        let text = strip_ansi(&snapshot_text(&snapshot));
+        assert!(!text.contains("s3cret!"), "password leaked: {text}");
+        assert!(
+            text.contains("[ref=e2] value=[redacted]"),
+            "missing redaction: {text}"
+        );
+        assert!(
+            text.contains("value=\"user@example.com\""),
+            "plain value lost: {text}"
+        );
+    }
+
+    /// Collects writes and fails once `limit` lines have been accepted.
+    struct ClosingWriter {
+        written: String,
+        limit: usize,
+    }
+
+    impl std::fmt::Write for ClosingWriter {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            if self.written.matches('\n').count() >= self.limit {
+                return Err(std::fmt::Error);
+            }
+            self.written.push_str(s);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_write_snapshot_streams_line_by_line() {
+        // A reader that hangs up after one line must not wait for the whole tree.
+        let snapshot = json!({
+            "elements": [
+                {"ref": "e1", "role": "button", "depth": 0},
+                {"ref": "e2", "role": "link", "depth": 0},
+                {"ref": "e3", "role": "textbox", "depth": 0},
+            ]
+        });
+        let mut out = ClosingWriter {
+            written: String::new(),
+            limit: 1,
+        };
+        assert!(write_snapshot(&mut out, &snapshot).is_err());
+        let text = strip_ansi(&out.written);
+        assert!(text.contains("[ref=e1]"), "first line missing: {text}");
+        assert!(!text.contains("[ref=e2]"), "kept rendering: {text}");
+    }
+
+    #[test]
+    fn test_write_diff_streams_line_by_line() {
+        let diff = json!({
+            "added": [
+                {"ref": "e1", "role": "button", "depth": 0},
+                {"ref": "e2", "role": "link", "depth": 0},
+            ],
+            "removed": [],
+            "changed": [],
+        });
+        let mut out = ClosingWriter {
+            written: String::new(),
+            limit: 1,
+        };
+        assert!(write_diff(&mut out, &diff).is_err());
+        let text = strip_ansi(&out.written);
+        assert!(text.contains("[ref=e1]"), "first line missing: {text}");
+        assert!(!text.contains("[ref=e2]"), "kept rendering: {text}");
+    }
+
+    #[test]
     fn test_format_timestamp_marks_utc() {
         // 3_661_123 ms after the epoch is 01:01:01.123 UTC. The suffix says so:
         // the clock reading is not the reader's local time.
@@ -1144,6 +1307,127 @@ mod tests {
             }]
         });
         format_diff(&diff);
+    }
+
+    #[test]
+    fn test_diff_text_redacts_changed_sensitive_value() {
+        // #279: both sides of a password change are masked.
+        let diff = json!({
+            "added": [],
+            "removed": [],
+            "changed": [{
+                "old": {"ref": "e2", "role": "textbox", "depth": 0, "value": "old-pass", "sensitive": true},
+                "new": {"ref": "e2", "role": "textbox", "depth": 0, "value": "s3cret!", "sensitive": true},
+                "changes": ["value"]
+            }]
+        });
+        let text = strip_ansi(&diff_text(&diff));
+        assert!(!text.contains("s3cret!"), "new password leaked: {text}");
+        assert!(!text.contains("old-pass"), "old password leaked: {text}");
+        assert!(
+            text.contains("[ref=e2] value: [redacted] \u{2192} [redacted]"),
+            "missing redaction: {text}"
+        );
+    }
+
+    #[test]
+    fn test_diff_text_redacts_added_and_removed_sensitive_value() {
+        let diff = json!({
+            "added": [{"ref": "e5", "role": "textbox", "depth": 0, "value": "s3cret!", "sensitive": true}],
+            "removed": [{"ref": "e3", "role": "textbox", "depth": 0, "value": "old-pass", "sensitive": true}],
+            "changed": []
+        });
+        let text = strip_ansi(&diff_text(&diff));
+        assert!(!text.contains("s3cret!"), "added password leaked: {text}");
+        assert!(
+            !text.contains("old-pass"),
+            "removed password leaked: {text}"
+        );
+        assert!(
+            text.contains("[ref=e5] value=[redacted]"),
+            "missing redaction: {text}"
+        );
+        assert!(
+            text.contains("[ref=e3] value=[redacted]"),
+            "missing redaction: {text}"
+        );
+    }
+
+    #[test]
+    fn test_diff_text_masks_value_when_only_one_side_is_sensitive() {
+        // A show-password toggle flips the input type between snapshots:
+        // the side that was a password must not leak through the other.
+        for (old_flag, new_flag) in [(true, false), (false, true)] {
+            let diff = json!({
+                "added": [],
+                "removed": [],
+                "changed": [{
+                    "old": {"ref": "e2", "role": "textbox", "depth": 0, "value": "old-pass", "sensitive": old_flag},
+                    "new": {"ref": "e2", "role": "textbox", "depth": 0, "value": "s3cret!", "sensitive": new_flag},
+                    "changes": ["value"]
+                }]
+            });
+            let text = strip_ansi(&diff_text(&diff));
+            assert!(
+                text.contains("value: [redacted] \u{2192} [redacted]"),
+                "old={old_flag} new={new_flag}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_diff_text_shows_empty_sensitive_value_as_empty() {
+        // Like `forms`, an empty password stays `""` so a fill is visible.
+        let diff = json!({
+            "added": [],
+            "removed": [],
+            "changed": [{
+                "old": {"ref": "e2", "role": "textbox", "depth": 0, "value": "", "sensitive": true},
+                "new": {"ref": "e2", "role": "textbox", "depth": 0, "value": "s3cret!", "sensitive": true},
+                "changes": ["value"]
+            }]
+        });
+        let text = strip_ansi(&diff_text(&diff));
+        assert!(
+            text.contains("value: \"\" \u{2192} [redacted]"),
+            "empty side should stay visible: {text}"
+        );
+    }
+
+    #[test]
+    fn test_diff_text_masks_only_the_value_of_a_sensitive_field() {
+        let diff = json!({
+            "added": [],
+            "removed": [],
+            "changed": [{
+                "old": {"ref": "e2", "role": "textbox", "depth": 0, "value": "s3cret!", "sensitive": true},
+                "new": {"ref": "e2", "role": "textbox", "depth": 0, "value": "s3cret!", "sensitive": true, "disabled": true},
+                "changes": ["disabled"]
+            }]
+        });
+        let text = strip_ansi(&diff_text(&diff));
+        assert!(
+            text.contains("disabled: \"\" \u{2192} \"true\""),
+            "non-value change should stay readable: {text}"
+        );
+    }
+
+    #[test]
+    fn test_diff_text_keeps_plain_changed_value() {
+        let diff = json!({
+            "added": [],
+            "removed": [],
+            "changed": [{
+                "old": {"ref": "e2", "role": "textbox", "name": "Search", "value": ""},
+                "new": {"ref": "e2", "role": "textbox", "name": "Search", "value": "workspace"},
+                "changes": ["value"]
+            }]
+        });
+        let text = strip_ansi(&diff_text(&diff));
+        assert!(
+            text.contains("value: \"\" \u{2192} \"workspace\""),
+            "plain value lost: {text}"
+        );
     }
 
     #[test]

@@ -186,6 +186,22 @@ test("snapshot preserves a genuine string value unchanged", () => {
   assert.equal(field.value, "hello");
 });
 
+test("snapshot flags a password input as sensitive and keeps its raw value (#279)", () => {
+  const user = makeEl("input", { value: "user@example.com", attrs: { type: "email" } });
+  const pass = makeEl("input", { value: "s3cret!", attrs: { type: "Password" } });
+  const body = makeEl("body", { children: [user, pass] });
+  const pilot = loadBridge(body);
+
+  const { elements } = pilot.snapshot();
+  const secret = elements.find((e) => e.value === "s3cret!");
+  const plain = elements.find((e) => e.value === "user@example.com");
+
+  assert.ok(secret, "the password value stays in the raw payload for --json");
+  assert.equal(secret.sensitive, true);
+  assert.ok(plain, "the email input should be captured");
+  assert.equal(plain.sensitive, undefined, "only password inputs are flagged");
+});
+
 test("snapshot includes a draggable card and assigns a usable ref (#155)", () => {
   const card = makeEl("div", {
     text: "Kanban card",

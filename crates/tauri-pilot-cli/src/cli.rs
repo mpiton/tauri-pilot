@@ -68,7 +68,9 @@ pub(crate) enum Command {
     /// `-i`, `-s` and `-d` must match the options of the reference snapshot
     /// (the last snapshot, or the `--ref` file), or `diff` refuses. A `--ref`
     /// file saved by 0.7.3 or earlier records no options and is diffed with a
-    /// warning.
+    /// warning. A `--ref` file saved before password masking has no
+    /// `sensitive` flag, so a password input removed since then prints in
+    /// clear; re-save it.
     Diff {
         /// Path to a saved snapshot file to compare against
         #[arg(long, value_name = "FILE")]

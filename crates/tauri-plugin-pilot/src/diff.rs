@@ -15,6 +15,9 @@ pub struct SnapshotElement {
     pub checked: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
+    /// Set by the bridge on password inputs so text output can mask `value`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sensitive: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -279,6 +282,7 @@ mod tests {
             value: None,
             checked: None,
             disabled: None,
+            sensitive: None,
         }
     }
 
@@ -291,6 +295,7 @@ mod tests {
             value: None,
             checked: None,
             disabled: None,
+            sensitive: None,
         }
     }
 
@@ -304,6 +309,29 @@ mod tests {
         let el: SnapshotElement =
             serde_json::from_str(json).expect("string value should deserialize");
         assert_eq!(el.value, Some("0".to_owned()));
+    }
+
+    #[test]
+    fn test_diff_keeps_sensitive_flag_on_changed_password() {
+        // #279: the CLI masks a value only when the flag survives the diff.
+        let old: Vec<SnapshotElement> = serde_json::from_str(
+            r#"[{"ref":"e2","role":"textbox","depth":0,"value":"old-pass","sensitive":true}]"#,
+        )
+        .expect("old snapshot should deserialize");
+        let new: Vec<SnapshotElement> = serde_json::from_str(
+            r#"[{"ref":"e2","role":"textbox","depth":0,"value":"s3cret!","sensitive":true}]"#,
+        )
+        .expect("new snapshot should deserialize");
+
+        let result = serde_json::to_value(compute_diff(&old, &new)).expect("diff serializes");
+
+        assert_eq!(
+            result["changed"][0]["changes"],
+            serde_json::json!(["value"])
+        );
+        assert_eq!(result["changed"][0]["old"]["sensitive"], true);
+        assert_eq!(result["changed"][0]["new"]["sensitive"], true);
+        assert_eq!(result["changed"][0]["new"]["value"], "s3cret!");
     }
 
     #[test]
@@ -347,6 +375,7 @@ mod tests {
             value: Some("old".to_owned()),
             checked: None,
             disabled: None,
+            sensitive: None,
         }];
         let new = vec![SnapshotElement {
             ref_id: "e2".to_owned(),
@@ -356,6 +385,7 @@ mod tests {
             value: Some("new".to_owned()),
             checked: None,
             disabled: None,
+            sensitive: None,
         }];
         let result = compute_diff(&old, &new);
         assert!(result.added.is_empty());
@@ -374,6 +404,7 @@ mod tests {
             value: Some("on".to_owned()),
             checked: Some(false),
             disabled: Some(false),
+            sensitive: None,
         }];
         let new = vec![SnapshotElement {
             ref_id: "e2".to_owned(),
@@ -383,6 +414,7 @@ mod tests {
             value: Some("off".to_owned()),
             checked: Some(true),
             disabled: Some(true),
+            sensitive: None,
         }];
         let result = compute_diff(&old, &new);
         assert!(result.added.is_empty());
@@ -405,6 +437,7 @@ mod tests {
                 value: Some("old@example.com".to_owned()),
                 checked: None,
                 disabled: None,
+                sensitive: None,
             },
             el_named("e3", "link", 3, "home"),
         ];
@@ -418,6 +451,7 @@ mod tests {
                 value: Some("new@example.com".to_owned()),
                 checked: None,
                 disabled: None,
+                sensitive: None,
             },
             el_named("e5", "paragraph", 4, "info"),
         ];
@@ -452,6 +486,7 @@ mod tests {
                 value: Some("save".to_owned()),
                 checked: None,
                 disabled: None,
+                sensitive: None,
             },
             SnapshotElement {
                 ref_id: "e2".to_owned(),
@@ -461,6 +496,7 @@ mod tests {
                 value: Some("cancel".to_owned()),
                 checked: None,
                 disabled: None,
+                sensitive: None,
             },
         ];
         let new = vec![
@@ -472,6 +508,7 @@ mod tests {
                 value: Some("save".to_owned()),
                 checked: None,
                 disabled: None,
+                sensitive: None,
             },
             SnapshotElement {
                 ref_id: "e4".to_owned(),
@@ -481,6 +518,7 @@ mod tests {
                 value: Some("cancel".to_owned()),
                 checked: None,
                 disabled: None,
+                sensitive: None,
             },
         ];
         let result = compute_diff(&old, &new);

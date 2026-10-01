@@ -1073,6 +1073,8 @@
           if (inputType === "checkbox" || inputType === "radio") {
             entry.checked = node.checked;
           }
+          // Text renderers mask a password value; --json keeps it raw (#279).
+          if (inputType === "password") entry.sensitive = true;
         }
         if (node.disabled) entry.disabled = true;
         elements.push(entry);
