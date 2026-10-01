@@ -45,6 +45,10 @@ pub(crate) enum Command {
     /// List all open windows
     Windows,
     /// Check connectivity with a running Tauri app.
+    ///
+    /// Succeeds before the app's first window exists. A window command sent
+    /// without `--window` then waits up to 3 s for it; an unknown `--window`
+    /// label fails at once.
     Ping,
     /// Get app state (url, title, ready).
     State,

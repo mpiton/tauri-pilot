@@ -231,7 +231,7 @@ pub(crate) async fn dispatch(
         // own URL, so the answer survives a page whose bridge cannot call back
         // (a foreign origin the ACL denies, #153) — exactly when the caller is
         // lost and needs it (#233). `windows.list` already reads it this way.
-        "url" => handle_url(webviews, win),
+        "url" => handle_url(webviews, win).await,
         "navigate" => handle_navigate(params, engine, webviews, win).await,
         // `drag` spends `steps × stepDelayMs + settleMs` in JS timers before it
         // resolves, so the channel timeout has to cover the gesture the caller
@@ -546,13 +546,21 @@ async fn handle_press(
         data: None,
     })?;
 
+    // With no window to focus, the key would land in whatever app has focus.
+    // Wait for the first window before the lock: without a label this can
+    // take up to FIRST_WINDOW_BUDGET (#273), and holding the lock meanwhile
+    // would stall a concurrent `--window` press for that long.
+    target(webviews, window).await?;
+
     // Hold this lock across the whole focus → confirm → inject sequence so
     // two concurrent `press` calls cannot interleave their focus steps (call
     // A focuses window X, call B focuses window Y, then both keys land on Y).
     let _order_guard = PRESS_ORDER_LOCK.lock().await;
 
-    // With no window to focus, the key would land in whatever app has focus.
-    let target = target(webviews, window)?;
+    // Resolve again, without waiting: the window may have closed or been
+    // recreated while this press queued behind another one.
+    let target = target_within(webviews, window, Duration::ZERO).await?;
+
     if let Err(e) = target.focus() {
         if let Some(label) = window {
             // The caller explicitly targeted a window; silently
@@ -702,7 +710,7 @@ async fn handle_navigate(
     window: Option<&str>,
 ) -> Result<serde_json::Value, RpcError> {
     let since = engine.hellos();
-    let target = target(webviews, window)?;
+    let target = target(webviews, window).await?;
     // Read before the eval so dest is resolved against the page the
     // script was aimed at, not one a concurrent navigation already left.
     let page = target.url();
@@ -1092,7 +1100,7 @@ async fn eval_bridge(
     window: Option<&str>,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
-    let target = target(webviews, window)?;
+    let target = target(webviews, window).await?;
     let checked = target.url();
     if let Some(page) = checked.as_ref().filter(|page| !engine.has_bridge(page)) {
         return Err(no_bridge_error(
@@ -1157,7 +1165,29 @@ fn origin_moved_error(checked: &tauri::Url, now: &tauri::Url) -> RpcError {
     }
 }
 
+/// How long a request without `--window` waits for the app's first window (#273).
+///
+/// The plugin binds its socket during setup, before Tauri creates the windows
+/// of `tauri.conf.json`, so `ping` answers before any window exists: for
+/// about a second, 1.3 to 1.5 s in #273. Reuses [`BRIDGE_GRACE`], the budget `navigate` gives a page that
+/// never said hello: both cover a local page still starting up. It only runs
+/// while the app has no window at all, so a request to a running app pays
+/// nothing. It adds to the method's own timeout, which keeps the longest
+/// path, `screenshot` at [`SCREENSHOT_TIMEOUT`], under the CLI's
+/// `DEFAULT_RPC_TIMEOUT` of 35 s.
+const FIRST_WINDOW_BUDGET: Duration = BRIDGE_GRACE;
+
+/// Pause between window lookups during [`FIRST_WINDOW_BUDGET`].
+///
+/// A lookup is a map read on the app handle, so polling is cheap. Short
+/// enough that the command follows the new window within a frame or two.
+const FIRST_WINDOW_POLL: Duration = Duration::from_millis(20);
+
 /// Resolve the window a request targets.
+///
+/// Without a label, waits up to [`FIRST_WINDOW_BUDGET`] for the app's first
+/// window when it has none yet, as during startup (#273). A label is never
+/// waited for.
 ///
 /// # Errors
 ///
@@ -1168,27 +1198,56 @@ fn origin_moved_error(checked: &tauri::Url, now: &tauri::Url) -> RpcError {
 /// `windows` round-trip (#233). Those rows are `{label, url, title}`, where
 /// `screenshot_native` reports `{window_id, owner, title, layer}`; only the
 /// envelope is shared. Having no window at all is the app's state, not a bad
-/// request, and stays `RPC_INTERNAL_ERROR`.
-fn target<'a>(
+/// request, and stays `RPC_INTERNAL_ERROR`, with `data.error = NO_WEBVIEW`
+/// so a client can retry it without matching the message.
+async fn target<'a>(
     webviews: &'a dyn Webviews,
     window: Option<&str>,
 ) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
-    webviews.target(window).map_err(|e| match window {
-        Some(_) => RpcError {
-            code: RPC_INVALID_PARAMS,
-            data: Some(serde_json::json!({
-                "error": screenshot::ipc::codes::WINDOW_NOT_FOUND,
-                "message": e,
-                "available_windows": webviews.list(),
-            })),
-            message: e,
-        },
-        None => RpcError {
-            code: RPC_INTERNAL_ERROR,
-            message: e,
-            data: None,
-        },
-    })
+    target_within(webviews, window, FIRST_WINDOW_BUDGET).await
+}
+
+/// Resolve the window a request targets, waiting at most `budget` for a first window.
+///
+/// [`target`] with an explicit budget. `Duration::ZERO` resolves without
+/// waiting, for a caller that already waited and must not wait again.
+///
+/// # Errors
+///
+/// Same as [`target`].
+async fn target_within<'a>(
+    webviews: &'a dyn Webviews,
+    window: Option<&str>,
+    budget: Duration,
+) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        match webviews.target(window) {
+            Ok(target) => return Ok(target),
+            Err(e) if window.is_some() => {
+                return Err(RpcError {
+                    code: RPC_INVALID_PARAMS,
+                    data: Some(serde_json::json!({
+                        "error": screenshot::ipc::codes::WINDOW_NOT_FOUND,
+                        "message": e,
+                        "available_windows": webviews.list(),
+                    })),
+                    message: e,
+                });
+            }
+            Err(e) if tokio::time::Instant::now() >= deadline => {
+                return Err(RpcError {
+                    code: RPC_INTERNAL_ERROR,
+                    data: Some(serde_json::json!({
+                        "error": screenshot::ipc::codes::NO_WEBVIEW,
+                        "message": e,
+                    })),
+                    message: e,
+                });
+            }
+            Err(_) => tokio::time::sleep(FIRST_WINDOW_POLL).await,
+        }
+    }
 }
 
 /// Answer `url` from the runtime, without asking the page.
@@ -1198,15 +1257,18 @@ fn target<'a>(
 /// Fails when the window cannot be resolved (see [`target`]), or when the
 /// runtime reports no URL for it — a failure the bridge route never produced,
 /// since a page that answers at all knows its own `location`.
-fn handle_url(
+async fn handle_url(
     webviews: &dyn Webviews,
     window: Option<&str>,
 ) -> Result<serde_json::Value, RpcError> {
-    let url = target(webviews, window)?.url().ok_or_else(|| RpcError {
-        code: RPC_INTERNAL_ERROR,
-        message: "the runtime cannot report the URL of the current page".to_owned(),
-        data: None,
-    })?;
+    let url = target(webviews, window)
+        .await?
+        .url()
+        .ok_or_else(|| RpcError {
+            code: RPC_INTERNAL_ERROR,
+            message: "the runtime cannot report the URL of the current page".to_owned(),
+            data: None,
+        })?;
     Ok(serde_json::Value::String(url.to_string()))
 }
 
@@ -1487,7 +1549,7 @@ mod tests {
     }
 
     #[cfg(feature = "press")]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_press_without_any_window_errors() {
         // Without --window and with no webview, the key would reach another
         // app. Shift alone keeps a regression harmless.
@@ -1503,6 +1565,88 @@ mod tests {
         let err = result.expect_err("dispatch returns Err");
         assert_eq!(err.code, -32603);
         assert!(err.message.contains("No webview available"));
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_waiting_for_a_window_does_not_block_a_labeled_press() {
+        // An unlabeled press waits up to FIRST_WINDOW_BUDGET for the first
+        // window (#273). It must not hold the press ordering lock meanwhile,
+        // or a `--window` press queues behind it for the whole wait.
+        let webviews = FakeWebviews::default();
+        let waiting = webviews.clone();
+        let unlabeled = tokio::spawn(async move {
+            dispatch(
+                "press",
+                Some(&json!({"key": "Shift"})),
+                &EvalEngine::new(),
+                &waiting,
+                &Recorder::new(),
+            )
+            .await
+        });
+        // Let the unlabeled press start its wait.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let start = tokio::time::Instant::now();
+
+        let err = dispatch(
+            "press",
+            Some(&json!({"key": "Shift", "window": "settings"})),
+            &EvalEngine::new(),
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("no window labeled settings");
+
+        // Not `ZERO`: PRESS_ORDER_LOCK is process-wide, so a press test on
+        // another thread can hold it for a moment while this paused clock
+        // auto-advances. Holding it across the wait costs the full budget.
+        assert!(
+            start.elapsed() < FIRST_WINDOW_BUDGET / 2,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(err.code, -32602);
+        let err = unlabeled
+            .await
+            .expect("press task")
+            .expect_err("no window ever appears");
+        assert_eq!(err.code, -32603);
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_resolves_the_window_again_after_queueing() {
+        // The first-window wait runs before PRESS_ORDER_LOCK (#273), so a
+        // press can queue behind another one. A window closed meanwhile
+        // must not be focused through the handle resolved before the lock.
+        let webviews = FakeWebviews::window("settings", Some("https://app.test/"));
+        let queued = webviews.clone();
+        let guard = PRESS_ORDER_LOCK.lock().await;
+        let press = tokio::spawn(async move {
+            dispatch(
+                "press",
+                Some(&json!({"key": "Shift", "window": "settings"})),
+                &EvalEngine::new(),
+                &queued,
+                &Recorder::new(),
+            )
+            .await
+        });
+        // Let the press resolve its window and queue on the lock.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        webviews.close("settings");
+        drop(guard);
+
+        let err = press
+            .await
+            .expect("press task")
+            .expect_err("the window closed while the press queued");
+
+        assert_eq!(err.code, -32602);
+        let data = err.data.expect("the WINDOW_NOT_FOUND envelope");
+        assert_eq!(data["error"], json!("WINDOW_NOT_FOUND"));
     }
 
     #[cfg(feature = "press")]
@@ -1675,7 +1819,7 @@ mod tests {
         assert_eq!(err.code, -32601);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_snapshot_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -1691,7 +1835,102 @@ mod tests {
         assert_eq!(err.message, "No webview available");
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_waits_for_the_first_webview_window() {
+        // #273: the socket answers before Tauri creates the first window.
+        // A command sent in that gap waits for it instead of failing.
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::default();
+        let later = webviews.clone();
+        let appear = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1_400)).await;
+            later.set_url("main", Some("https://app.test/"));
+        });
+        let start = tokio::time::Instant::now();
+
+        let result = dispatch("url", None, &engine, &webviews, &Recorder::new()).await;
+
+        assert_eq!(result.expect("a window"), json!("https://app.test/"));
+        assert!(
+            start.elapsed() >= Duration::from_millis(1_400)
+                && start.elapsed() < FIRST_WINDOW_BUDGET,
+            "took {:?}",
+            start.elapsed()
+        );
+        appear.await.expect("window task");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_without_any_webview_fails_with_no_webview_after_the_budget() {
+        let engine = EvalEngine::new();
+        let start = tokio::time::Instant::now();
+
+        let err = dispatch(
+            "snapshot",
+            None,
+            &engine,
+            &FakeWebviews::default(),
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("no window ever appears");
+
+        assert!(
+            start.elapsed() >= FIRST_WINDOW_BUDGET,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(err.code, -32603);
+        assert_eq!(err.message, "No webview available");
+        let data = err.data.expect("a domain code");
+        assert_eq!(data["error"], json!("NO_WEBVIEW"));
+        assert_eq!(data["message"], json!("No webview available"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_with_a_window_does_not_wait() {
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::window("main", Some("https://app.test/"));
+        let start = tokio::time::Instant::now();
+
+        let result = dispatch("url", None, &engine, &webviews, &Recorder::new()).await;
+
+        assert_eq!(result.expect("a window"), json!("https://app.test/"));
+        assert_eq!(start.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_unknown_window_fails_at_once_during_startup() {
+        // A `--window` label is never waited for (#273), even while the app
+        // has no window yet and one with that label appears later.
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::default();
+        let later = webviews.clone();
+        let appear = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1_400)).await;
+            later.set_url("nope", Some("https://app.test/"));
+        });
+        let start = tokio::time::Instant::now();
+
+        let err = dispatch(
+            "url",
+            Some(&json!({"window": "nope"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("no window yet");
+
+        assert_eq!(start.elapsed(), Duration::ZERO);
+        assert_eq!(err.code, -32602);
+        let data = err.data.expect("the WINDOW_NOT_FOUND envelope");
+        assert_eq!(data["error"], json!("WINDOW_NOT_FOUND"));
+        assert_eq!(data["available_windows"], json!([]));
+        appear.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_diff_without_webview() {
         let engine = EvalEngine::new();
         let params = json!({"reference": {"elements": []}});
@@ -1958,7 +2197,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_console_get_logs_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -1974,7 +2213,7 @@ mod tests {
         assert!(err.message.contains("No webview"));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_console_clear_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2004,7 +2243,7 @@ mod tests {
         assert_eq!(script, "window.__PILOT__.clearLogs({})");
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_network_get_requests_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2020,7 +2259,7 @@ mod tests {
         assert!(err.message.contains("No webview"));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_network_clear_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2075,7 +2314,7 @@ mod tests {
         assert!(script.contains("\"ref\":\"el-2\""));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_watch_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2099,7 +2338,7 @@ mod tests {
         assert!(script.contains("\"timeout\":5000"));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_drag_routes_to_eval() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2114,7 +2353,7 @@ mod tests {
         assert_ne!(err.code, -32601);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_drop_routes_to_eval() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2143,7 +2382,7 @@ mod tests {
         assert!(script.starts_with("window.__PILOT__.drop("));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_storage_get_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2159,7 +2398,7 @@ mod tests {
         assert!(err.message.contains("No webview"));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_storage_set_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2175,7 +2414,7 @@ mod tests {
         assert!(err.message.contains("No webview"));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_storage_list_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2191,7 +2430,7 @@ mod tests {
         assert!(err.message.contains("No webview"));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_storage_clear_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2257,7 +2496,7 @@ mod tests {
         assert!(script.contains("\"selector\":\"#login-form\""));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_forms_dump_without_webview() {
         let engine = EvalEngine::new();
         let result = dispatch(
@@ -2380,7 +2619,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_dispatch_screenshot_routes_to_bridge_regardless_of_params() {
         // The bare `screenshot` JSON-RPC method always goes to the bridge
         // (html-to-image, base64) — even if a caller mistakenly includes an
