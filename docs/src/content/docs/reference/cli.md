@@ -1402,7 +1402,7 @@ tauri-pilot storage <subcommand> [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--session` | Use `sessionStorage` instead of `localStorage` |
+| `--session` | Use `sessionStorage` instead of `localStorage`. Accepted before or after the subcommand |
 
 **Examples:**
 
@@ -1438,8 +1438,10 @@ $ tauri-pilot storage clear
 ✓ cleared
 
 # Use sessionStorage instead
+# (--session works before or after the subcommand)
+$ tauri-pilot storage list --session
+$ tauri-pilot storage get "csrf_token" --session
 $ tauri-pilot storage --session list
-$ tauri-pilot storage --session get "csrf_token"
 
 # JSON output
 $ tauri-pilot storage list --json

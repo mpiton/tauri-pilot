@@ -214,6 +214,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   password. A
   `diff --ref` file saved by an older version has no flag either, so a
   password input removed since then prints in clear; re-save it. [#279]
+- `storage` accepts `--session` after the subcommand, as in `storage list
+  --session` or `storage get <key> --session`, like `--json` and `--window`.
+  Clap rejected it there with `unexpected argument '--session' found`; only
+  `storage --session <command>` worked, and still does. [#283]
 
 ### Security
 
@@ -1413,3 +1417,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#281]: https://github.com/mpiton/tauri-pilot/issues/281
 [#282]: https://github.com/mpiton/tauri-pilot/issues/282
 [#279]: https://github.com/mpiton/tauri-pilot/issues/279
+[#283]: https://github.com/mpiton/tauri-pilot/issues/283
