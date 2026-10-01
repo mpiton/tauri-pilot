@@ -343,7 +343,7 @@ tauri-pilot assert <subcommand> [args...]
 |------------|-----------|-------------|
 | `text` | `<target> <expected>` | Assert exact text content match |
 | `visible` | `<target>` | Assert element is visible |
-| `hidden` | `<target>` | Assert element is hidden |
+| `hidden` | `<target>` | Assert element is hidden; a selector that matches nothing passes |
 | `value` | `<target> <expected>` | Assert input/textarea/select value |
 | `count` | `<selector> <expected>` | Assert number of elements matching CSS selector |
 | `checked` | `<target>` | Assert checkbox/radio is checked |
@@ -362,6 +362,11 @@ $ tauri-pilot assert text @e1 "Dashboard"
 
 # Element visibility
 $ tauri-pilot assert visible @e3
+✓ ok
+
+# A removed element counts as hidden: a selector that matches nothing passes.
+# An unknown ref (@e5) still fails, since it usually means a stale snapshot.
+$ tauri-pilot assert hidden '#modal'
 ✓ ok
 
 # Check input value
@@ -1635,6 +1640,8 @@ other keys depend on the action:
 | `assert-text`, `assert-value` | `target`, `expected` | |
 | `assert-url` | `expected` | |
 | `storage-get` | `key` | |
+
+`assert-hidden` passes when a selector matches nothing, like `assert hidden`.
 
 `run` checks every step against this table before it connects. An unknown
 action, a missing required key, or a key the action does not read fails the

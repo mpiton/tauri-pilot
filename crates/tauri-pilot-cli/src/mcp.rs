@@ -21,8 +21,9 @@ use rmcp::{
 use serde_json::{Map, Value, json};
 
 use crate::{
-    build_scroll_params, build_wait_params, client::Client, export_replay_file, protocol::RpcError,
-    resolve_socket, run_drop_command, run_replay_command, scenario, target_params, with_window,
+    build_scroll_params, build_wait_params, client::Client, export_replay_file,
+    hidden_target_params, protocol::RpcError, resolve_socket, run_drop_command, run_replay_command,
+    scenario, target_params, with_window,
 };
 
 #[derive(Debug, Clone)]
@@ -623,10 +624,13 @@ impl PilotMcpServer {
     ) -> Result<CallToolResult, McpError> {
         let target = required_string(&args, "target")?;
         let field = method;
-        let actual = match self
-            .call_app(method, Some(target_params(&target)), window)
-            .await
-        {
+        // A missing element counts as hidden (#281), not as an RPC error.
+        let params = if method == "visible" && !expected {
+            hidden_target_params(&target)
+        } else {
+            target_params(&target)
+        };
+        let actual = match self.call_app(method, Some(params), window).await {
             Ok(result) => match result.get(field).and_then(Value::as_bool) {
                 Some(value) => value,
                 None => return Ok(tool_error_msg(format!("missing boolean field '{field}'"))),
@@ -1166,7 +1170,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "assert_hidden",
-            description: "Assert that an element target is hidden.",
+            description: "Assert that an element target is hidden. A CSS selector that matches nothing passes; an unknown ref fails.",
             schema: target_schema,
             read_only: true,
             destructive: false,
@@ -2757,6 +2761,61 @@ path = "/tmp/out.png"
 
         server.await.expect("mock server task");
         let _ = std::fs::remove_file(&socket);
+    }
+
+    /// Calls `tool` on `#gone` against a mock and returns the `visible` params.
+    #[cfg(unix)]
+    async fn visible_params_for_assert(tool: &'static str) -> (CallToolResult, Value) {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-{tool}-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "visible");
+            let params = request.params.expect("visible params present");
+            let response = Response::success(request.id, json!({"visible": false}));
+            let mut bytes = serde_json::to_vec(&response).expect("serialize response");
+            bytes.push(b'\n');
+            writer.write_all(&bytes).await.expect("write response");
+            params
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert("target".to_owned(), json!("#gone"));
+        let result = pilot
+            .call_tool_by_name(tool, args)
+            .await
+            .expect("tool call succeeds");
+        let params = server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+        (result, params)
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn assert_hidden_sends_missing_ok() {
+        // #281: a selector that matches nothing must count as hidden.
+        let (result, params) = visible_params_for_assert("assert_hidden").await;
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(params["selector"], json!("#gone"));
+        assert_eq!(params["missingOk"], json!(true));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn assert_visible_does_not_send_missing_ok() {
+        let (_, params) = visible_params_for_assert("assert_visible").await;
+        assert_eq!(params["selector"], json!("#gone"));
+        assert!(params.get("missingOk").is_none(), "params={params}");
     }
 
     #[test]

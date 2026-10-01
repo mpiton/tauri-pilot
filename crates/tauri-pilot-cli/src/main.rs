@@ -785,7 +785,10 @@ async fn run_assert_command(
         AssertKind::Hidden { target } => {
             let visible = require_bool_field(
                 &client
-                    .call("visible", with_window(Some(target_params(&target)), window))
+                    .call(
+                        "visible",
+                        with_window(Some(hidden_target_params(&target)), window),
+                    )
                     .await?,
                 "visible",
             )?;
@@ -1044,6 +1047,17 @@ pub(crate) fn target_params(raw: &str) -> serde_json::Value {
         Target::Selector(s) => json!({"selector": s}),
         Target::Coords(x, y) => json!({"x": x, "y": y}),
     }
+}
+
+/// Build `visible` params for a hidden assertion.
+///
+/// Adds `missingOk` so the bridge answers `{visible: false}` when a selector
+/// matches nothing: a removed element counts as hidden (#281). The bridge
+/// still errors on an unknown ref, which usually means a stale snapshot.
+pub(crate) fn hidden_target_params(raw: &str) -> serde_json::Value {
+    let mut params = target_params(raw);
+    params["missingOk"] = json!(true);
+    params
 }
 
 /// Build params for the `scroll` RPC call.

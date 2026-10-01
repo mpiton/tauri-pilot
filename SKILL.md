@@ -120,7 +120,7 @@ effect afterwards.
 |---------|---------|
 | `assert text <target> <expected>` | `assert text @e1 "Dashboard"` |
 | `assert visible <target>` | `assert visible @e3` |
-| `assert hidden <target>` | `assert hidden @e3` |
+| `assert hidden <target>` | `assert hidden @e3` (a selector matching nothing passes) |
 | `assert value <target> <expected>` | `assert value @e2 "workspace"` |
 | `assert count <selector> <n>` | `assert count ".item" 5` |
 | `assert checked <target>` | `assert checked @e8` |

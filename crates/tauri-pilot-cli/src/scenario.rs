@@ -7,7 +7,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client::Client;
-use crate::{build_scroll_params, build_wait_params, target_params, with_window};
+use crate::{
+    build_scroll_params, build_wait_params, hidden_target_params, target_params, with_window,
+};
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
 
@@ -573,7 +575,10 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
         "assert-hidden" => {
             let t = require_target(step)?;
             let result = client
-                .call("visible", with_window(Some(target_params(t)), window))
+                .call(
+                    "visible",
+                    with_window(Some(hidden_target_params(t)), window),
+                )
                 .await?;
             let visible = result
                 .get("visible")
