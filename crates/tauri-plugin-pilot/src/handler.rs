@@ -546,13 +546,17 @@ async fn handle_press(
         data: None,
     })?;
 
+    // With no window to focus, the key would land in whatever app has focus.
+    // Resolved before the lock: without a label this can wait up to
+    // FIRST_WINDOW_BUDGET for the first window (#273), and holding the lock
+    // meanwhile would stall a concurrent `--window` press for that long.
+    let target = target(webviews, window).await?;
+
     // Hold this lock across the whole focus → confirm → inject sequence so
     // two concurrent `press` calls cannot interleave their focus steps (call
     // A focuses window X, call B focuses window Y, then both keys land on Y).
     let _order_guard = PRESS_ORDER_LOCK.lock().await;
 
-    // With no window to focus, the key would land in whatever app has focus.
-    let target = target(webviews, window).await?;
     if let Err(e) = target.focus() {
         if let Some(label) = window {
             // The caller explicitly targeted a window; silently
@@ -1544,6 +1548,54 @@ mod tests {
     }
 
     #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_waiting_for_a_window_does_not_block_a_labeled_press() {
+        // An unlabeled press waits up to FIRST_WINDOW_BUDGET for the first
+        // window (#273). It must not hold the press ordering lock meanwhile,
+        // or a `--window` press queues behind it for the whole wait.
+        let webviews = FakeWebviews::default();
+        let waiting = webviews.clone();
+        let unlabeled = tokio::spawn(async move {
+            dispatch(
+                "press",
+                Some(&json!({"key": "Shift"})),
+                &EvalEngine::new(),
+                &waiting,
+                &Recorder::new(),
+            )
+            .await
+        });
+        // Let the unlabeled press start its wait.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let start = tokio::time::Instant::now();
+
+        let err = dispatch(
+            "press",
+            Some(&json!({"key": "Shift", "window": "settings"})),
+            &EvalEngine::new(),
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("no window labeled settings");
+
+        // Not `ZERO`: PRESS_ORDER_LOCK is process-wide, so a press test on
+        // another thread can hold it for a moment while this paused clock
+        // auto-advances. Holding it across the wait costs the full budget.
+        assert!(
+            start.elapsed() < FIRST_WINDOW_BUDGET / 2,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(err.code, -32602);
+        let err = unlabeled
+            .await
+            .expect("press task")
+            .expect_err("no window ever appears");
+        assert_eq!(err.code, -32603);
+    }
+
+    #[cfg(feature = "press")]
     #[tokio::test]
     async fn test_dispatch_press_with_missing_key_returns_invalid_params() {
         let engine = EvalEngine::new();
@@ -1791,6 +1843,37 @@ mod tests {
 
         assert_eq!(result.expect("a window"), json!("https://app.test/"));
         assert_eq!(start.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_unknown_window_fails_at_once_during_startup() {
+        // A `--window` label is never waited for (#273), even while the app
+        // has no window yet and one with that label appears later.
+        let engine = EvalEngine::new();
+        let webviews = FakeWebviews::default();
+        let later = webviews.clone();
+        let appear = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1_400)).await;
+            later.set_url("nope", Some("https://app.test/"));
+        });
+        let start = tokio::time::Instant::now();
+
+        let err = dispatch(
+            "url",
+            Some(&json!({"window": "nope"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("no window yet");
+
+        assert_eq!(start.elapsed(), Duration::ZERO);
+        assert_eq!(err.code, -32602);
+        let data = err.data.expect("the WINDOW_NOT_FOUND envelope");
+        assert_eq!(data["error"], json!("WINDOW_NOT_FOUND"));
+        assert_eq!(data["available_windows"], json!([]));
+        appear.abort();
     }
 
     #[tokio::test(start_paused = true)]

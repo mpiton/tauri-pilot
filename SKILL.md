@@ -61,7 +61,7 @@ Three target formats, auto-detected:
 
 | Command | Description |
 |---------|-------------|
-| `ping` | Check connectivity. Succeeds before the app's first window exists: a command without `--window` waits up to 3 s for it, then fails with `error.data.error = "NO_WEBVIEW"` (retry it) |
+| `ping` | Check connectivity. `ping` and `windows` succeed before the app's first window exists. A command that needs a window, sent without `--window`, waits up to 3 s for the first one, then fails with `error.data.error = "NO_WEBVIEW"` (retry it) |
 | `windows` | List all open windows (label, URL, title; title omitted when the window has none, e.g. Android/iOS) |
 | `state` | Get app state (URL, title, viewport, scroll) |
 | `url` | Get current URL |

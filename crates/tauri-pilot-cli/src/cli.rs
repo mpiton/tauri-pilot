@@ -45,6 +45,9 @@ pub(crate) enum Command {
     /// List all open windows
     Windows,
     /// Check connectivity with a running Tauri app.
+    ///
+    /// Succeeds before the app's first window exists; window commands then
+    /// wait up to 3 s for it.
     Ping,
     /// Get app state (url, title, ready).
     State,

@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming the decode failure. Clients that read
   `structuredContent.result` must read `content[0].data` instead and prepend
   `data:image/png;base64,` if they need the data URL. [#280]
+- A command without `--window` that finds no window reports
+  `error.data.error = "NO_WEBVIEW"`. MCP tool errors now carry
+  `error: "NO_WEBVIEW"` where they carried the message,
+  `"No webview available"`, and the CLI prints the `{"error": "NO_WEBVIEW"}`
+  data object under the message on stderr. Clients that matched
+  `error == "No webview available"` must match `error == "NO_WEBVIEW"` (or
+  read `message`, which is unchanged). [#273]
 
 ### Fixed
 
@@ -149,8 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   windows of `tauri.conf.json`, so a script that polled `ping` until it
   succeeded then failed its first command. When no window appears in time,
   the error keeps its message and JSON-RPC code (-32603) and now carries
-  `error.data.error = "NO_WEBVIEW"`, so a client can retry it without
-  matching the text. A successful `ping` still does not mean a window is
+  `error.data.error = "NO_WEBVIEW"` (see Changed for what MCP and CLI
+  clients now read), so a client can retry it without matching the text. A successful `ping` still does not mean a window is
   ready. [#273]
 
 ### Security
