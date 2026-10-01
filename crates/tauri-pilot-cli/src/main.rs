@@ -868,6 +868,12 @@ async fn run_assert_command(
                 return Ok(assert_fail("element is not checked"));
             }
         }
+        AssertKind::Unchecked { target } => {
+            let params = with_window(Some(target_params(&target)), window);
+            if require_bool_field(&client.call("checked", params).await?, "checked")? {
+                assert_fail("element is checked");
+            }
+        }
         AssertKind::Contains { target, expected } => {
             let result = client
                 .call("text", with_window(Some(target_params(&target)), window))

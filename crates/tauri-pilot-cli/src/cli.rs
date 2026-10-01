@@ -307,6 +307,8 @@ pub(crate) enum AssertKind {
     Count { selector: String, expected: u64 },
     /// Assert checkbox is checked
     Checked { target: String },
+    /// Assert checkbox or radio is not checked
+    Unchecked { target: String },
     /// Assert text contains substring
     Contains { target: String, expected: String },
     /// Assert current URL contains string
@@ -616,6 +618,23 @@ mod tests {
             assert_eq!(expected, 5);
         } else {
             panic!("Expected Assert Count command");
+        }
+    }
+
+    #[test]
+    fn test_parse_assert_unchecked() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "--socket",
+            "/tmp/test.sock",
+            "assert",
+            "unchecked",
+            "#login-form input[name=remember]",
+        ]);
+        if let Command::Assert(AssertKind::Unchecked { target }) = cli.command {
+            assert_eq!(target, "#login-form input[name=remember]");
+        } else {
+            panic!("Expected Assert Unchecked command");
         }
     }
 

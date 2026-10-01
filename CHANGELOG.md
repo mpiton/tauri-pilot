@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method, the MCP `storage_delete` tool and the TOML `storage-delete` step
   (`session = true` for sessionStorage). A response without a boolean
   `deleted` fails the CLI command (exit 1), the MCP tool and the step. [#284]
+- `assert unchecked <target>` passes when a checkbox or radio is not checked
+  and fails with `element is checked` (exit 1) when it is. MCP gets the
+  matching `pilot.assert_unchecked` tool. [#286]
 
 ### Changed
 
@@ -1429,3 +1432,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#279]: https://github.com/mpiton/tauri-pilot/issues/279
 [#283]: https://github.com/mpiton/tauri-pilot/issues/283
 [#284]: https://github.com/mpiton/tauri-pilot/issues/284
+[#286]: https://github.com/mpiton/tauri-pilot/issues/286

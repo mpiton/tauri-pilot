@@ -362,6 +362,7 @@ tauri-pilot assert <subcommand> [args...]
 | `value` | `<target> <expected>` | Assert input/textarea/select value |
 | `count` | `<selector> <expected>` | Assert number of elements matching CSS selector |
 | `checked` | `<target>` | Assert checkbox/radio is checked |
+| `unchecked` | `<target>` | Assert checkbox/radio is not checked |
 | `contains` | `<target> <expected>` | Assert text contains substring |
 | `url` | `<expected>` | Assert current URL contains substring |
 
@@ -395,6 +396,9 @@ $ tauri-pilot assert count ".list-item" 5
 # Checkbox state
 $ tauri-pilot assert checked @e4
 FAIL: element is not checked
+
+$ tauri-pilot assert unchecked @e4
+✓ ok
 
 # Partial text match
 $ tauri-pilot assert contains @e1 "Dash"
