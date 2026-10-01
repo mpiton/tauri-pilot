@@ -39,8 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`mimeType: "image/png"`, base64 `data` without the `data:` prefix) instead
   of a text block plus `structuredContent.result` holding the data URL. MCP
   clients show the image to the model, and the base64 is sent once instead of
-  twice. A result that is not a PNG data URL, or whose base64 does not decode,
-  is a tool error naming what the app returned. Clients that read
+  twice. A result that is not a PNG data URL is a tool error naming what the
+  app returned; a PNG data URL whose base64 does not decode is a tool error
+  naming the decode failure. Clients that read
   `structuredContent.result` must read `content[0].data` instead and prepend
   `data:image/png;base64,` if they need the data URL. [#280]
 
