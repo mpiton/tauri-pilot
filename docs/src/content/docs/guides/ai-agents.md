@@ -134,7 +134,7 @@ A typical Claude Code session using tauri-pilot looks like this:
 
 ```bash
 # Claude Code calls these as shell commands during a task
-tauri-pilot ping                          # verify the app is running
+tauri-pilot ping                          # verify the app is running (not that a window is ready)
 tauri-pilot snapshot -i                   # discover what's on screen
 tauri-pilot fill @e2 "search query"       # interact
 tauri-pilot click @e3                     # submit
@@ -181,7 +181,8 @@ agent sees the picture; its errors keep the usual `error` fields. Without
 as too large an image on long pages: pass a `selector` there.
 
 A tool error the app raised keeps its fields: `error` holds the domain code
-when the app sent one (e.g. `WINDOW_NOT_FOUND`, else the message), next to
+when the app sent one (e.g. `WINDOW_NOT_FOUND`, or `NO_WEBVIEW` when the app
+has no window yet, else the message), next to
 `message`, the JSON-RPC `rpc_code` and any detail such as
 `available_windows`. If the app's detail holds a different, non-null
 `message` or `rpc_code`, or an `error` that is not a string, that value moves

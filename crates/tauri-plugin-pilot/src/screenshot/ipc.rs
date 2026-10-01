@@ -35,6 +35,9 @@ pub(crate) mod codes {
     )]
     pub(crate) const CAPTURE_FAILED: &str = "CAPTURE_FAILED";
     pub(crate) const UNSUPPORTED_PLATFORM: &str = "UNSUPPORTED_PLATFORM";
+    /// The app had no webview window yet when the request gave up waiting
+    /// for its first one (#273). Transient at startup, so worth a retry.
+    pub(crate) const NO_WEBVIEW: &str = "NO_WEBVIEW";
 }
 
 /// Error for a host without native capture: every OS but macOS today.

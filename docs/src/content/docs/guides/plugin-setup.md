@@ -117,6 +117,8 @@ tauri-pilot ping
 
 `ping` reports the plugin version compiled into your app alongside the CLI version. When they match, you're ready to start using the snapshot/action workflow.
 
+A successful `ping` only means the socket answers. Right after launch it can answer about a second before the app's first window exists. Commands without `--window` wait up to 3 s for that window, then fail with `error.data.error = "NO_WEBVIEW"`, which a script can retry.
+
 ## 7. Keep the plugin and CLI in sync
 
 The plugin is a Rust dependency compiled into your app. The CLI is a separate binary. They're versioned independently, so they drift apart if you update one and not the other. `ping` surfaces a drift:

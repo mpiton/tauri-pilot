@@ -36,6 +36,15 @@ TAURI_PILOT_WINDOW=settings tauri-pilot snapshot
 
 If `--window` is not specified, the CLI targets the `main` window and falls back to the first window by label. If the specified window label does not exist, the command exits with an error that lists the labels the app does have, so a typo does not cost a `windows` call.
 
+The two failures carry different codes in `error.data.error`:
+
+| Code | JSON-RPC code | When | Retry? |
+|------|---------------|------|--------|
+| `WINDOW_NOT_FOUND` | `-32602` | `--window` names no window; `available_windows` lists the real labels | No, fix the label |
+| `NO_WEBVIEW` | `-32603` | No `--window`, and the app still had no window after waiting 3 s for its first one | Yes, the app may still be starting |
+
+A command never waits for a window named by `--window`: an unknown label fails at once.
+
 ## Target Syntax
 
 Many commands accept a `<target>` argument that identifies a DOM element. Three formats are supported:
@@ -68,6 +77,13 @@ tauri-pilot ping
 $ tauri-pilot ping
 ✓ ok
 ```
+
+A successful `ping` means the socket answers, not that a window is ready. The
+plugin starts listening during setup, before Tauri creates the app's first
+window, so for about a second at startup `ping` and `windows` succeed while no
+window exists yet. A command without `--window` sent in that gap waits up to
+3 s for the first window, then fails with `error.data.error = "NO_WEBVIEW"`
+(see [Window Targeting](#window-targeting)).
 
 ---
 

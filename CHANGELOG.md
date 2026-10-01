@@ -143,6 +143,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error now names that page, and a redirect onto an origin whose bridge says
   hello reports ok. The old message remains when the window reached the
   destination and no bridge answers there. [#278]
+- A command without `--window` sent before the app's first window exists
+  waits up to 3 seconds for it instead of failing at once with `No webview
+  available`. The socket answers about a second before Tauri creates the
+  windows of `tauri.conf.json`, so a script that polled `ping` until it
+  succeeded then failed its first command. When no window appears in time,
+  the error keeps its message and JSON-RPC code (-32603) and now carries
+  `error.data.error = "NO_WEBVIEW"`, so a client can retry it without
+  matching the text. A successful `ping` still does not mean a window is
+  ready. [#273]
 
 ### Security
 
@@ -1337,3 +1346,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#275]: https://github.com/mpiton/tauri-pilot/issues/275
 [#278]: https://github.com/mpiton/tauri-pilot/issues/278
 [#280]: https://github.com/mpiton/tauri-pilot/issues/280
+[#273]: https://github.com/mpiton/tauri-pilot/issues/273

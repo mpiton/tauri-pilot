@@ -30,7 +30,7 @@ Two operating rules apply at all times:
 ## Workflow
 
 ```text
-1. ping          — verify connectivity
+1. ping          — verify connectivity (a window may not exist yet; see below)
 2. snapshot -i   — get interactive elements with refs
 3. read refs     — inspect elements (text, value, attrs)
 4. act on refs   — click, fill, type, select, check
@@ -61,7 +61,7 @@ Three target formats, auto-detected:
 
 | Command | Description |
 |---------|-------------|
-| `ping` | Check connectivity |
+| `ping` | Check connectivity. Succeeds before the app's first window exists: a command without `--window` waits up to 3 s for it, then fails with `error.data.error = "NO_WEBVIEW"` (retry it) |
 | `windows` | List all open windows (label, URL, title; title omitted when the window has none, e.g. Android/iOS) |
 | `state` | Get app state (URL, title, viewport, scroll) |
 | `url` | Get current URL |
