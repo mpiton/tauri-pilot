@@ -152,16 +152,21 @@ async fn main() -> Result<()> {
     print_result(output_kind, &result, args.json)
 }
 
-/// Prints `result`, exiting 1 when `storage get` found no key (#160).
+/// Prints `result`; a missing `storage get` key or failed `replay` exits 1.
 ///
-/// The status is set before printing so a closed stdout pipe keeps it (#213).
+/// Covers #160 (`storage get`) and #275 (`replay`). The status is set before
+/// printing so a closed stdout pipe keeps it (#213).
 fn print_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) -> Result<()> {
-    let missing_key = matches!(kind, OutputKind::StorageGet) && result["found"] == false;
-    if missing_key {
+    let failed = match kind {
+        OutputKind::StorageGet => result["found"] == false,
+        OutputKind::Replay => result["status"] == "failed",
+        _ => false,
+    };
+    if failed {
         output::set_broken_pipe_exit(1);
     }
     format_result(kind, result, emit_json)?;
-    if missing_key {
+    if failed {
         std::process::exit(1);
     }
     Ok(())
@@ -1182,6 +1187,7 @@ pub(crate) async fn run_replay_command(
     let mut prev_ts: u64 = 0;
     let mut passed = 0;
     let mut skipped = 0;
+    let mut steps = Vec::with_capacity(total);
 
     for (i, entry) in entries.iter().enumerate() {
         let action = entry
@@ -1205,6 +1211,7 @@ pub(crate) async fn run_replay_command(
                 "{}",
                 crate::output::format_replay_step(i + 1, total, action, "SKIP")
             );
+            steps.push(json!({"action": action, "status": "skipped"}));
             continue;
         }
 
@@ -1221,18 +1228,16 @@ pub(crate) async fn run_replay_command(
             params.insert("window".to_string(), Value::String(w.to_string()));
         }
 
-        let result = client.call(action, Some(Value::Object(params))).await;
-
-        let status = if result.is_ok() {
+        let outcome = client.call(action, Some(Value::Object(params))).await;
+        if outcome.is_ok() {
             passed += 1;
-            "ok"
-        } else {
-            "FAIL"
-        };
+        }
+        let (label, step) = replay_step_report(action, outcome);
         eprintln!(
             "{}",
-            crate::output::format_replay_step(i + 1, total, action, status)
+            crate::output::format_replay_step(i + 1, total, action, &label)
         );
+        steps.push(step);
     }
 
     let executed = total - skipped;
@@ -1242,8 +1247,29 @@ pub(crate) async fn run_replay_command(
         "total": total,
         "passed": passed,
         "skipped": skipped,
-        "failed": executed - passed
+        "failed": executed - passed,
+        "steps": steps
     }))
+}
+
+/// Builds the terminal label and the `steps` entry for one replayed action.
+///
+/// A failed step is part of the report, not an error of the replay, and its
+/// message is kept whole, as `run` keeps it (#275).
+fn replay_step_report(action: &str, outcome: Result<Value>) -> (String, Value) {
+    match outcome {
+        Ok(_) => (
+            "ok".to_owned(),
+            json!({"action": action, "status": "passed"}),
+        ),
+        Err(err) => {
+            let message = format!("{err:#}");
+            (
+                format!("FAIL: {message}"),
+                json!({"action": action, "status": "failed", "error": message}),
+            )
+        }
+    }
 }
 
 fn read_replay_entries(path: &std::path::Path) -> Result<Vec<serde_json::Value>> {

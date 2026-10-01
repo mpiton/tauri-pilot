@@ -109,6 +109,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with`, still goes through the old text scan. A script that has no
   top-level `await` but uses `return` now fails with `Illegal return
   statement`; drop the `return` and end the script on the value. [#272]
+- `replay` exits 1 when a replayed step fails, and prints the error next to
+  `FAIL` (`[1/6] fill → ✗ FAIL: RPC error (-32603): ... Unknown ref: e5`).
+  It exited 0 and dropped the error, so a broken replay passed in CI. The
+  result, `--json` and MCP `pilot.replay` alike, gains a `steps` array of
+  `{action, status, error}`. Over MCP a finished replay stays a successful
+  tool result with `status` `"failed"`, like `pilot.run`. Scripts that relied
+  on `replay` exiting 0 after failed steps must handle exit status 1. [#275]
 
 ### Security
 
@@ -1300,3 +1307,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#270]: https://github.com/mpiton/tauri-pilot/issues/270
 [#272]: https://github.com/mpiton/tauri-pilot/issues/272
 [#277]: https://github.com/mpiton/tauri-pilot/issues/277
+[#275]: https://github.com/mpiton/tauri-pilot/issues/275

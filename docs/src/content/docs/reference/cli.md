@@ -1498,6 +1498,33 @@ tauri-pilot replay test.json --export sh
 |--------|-------------|
 | `--export` | Export format instead of replaying (supported: `sh`) |
 
+Each step prints `ok`, `SKIP` for an action that is not replayed, or `FAIL`
+with the error that caused it:
+
+```text
+[1/3] fill → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5
+[2/3] click → ✓ ok
+[3/3] assert → ✗ SKIP
+```
+
+`replay` exits 1 when any replayed step fails, 0 otherwise. With `--json` the
+result lists every step:
+
+```json
+{
+  "status": "failed", "total": 3, "passed": 1, "skipped": 1, "failed": 1,
+  "steps": [
+    {"action": "fill", "status": "failed", "error": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5"},
+    {"action": "click", "status": "passed"},
+    {"action": "assert", "status": "skipped"}
+  ]
+}
+```
+
+Over MCP, `pilot.replay` returns the same object. A finished replay including
+failed steps is a successful tool result with `status` `"failed"`; only read,
+parse, and connect failures are tool errors.
+
 #### Output format
 
 Recordings are stored as JSON arrays:

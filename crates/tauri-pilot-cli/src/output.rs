@@ -836,12 +836,15 @@ pub(crate) fn format_record(value: &serde_json::Value) -> String {
 /// Format a single replay step.
 ///
 /// Returns a string like "[3/10] click @e3 → ok" with color based on result.
+/// `result` can carry an error from the app (`FAIL: Unknown ref: e5`), so,
+/// like `action`, it is stripped of escape sequences.
 pub(crate) fn format_replay_step(step: usize, total: usize, action: &str, result: &str) -> String {
     let action_safe = strip_ansi(action);
-    let result_display = if result == "ok" {
-        crate::style::success(result)
+    let result_safe = strip_ansi(result);
+    let result_display = if result_safe == "ok" {
+        crate::style::success(&result_safe)
     } else {
-        crate::style::error(result)
+        crate::style::error(&result_safe)
     };
     format!(
         "{} {} \u{2192} {result_display}",
