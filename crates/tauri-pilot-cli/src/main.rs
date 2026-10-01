@@ -152,14 +152,16 @@ async fn main() -> Result<()> {
     print_result(output_kind, &result, args.json)
 }
 
-/// Prints `result`; a missing `storage get` key or failed `replay` exits 1.
+/// Prints `result`; a missing `storage get` key, failed `replay` or failed
+/// `assert` exits 1.
 ///
-/// Covers #160 (`storage get`) and #275 (`replay`). The status is set before
-/// printing so a closed stdout pipe keeps it (#213).
+/// Covers #160 (`storage get`), #275 (`replay`) and #282 (`assert`). The
+/// status is set before printing so a closed stdout pipe keeps it (#213).
 fn print_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) -> Result<()> {
     let failed = match kind {
         OutputKind::StorageGet => result["found"] == false,
         OutputKind::Replay => result["status"] == "failed",
+        OutputKind::Assert => result["ok"] == false,
         _ => false,
     };
     if failed {
@@ -185,6 +187,7 @@ enum OutputKind {
     Windows,
     Record,
     Replay,
+    Assert,
     Text,
 }
 
@@ -205,6 +208,7 @@ impl From<&Command> for OutputKind {
             Command::Windows => OutputKind::Windows,
             Command::Record { .. } => OutputKind::Record,
             Command::Replay { .. } => OutputKind::Replay,
+            Command::Assert(..) => OutputKind::Assert,
             _ => OutputKind::Text,
         }
     }
@@ -250,7 +254,10 @@ fn format_result(kind: OutputKind, result: &serde_json::Value, emit_json: bool) 
                 outln!("{formatted}");
             }
         }
-        OutputKind::Replay | OutputKind::Text => output::format_text(result),
+        OutputKind::Assert if result["ok"] == false => {
+            output::format_assert_fail(result["message"].as_str().unwrap_or_default());
+        }
+        OutputKind::Assert | OutputKind::Replay | OutputKind::Text => output::format_text(result),
     }
     Ok(())
 }
@@ -750,10 +757,26 @@ fn require_bool_field(val: &serde_json::Value, field: &str) -> Result<bool> {
         .ok_or_else(|| anyhow::anyhow!("missing '{field}' field in server response"))
 }
 
-/// Print assertion failure and exit with code 1.
-fn assert_fail(msg: &str) -> ! {
-    output::format_assert_fail(msg);
-    std::process::exit(1)
+/// Builds the result of a failed assertion.
+///
+/// `print_result` prints it (JSON on stdout with `--json`, a `FAIL:` line on
+/// stderr otherwise) and exits 1 (#282).
+fn assert_fail(message: &str) -> serde_json::Value {
+    json!({"ok": false, "message": message})
+}
+
+/// Builds the result of a failed assertion that compared two values.
+///
+/// Same as [`assert_fail`], plus the `expected` and `actual` values.
+fn assert_mismatch(
+    message: &str,
+    expected: impl Into<serde_json::Value>,
+    actual: impl Into<serde_json::Value>,
+) -> serde_json::Value {
+    let mut failure = assert_fail(message);
+    failure["expected"] = expected.into();
+    failure["actual"] = actual.into();
+    failure
 }
 
 async fn run_assert_command(
@@ -768,7 +791,8 @@ async fn run_assert_command(
                 .await?;
             let actual = require_str(&result)?;
             if actual != expected {
-                assert_fail(&format!("expected text \"{expected}\", got \"{actual}\""));
+                let message = format!("expected text \"{expected}\", got \"{actual}\"");
+                return Ok(assert_mismatch(&message, expected, actual));
             }
         }
         AssertKind::Visible { target } => {
@@ -779,7 +803,7 @@ async fn run_assert_command(
                 "visible",
             )?;
             if !visible {
-                assert_fail("element is not visible");
+                return Ok(assert_fail("element is not visible"));
             }
         }
         AssertKind::Hidden { target } => {
@@ -793,7 +817,7 @@ async fn run_assert_command(
                 "visible",
             )?;
             if visible {
-                assert_fail("element is visible");
+                return Ok(assert_fail("element is visible"));
             }
         }
         AssertKind::Value { target, expected } => {
@@ -802,7 +826,8 @@ async fn run_assert_command(
                 .await?;
             let actual = require_str(&result)?;
             if actual != expected {
-                assert_fail(&format!("expected value \"{expected}\", got \"{actual}\""));
+                let message = format!("expected value \"{expected}\", got \"{actual}\"");
+                return Ok(assert_mismatch(&message, expected, actual));
             }
         }
         AssertKind::Count { selector, expected } => {
@@ -817,7 +842,8 @@ async fn run_assert_command(
                 .and_then(serde_json::Value::as_u64)
                 .ok_or_else(|| anyhow::anyhow!("missing 'count' field in server response"))?;
             if actual != expected {
-                assert_fail(&format!("expected {expected} elements, found {actual}"));
+                let message = format!("expected {expected} elements, found {actual}");
+                return Ok(assert_mismatch(&message, expected, actual));
             }
         }
         AssertKind::Checked { target } => {
@@ -828,7 +854,7 @@ async fn run_assert_command(
                 "checked",
             )?;
             if !checked {
-                assert_fail("element is not checked");
+                return Ok(assert_fail("element is not checked"));
             }
         }
         AssertKind::Contains { target, expected } => {
@@ -837,18 +863,16 @@ async fn run_assert_command(
                 .await?;
             let actual = require_str(&result)?;
             if !actual.contains(&expected) {
-                assert_fail(&format!(
-                    "text does not contain \"{expected}\", got \"{actual}\""
-                ));
+                let message = format!("text does not contain \"{expected}\", got \"{actual}\"");
+                return Ok(assert_mismatch(&message, expected, actual));
             }
         }
         AssertKind::Url { expected } => {
             let result = client.call("url", with_window(None, window)).await?;
             let actual = require_str(&result)?;
             if !actual.contains(&expected) {
-                assert_fail(&format!(
-                    "URL does not contain \"{expected}\", got \"{actual}\""
-                ));
+                let message = format!("URL does not contain \"{expected}\", got \"{actual}\"");
+                return Ok(assert_mismatch(&message, expected, actual));
             }
         }
     }

@@ -397,7 +397,23 @@ $ tauri-pilot assert url "/dashboard"
 | Code | Meaning |
 |------|---------|
 | `0` | Assertion passed |
-| `1` | Assertion failed — error message on stderr |
+| `1` | Assertion failed — `FAIL: <message>` on stderr, or a JSON object on stdout with `--json` |
+
+With `--json`, a failed assertion prints `ok: false`, the message, and the
+compared values for `text`, `value`, `count`, `contains` and `url`:
+
+```bash
+$ tauri-pilot --json assert text @e1 "nope"
+{
+  "ok": false,
+  "message": "expected text \"nope\", got \"Log in\"",
+  "expected": "nope",
+  "actual": "Log in"
+}
+```
+
+For `contains` and `url`, `expected` is the substring that was searched for.
+`visible`, `hidden` and `checked` failures carry `ok` and `message` only.
 
 ---
 

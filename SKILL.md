@@ -127,7 +127,7 @@ effect afterwards.
 | `assert contains <target> <substr>` | `assert contains @e1 "error"` |
 | `assert url <substr>` | `assert url "/dashboard"` |
 
-Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure. Prefer `assert` over manual `text` + compare — saves one round-trip and parsing.
+Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure (with `--json`: `{"ok": false, "message": ...}` on stdout, plus `expected`/`actual` when two values are compared). Prefer `assert` over manual `text` + compare — saves one round-trip and parsing.
 
 ### Navigation & Waiting
 
