@@ -47,6 +47,24 @@ pub fn unique_socket_path(tag: &str) -> PathBuf {
 ///
 /// Panics if the socket cannot be bound.
 pub fn spawn_mock_server(socket: &Path, result: serde_json::Value) -> mpsc::Receiver<()> {
+    spawn_mock_responder(socket, move |_| serde_json::json!({"result": result}))
+}
+
+/// Serves one JSON-RPC request on `socket`, answering with `respond(request)`.
+///
+/// `respond` returns the response body without `jsonrpc` and `id`, so either
+/// `{"result": ...}` or `{"error": ...}`; it may also assert on the request.
+/// The returned receiver gets a message once the reply is flushed; it
+/// disconnects if the server thread panics, including on a failed assertion
+/// inside `respond`.
+///
+/// # Panics
+///
+/// Panics if the socket cannot be bound.
+pub fn spawn_mock_responder(
+    socket: &Path,
+    respond: impl FnOnce(&serde_json::Value) -> serde_json::Value + Send + 'static,
+) -> mpsc::Receiver<()> {
     let _ = std::fs::remove_file(socket);
     let listener = UnixListener::bind(socket).expect("bind mock socket");
     let (done_tx, done_rx) = mpsc::channel();
@@ -57,7 +75,9 @@ pub fn spawn_mock_server(socket: &Path, result: serde_json::Value) -> mpsc::Rece
         let mut line = String::new();
         reader.read_line(&mut line).expect("read line");
         let req: serde_json::Value = serde_json::from_str(line.trim()).expect("parse request");
-        let resp = serde_json::json!({"jsonrpc": "2.0", "id": req["id"], "result": result});
+        let mut resp = respond(&req);
+        resp["jsonrpc"] = "2.0".into();
+        resp["id"] = req["id"].clone();
         let mut bytes = serde_json::to_vec(&resp).expect("serialize");
         bytes.push(b'\n');
         writer.write_all(&bytes).expect("write");

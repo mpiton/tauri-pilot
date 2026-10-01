@@ -790,6 +790,31 @@ fn assert_mismatch(
     failure
 }
 
+/// Asserts that a checkbox or radio target is checked, or not checked.
+///
+/// Backs both `assert checked` (`want_checked = true`) and
+/// `assert unchecked` (`want_checked = false`), so both report a failure
+/// the same way: `{"ok": false, "message": ...}`, exit 1 (#282).
+///
+/// # Errors
+///
+/// Returns an error when the `checked` call fails or its response has no
+/// boolean `checked` field.
+async fn assert_checked_state(
+    client: &mut Client,
+    target: &str,
+    want_checked: bool,
+    window: Option<&str>,
+) -> Result<serde_json::Value> {
+    let params = with_window(Some(target_params(target)), window);
+    let checked = require_bool_field(&client.call("checked", params).await?, "checked")?;
+    Ok(match (want_checked, checked) {
+        (true, false) => assert_fail("element is not checked"),
+        (false, true) => assert_fail("element is checked"),
+        _ => json!({"ok": true}),
+    })
+}
+
 async fn run_assert_command(
     client: &mut Client,
     kind: AssertKind,
@@ -858,15 +883,10 @@ async fn run_assert_command(
             }
         }
         AssertKind::Checked { target } => {
-            let checked = require_bool_field(
-                &client
-                    .call("checked", with_window(Some(target_params(&target)), window))
-                    .await?,
-                "checked",
-            )?;
-            if !checked {
-                return Ok(assert_fail("element is not checked"));
-            }
+            return assert_checked_state(client, &target, true, window).await;
+        }
+        AssertKind::Unchecked { target } => {
+            return assert_checked_state(client, &target, false, window).await;
         }
         AssertKind::Contains { target, expected } => {
             let result = client

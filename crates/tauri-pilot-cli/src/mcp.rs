@@ -383,6 +383,7 @@ impl PilotMcpServer {
             "assert_value" => self.assert_value(args, window).await,
             "assert_count" => self.assert_count(args, window).await,
             "assert_checked" => self.assert_bool("checked", args, window, true).await,
+            "assert_unchecked" => self.assert_bool("checked", args, window, false).await,
             "assert_url" => self.assert_url(args, window).await,
             "record_start" => self.call_app_tool("record.start", None, window).await,
             "record_stop" => self.call_app_tool("record.stop", None, window).await,
@@ -1204,6 +1205,14 @@ fn tool_specs() -> Vec<ToolSpec> {
             name: "assert_text",
             description: "Assert exact text content for an element target.",
             schema: expected_target_schema,
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        ToolSpec {
+            name: "assert_unchecked",
+            description: "Assert that a checkbox or radio target is not checked.",
+            schema: target_schema,
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -2080,6 +2089,7 @@ mod tests {
             "assert_count",
             "assert_hidden",
             "assert_text",
+            "assert_unchecked",
             "assert_url",
             "assert_value",
             "assert_visible",
@@ -3199,6 +3209,56 @@ path = "/tmp/out.png"
 
         server.await.expect("mock server task");
         let _ = std::fs::remove_file(&socket);
+    }
+
+    /// `assert_unchecked` passes on `checked: false` and fails with
+    /// `element is checked` on `checked: true` (#286).
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn assert_unchecked_tool_inverts_the_checked_state() {
+        for (checked, is_error, content) in [
+            (false, false, json!({"result": {"ok": true}})),
+            (true, true, json!({"error": "element is checked"})),
+        ] {
+            let socket = std::env::temp_dir().join(format!(
+                "tauri-pilot-mcp-assert-unchecked-{checked}-{}.sock",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&socket);
+            let listener = UnixListener::bind(&socket).expect("bind mock socket");
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = BufReader::new(reader);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.expect("read request");
+                let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+                assert_eq!(request.method, "checked");
+                assert_eq!(request.params, Some(json!({"selector": "#remember"})));
+                let mut response =
+                    serde_json::to_vec(&Response::success(request.id, json!({"checked": checked})))
+                        .expect("serialize response");
+                response.push(b'\n');
+                writer.write_all(&response).await.expect("write response");
+            });
+
+            let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+            let mut args = Map::new();
+            args.insert("target".to_owned(), json!("#remember"));
+            let result = pilot
+                .call_tool_by_name("assert_unchecked", args)
+                .await
+                .expect("tool call returns");
+            assert_eq!(result.is_error, Some(is_error), "checked = {checked}");
+            assert_eq!(
+                result.structured_content,
+                Some(content),
+                "checked = {checked}"
+            );
+
+            server.await.expect("mock server task");
+            let _ = std::fs::remove_file(&socket);
+        }
     }
 
     /// `error.data` reaches the MCP client as fields, not as JSON printed

@@ -16,8 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method, the MCP `storage_delete` tool and the TOML `storage-delete` step
   (`session = true` for sessionStorage). A response without a boolean
   `deleted` fails the CLI command (exit 1), the MCP tool and the step. [#284]
+- `assert unchecked <target>` passes when a checkbox or radio is not checked
+  and fails with `element is checked` (exit 1) when it is. MCP gets the
+  matching `pilot.assert_unchecked` tool. [#286]
 
 ### Changed
+
+- `assert checked` and `assert unchecked` (and the MCP `assert_checked` and
+  `assert_unchecked` tools) now fail with an error when the target is not a
+  checkbox or radio input. The bridge's `checked` method used to report
+  `false` for any other element, so `assert unchecked` passed on a wrong
+  selector. [#286]
 
 - `tauri` floor raised from 2.11.3 to 2.12.0. `tauri-runtime` 2.12.0 changed
   its monitor and window traits, and `tauri` 2.11.3 accepts it through a caret
@@ -1429,3 +1438,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#279]: https://github.com/mpiton/tauri-pilot/issues/279
 [#283]: https://github.com/mpiton/tauri-pilot/issues/283
 [#284]: https://github.com/mpiton/tauri-pilot/issues/284
+[#286]: https://github.com/mpiton/tauri-pilot/issues/286

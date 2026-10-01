@@ -108,7 +108,7 @@ elements. `type` accepts the same except `<select>` (use `fill` or `select`).
 Both error on anything else. `check` accepts only checkbox and radio inputs:
 it toggles a checkbox and selects a radio (an already-selected radio stays
 selected). For fill and type, ok means the value landed; for check, confirm
-with `assert checked`.
+with `assert checked` or `assert unchecked`.
 
 On contenteditable, fill/type try `insertText` first so Tiptap/ProseMirror
 see the write, then fall back to `textContent`. Read the result with `text`
@@ -130,6 +130,7 @@ effect afterwards.
 | `assert value <target> <expected>` | `assert value @e2 "workspace"` |
 | `assert count <selector> <n>` | `assert count ".item" 5` |
 | `assert checked <target>` | `assert checked @e8` |
+| `assert unchecked <target>` | `assert unchecked @e8` |
 | `assert contains <target> <substr>` | `assert contains @e1 "error"` |
 | `assert url <substr>` | `assert url "/dashboard"` |
 

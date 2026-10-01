@@ -164,7 +164,7 @@ the JavaScript do not need escaping.
 | `title` | Get current page title |
 | `state` | Get URL, title, viewport, scroll |
 | `forms` | Dump all form fields on the page |
-| `assert` | One-step verification (text, visible, hidden, value, count, checked, contains, url) |
+| `assert` | One-step verification (text, visible, hidden, value, count, checked, unchecked, contains, url) |
 | `watch` | Watch for DOM mutations |
 | `storage` | Read/write localStorage and sessionStorage (`--session`) |
 | `logs` | Capture and display console output, uncaught errors, and unhandled rejections |
