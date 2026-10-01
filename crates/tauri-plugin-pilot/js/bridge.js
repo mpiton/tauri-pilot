@@ -1526,38 +1526,91 @@
     return expr();
   }
 
-  // Heuristic top-level `await` detector. Strips comments and single/double
-  // quoted strings, masks property accesses (`obj.await`), then peels
-  // nested `function`/arrow-with-block bodies so an `await` buried in a
-  // nested function does not trigger top-level detection — otherwise a
-  // statement script like `async function f(){ await 1; } f(); 1+1`
-  // would be mis-routed to the async-statement wrapper and lose its
-  // completion value.
+  // Top-level `await` detector (#79). The engine decides first: in a plain
+  // function body `await expr` is a SyntaxError, while in an async function
+  // body it compiles. No check runs the script, and every constructor parses
+  // `src` as a whole body, so a script cannot close a probe early.
   //
-  // Three deliberate non-strips, each documented because the alternative
-  // is worse:
+  //   * sync fails, async compiles: the script has top-level `await`.
+  //   * sync compiles, async fails: `await` is used as an identifier.
+  //   * both compile: sloppy code also reads `await` as an identifier in
+  //     `await (x)`, `await [x]`, `await +x`, `` await `x` `` and before a
+  //     line break, so each `await` is probed on its own (#272).
+  //   * both fail: a real syntax error. The text scan keeps the old routing,
+  //     so a broken script with `await` still gets the auto-wrap hint.
+  function hasTopLevelAwait(src) {
+    var syncOk = compiles(Function, src);
+    var asyncOk = compiles(AsyncFunction, src);
+    if (!syncOk && asyncOk) return true;
+    if (syncOk && !asyncOk) return false;
+    if (syncOk) {
+      var probed = probeEachAwait(src);
+      if (probed !== null) return probed;
+      return /\bawait\b(?=\s*[(\[`+\-!~\w$'"])/.test(maskNestedFunctions(src));
+    }
+    return /\bawait\b/.test(maskNestedFunctions(src));
+  }
+
+  var AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  var AsyncGeneratorFunction = Object.getPrototypeOf(async function* () {}).constructor;
+
+  function compiles(Ctor, body) {
+    try {
+      new Ctor(body);
+      return true;
+    } catch (e) {
+      if (e instanceof SyntaxError) return false;
+      throw e;
+    }
+  }
+
+  // Asks the engine where each `await` token of a script that compiles in
+  // both modes sits. Returns true or false, or null when it cannot tell.
   //
-  //   * Template literals are NOT stripped. Stripping them with a single-pass
-  //     regex cannot balance nested `${...}` braces, and it also drops a real
-  //     `` `${await x}` ``. Leaving them in only causes false positives on a
-  //     literal like `` `await` ``, which is harmless: the script still runs
-  //     wrapped in an async IIFE, only the completion-value contract changes
-  //     (the user must use an explicit `return` to surface a value, which is
-  //     documented in cli.md).
-  //   * Regex literals (`/await/`) are NOT stripped either. A naive
-  //     `\/.../[flags]*` match also swallows division expressions like
-  //     `a / await foo / c`, which would silently hide a real top-level
-  //     `await` and break the auto-wrap fallback. False positives from a
-  //     literal `/await/` regex are again harmless wraps.
-  //   * Methods inside `class` bodies are NOT recognised — the function-body
-  //     strip only matches `function`/arrow blocks. A class with an `await`
-  //     inside an `async` method would be flagged. Niche enough that
-  //     dragging in keyword-aware parsing isn't worth it.
+  //   * Code or text: the token is code when putting `#` in its place breaks
+  //     the parse. In a string, comment, template text or regex literal `#`
+  //     is just a character.
+  //   * Top level or nested: in a strict async generator body, `yield` is
+  //     reserved in every nested function, arrow, method and class body, so
+  //     `(yield await 0)||` in place of the token compiles only at the top
+  //     level of the script. It also compiles inside a nested async
+  //     generator; that `await` is then taken as top-level, like before.
+  //
+  // Returns null when the script has sloppy-only syntax (`with`, legacy
+  // octals, `yield` as a name) that the strict probe rejects, or when it
+  // holds too many `await` tokens to probe one by one.
+  function probeEachAwait(src) {
+    if (!compiles(AsyncGeneratorFunction, '"use strict";\n' + src)) return null;
+    var re = /(^|[^\w$])await(?![\w$])/g;
+    var m;
+    for (var n = 0; (m = re.exec(src)) !== null; n++) {
+      if (n >= 64) return null;
+      var at = m.index + m[1].length;
+      var before = src.slice(0, at);
+      var after = src.slice(at + 5);
+      re.lastIndex = at + 5;
+      if (compiles(AsyncFunction, before + "#" + after)) continue;
+      if (compiles(AsyncGeneratorFunction, '"use strict";\n' + before + "(yield await 0)||" + after)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Strips comments and single/double quoted strings, masks property
+  // accesses (`obj.await`), then removes nested `function`/arrow bodies so
+  // an `await` buried in a nested function is hidden.
+  //
+  // Only a fallback: probeEachAwait decides whenever the script compiles.
+  // This scan runs for a script with a syntax error, or one the strict probe
+  // rejects. Known misses there: template text, regex literals, method
+  // shorthand (`async m() { ... }`) and functions whose parameter list holds
+  // parentheses are left in place, so an `await` inside them still counts.
   //
   // For scripts larger than 100 KB the strip pass is skipped to bound
-  // worst-case scan time; the raw `await` test is used instead.
-  function hasTopLevelAwait(src) {
-    if (src.length > 100000) return /\bawait\b/.test(src);
+  // worst-case scan time; the raw source is returned instead.
+  function maskNestedFunctions(src) {
+    if (src.length > 100000) return src;
     // Strip quoted strings BEFORE comments, otherwise a URL like
     // `"http://example.com"` looks like a `//` line comment and the rest
     // of the line — including any real `await` — gets deleted, producing a
@@ -1570,22 +1623,26 @@
       .replace(/\/\/[^\n]*/g, "")
       .replace(/\.\s*await\b/g, ".__prop");
     // Peel innermost `function`/arrow bodies, both block-bodied
-    // (`() => { ... }`) and concise (`() => expr`). Each iteration matches
-    // bodies with no nested braces, so doubly-nested functions take two
-    // passes. Cap the iteration count so a pathological input cannot loop
-    // forever. Concise arrow bodies stop at any of `;,){}\n` to avoid
-    // chewing through the rest of the script.
-    for (var k = 0; k < 6; k++) {
+    // (`() => { ... }`) and concise (`() => expr`), then drop the braces of
+    // the innermost remaining blocks (`if`, `try`, object literals) but keep
+    // their content, so an `await` in a top-level block stays visible and
+    // the function around a block can peel on the next pass (#272). Each
+    // pass handles one nesting level; the cap bounds pathological input.
+    // Concise arrow bodies stop at any of `;,){}\n` to avoid chewing
+    // through the rest of the script, and must not start with `{` or a
+    // space, or they would peel only the `() =>` of a block body.
+    for (var k = 0; k < 64; k++) {
       var prev = stripped;
       stripped = stripped
         .replace(/\bfunction\s*\*?\s*[\w$]*\s*\([^()]*\)\s*\{[^{}]*\}/g, "fn()")
         .replace(/\([^()]*\)\s*=>\s*\{[^{}]*\}/g, "fn()")
         .replace(/\b[\w$]+\s*=>\s*\{[^{}]*\}/g, "fn()")
-        .replace(/\([^()]*\)\s*=>\s*[^{};,)\n]+/g, "fn()")
-        .replace(/\b[\w$]+\s*=>\s*[^{};,)\n]+/g, "fn()");
+        .replace(/\([^()]*\)\s*=>\s*[^{};,)\s][^{};,)\n]*/g, "fn()")
+        .replace(/\b[\w$]+\s*=>\s*[^{};,)\s][^{};,)\n]*/g, "fn()")
+        .replace(/\{([^{}]*)\}/g, " $1 ");
       if (stripped === prev) break;
     }
-    return /\bawait\b/.test(stripped);
+    return stripped;
   }
 
   function waitFor(options) {

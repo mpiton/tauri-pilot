@@ -83,6 +83,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an answer that lands before any hello is recorded still return on the
   page's answer. [#270]
 
+- `eval` returns the result of a script that ends on an async IIFE whose body
+  holds a nested block (`if`, `try`, an object literal), such as
+  `const x = 1; (async () => { if (x) { await 0; } return "done"; })()`. The
+  script used to be taken for top-level `await`, so it printed nothing, did
+  not wait for the promise, and exited 0 even when the IIFE threw; the error
+  only showed up in `logs` as an unhandled rejection. The bridge now asks the
+  JavaScript engine whether the script compiles outside an async function.
+  When it compiles both ways (`await (expr)`, `await [expr]`, `await +x`,
+  `` await `x` ``, `await` before a line break), the engine is asked about each
+  `await` in turn. So `await` in the text of a string, a template literal or
+  a regex literal, or inside a nested function, arrow or method, no longer
+  forces the wrapper, and those scripts return their last value instead of
+  `null`. A script with a syntax error, or with sloppy-only syntax such as
+  `with`, still goes through the old text scan. A script that has no
+  top-level `await` but uses `return` now fails with `Illegal return
+  statement`; drop the `return` and end the script on the value. [#272]
+
 ### Security
 
 - Upgrade undici in the docs lockfile to 8.11.2 (from 8.10.0), clearing 11
@@ -1271,3 +1288,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#260]: https://github.com/mpiton/tauri-pilot/issues/260
 [#269]: https://github.com/mpiton/tauri-pilot/issues/269
 [#270]: https://github.com/mpiton/tauri-pilot/issues/270
+[#272]: https://github.com/mpiton/tauri-pilot/issues/272

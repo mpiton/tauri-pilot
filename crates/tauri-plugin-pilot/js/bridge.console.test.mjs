@@ -551,3 +551,109 @@ test("a log after an await in a pilot eval under V8 names the eval", async () =>
   const [entry] = pilot.consoleLogs({ level: "log" });
   assert.equal(entry.source, "tauri-pilot-eval");
 });
+
+// An `await` inside a nested async function is not top-level (#272). The
+// detector used to miss function bodies holding any `{`, so these scripts
+// went to the async-statement wrapper, which has no completion value: the
+// result was `null` and a rejection from the IIFE went unhandled.
+test("eval returns the result of an async IIFE whose body has a nested block", async () => {
+  const pilot = loadBridge();
+  const cases = [
+    ['const x = 1; (async () => { if (x) { await 0; } return "done"; })()', "done"],
+    ['const x = 1; (async () => { try { await 0; } catch (e) {} return "done"; })()', "done"],
+    ["const x = 1; (async () => { const o = { a: 1 }; await 0; return o.a; })()", 1],
+    // `await (expr)` compiles in both modes, so the text scan decides.
+    ['const x = 1; (async () => { if (x) { await (Promise.resolve(2)); } return "done"; })()', "done"],
+    // Methods and parameter defaults holding parentheses kept `await (`
+    // visible to the old text scan.
+    ["const o = { async load() { if (1) { return (await (Promise.resolve({ v: 9 }))).v; } } }; o.load()", 9],
+    ["class C { async m() { return await (Promise.resolve(3)); } } new C().m()", 3],
+    ["async function load(u = String('/a')) { if (u) { return (await (Promise.resolve({ v: 9 }))).v; } } load()", 9],
+    ["const x = 1; (async (n = Number('1')) => { const r = await (Promise.resolve(n)); return r; })()", 1],
+    // More than six blocks deep: every level takes one pass of the masker.
+    [
+      "const x = 1; (async () => { if (x) { if (x) { if (x) { if (x) { if (x) { if (x) { if (x) { await (0); } } } } } } } return 8; })()",
+      8,
+    ],
+    // Controls that already worked.
+    ['const x = 1; (async () => { await 0; return "done"; })()', "done"],
+  ];
+  for (const [script, expected] of cases) {
+    assert.equal(await pilot.eval({ script }), expected, script);
+  }
+});
+
+test("eval rejects when an async IIFE with a nested block throws", async () => {
+  const pilot = loadBridge();
+  for (const script of [
+    'const x = 1; (async () => { if (x) { await 0; throw new Error("boom"); } })()',
+    "const o = { async f() { await (0); throw new Error('boom'); } }; o.f()",
+    // Control that already worked.
+    '(async () => { if (1) { await 0; throw new Error("boom"); } })()',
+  ]) {
+    await assert.rejects(Promise.resolve().then(() => pilot.eval({ script })), /boom/, script);
+  }
+});
+
+test("eval keeps the completion value when await only appears in a literal or a class method", async () => {
+  // Former false positives of the regex detector: they were wrapped and
+  // returned `null`.
+  const pilot = loadBridge();
+  const cases = [
+    ["const s = `await`; s", "await"],
+    ["const r = /await/; r.source", "await"],
+    ["class C { async m() { await 0; return 1; } } new C().m()", 1],
+    ["const s = `await (x)`; s", "await (x)"],
+    ["const r = /await (x)/; r.source", "await (x)"],
+    ['const s = "await (x)"; s // await (y)', "await (x)"],
+  ];
+  for (const [script, expected] of cases) {
+    assert.equal(await pilot.eval({ script }), expected, script);
+  }
+});
+
+test("eval still wraps top-level await, including the await (expr) form", async () => {
+  const pilot = loadBridge();
+  const cases = [
+    ['await Promise.resolve("hi")', "hi"],
+    ["const v = await Promise.resolve(2); return v * 3", 6],
+    ["const x = 1; if (x) { await 0; } return 7", 7],
+    ["const p = Promise.resolve(5); return await (p)", 5],
+    ["const p = Promise.resolve(4); return await [p][0]", 4],
+    // Sloppy code also reads these as the identifier `await`: ASI before a
+    // line break, a binary operator, a tagged template.
+    ["const data = await\n  Promise.resolve({ v: 9 });\nreturn data.v", 9],
+    ["const n = 2; const v = await +n; return v", 2],
+    ["const v = await `x`; return v", "x"],
+    // `with` is sloppy-only, so the per-await probe gives up and the text
+    // scan decides.
+    ["var o = { k: 1 }; with (o) { k; }\nconst data = await\n  Promise.resolve({ v: 9 });\nreturn data.v", 9],
+  ];
+  for (const [script, expected] of cases) {
+    assert.equal(await pilot.eval({ script }), expected, script);
+  }
+});
+
+test("eval does not let a script close the await probe's wrapper", () => {
+  // Pasted into an arrow body, this script closes it and compiles, so it was
+  // taken for top-level await and returned nothing instead of failing.
+  const pilot = loadBridge();
+  assert.throws(() => pilot.eval({ script: "}); 1; (() => {" }), SyntaxError);
+});
+
+test("eval keeps the auto-wrap hint for a broken script with top-level await", () => {
+  const pilot = loadBridge();
+  assert.throws(() => pilot.eval({ script: "const v = await 1; }" }), /could not be auto-wrapped/);
+});
+
+test("eval gives a plain syntax error when a broken script's await is deeply nested", () => {
+  // The await sits in a function more than six blocks deep: once peeled, it is
+  // not top-level, so the script must not get the auto-wrap hint.
+  const pilot = loadBridge();
+  const script =
+    "(async () => { if (1) { if (1) { if (1) { if (1) { if (1) { if (1) { if (1) { await 0; } } } } } } } })(); }";
+  assert.throws(
+    () => pilot.eval({ script }),
+    (e) => e instanceof SyntaxError && !/could not be auto-wrapped/.test(e.message),
+  );
+});
