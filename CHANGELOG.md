@@ -159,6 +159,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `error.data.error = "NO_WEBVIEW"` (see Changed for what MCP and CLI
   clients now read), so a client can retry it without matching the text. A successful `ping` still does not mean a window is
   ready. [#273]
+- `logs` shows each console argument as it was when it was logged. The
+  bridge kept the live object and serialized it only when `logs` read it, so
+  an object changed after the call showed its later state, and an `Error`,
+  `Map`, `Set` or DOM node came out as `{}`: `console.error("Request
+  failed", err)` lost the error's name and message. An `Error` is now
+  `"Name: message"`, a DOM element `"<tag#id.class>"`, `Map` and `Set`
+  tagged objects (`{"__type":"Map","size":1,"entries":[["k",1]]}`), and
+  `undefined`, `NaN` and `Infinity` their names instead of `null`. Nested
+  values follow the same rules; cycles become `"[Circular]"`, and a copy
+  stops at 8 levels, 100 items per container, 1000 objects per argument and
+  10,000 characters per nested string. `--json` consumers that read a
+  logged `undefined` as `null` must now expect the string `"undefined"`.
+  [#274]
 
 ### Security
 
@@ -1354,3 +1367,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#278]: https://github.com/mpiton/tauri-pilot/issues/278
 [#280]: https://github.com/mpiton/tauri-pilot/issues/280
 [#273]: https://github.com/mpiton/tauri-pilot/issues/273
+[#274]: https://github.com/mpiton/tauri-pilot/issues/274

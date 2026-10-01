@@ -53,16 +53,166 @@
     "combobox",
   ]);
 
+  // Caps for a logged value, so one call cannot hold a huge graph in the
+  // 500-entry buffer: nesting depth, items kept per container, objects copied
+  // per argument in all, and characters kept per string inside a container.
+  const LOG_MAX_DEPTH = 8;
+  const LOG_MAX_ITEMS = 100;
+  const LOG_MAX_OBJECTS = 1000;
+  const LOG_MAX_STRING = 10000;
+
+  // Console arguments are copied when they are logged, not when `logs` reads
+  // them: a live reference shows whatever state the object has by then and
+  // keeps it (and any DOM node it reaches) alive in the buffer (#274).
   function serializeArg(arg) {
-    if (arg === null) return null;
-    if (arg === undefined) return null;
-    if (typeof arg === 'string' || typeof arg === 'number' || typeof arg === 'boolean') return arg;
+    if (typeof arg === 'string') return arg;
     try {
-      JSON.stringify(arg);
-      return arg;
+      return snapshotValue(arg, 0, { ancestors: [], objectsLeft: LOG_MAX_OBJECTS });
     } catch (_) {
-      return String(arg);
+      return '[unprintable]';
     }
+  }
+
+  // 'Map', 'Set' or null. Brand checks through the size getters work across
+  // realms and cannot be faked with Symbol.toStringTag.
+  const _mapSize = Object.getOwnPropertyDescriptor(Map.prototype, 'size').get;
+  const _setSize = Object.getOwnPropertyDescriptor(Set.prototype, 'size').get;
+  function collectionKind(value) {
+    try {
+      _mapSize.call(value);
+      return 'Map';
+    } catch (_) {}
+    try {
+      _setSize.call(value);
+      return 'Set';
+    } catch (_) {}
+    return null;
+  }
+
+  // The node type, or null for anything that is not a DOM node. Calling the
+  // Node.prototype getter is a brand check: it works for a node from an
+  // iframe, which fails `instanceof Node`, and throws for an object that
+  // merely has a `nodeType` field.
+  function domNodeType(value) {
+    try {
+      if (typeof Node !== 'function') return null;
+      const desc = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType');
+      if (!desc || typeof desc.get !== 'function') return null;
+      const type = desc.get.call(value);
+      return typeof type === 'number' ? type : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // `<button#save.primary>` for an element, the node name (`#text`,
+  // `#document`) for any other node.
+  function describeNode(node, type) {
+    if (type !== 1) return String(node.nodeName);
+    let text = '<' + String(node.localName || node.nodeName).toLowerCase();
+    if (node.id) text += '#' + node.id;
+    // SVG elements carry an SVGAnimatedString in className.
+    const cls = typeof node.getAttribute === 'function' ? node.getAttribute('class') : node.className;
+    if (typeof cls === 'string') {
+      cls.split(/\s+/).forEach(c => { if (c) text += '.' + c; });
+    }
+    return text + '>';
+  }
+
+  // JSON-safe copy of `value`. Errors, nodes and other values JSON would turn
+  // into {} or drop become short strings, Map and Set become tagged objects,
+  // and the same rules apply at every level. `state.ancestors` holds the
+  // objects on the current path, so a cycle is cut but a shared reference is
+  // copied at each place it appears.
+  function snapshotValue(value, depth, state) {
+    if (value === null) return null;
+    if (value === undefined) return 'undefined';
+    const type = typeof value;
+    if (type === 'string') {
+      if (value.length <= LOG_MAX_STRING) return value;
+      return value.slice(0, LOG_MAX_STRING) + '... (' + (value.length - LOG_MAX_STRING) + ' more chars)';
+    }
+    if (type === 'boolean') return value;
+    // JSON has no NaN or Infinity and would write null.
+    if (type === 'number') return Number.isFinite(value) ? value : String(value);
+    if (type === 'bigint') return String(value) + 'n';
+    if (type === 'symbol') return String(value);
+    if (type === 'function') return '[Function' + (value.name ? ' ' + value.name : '') + ']';
+    // Same guard as describeReason: an object wearing only the Error tag is
+    // copied as an object.
+    if (isError(value) && (value.name !== undefined || value.message !== undefined)) {
+      return describeReason(value);
+    }
+    const nodeType = domNodeType(value);
+    if (nodeType !== null) return describeNode(value, nodeType);
+    if (state.ancestors.indexOf(value) !== -1) return '[Circular]';
+    const kind = collectionKind(value);
+    if (depth >= LOG_MAX_DEPTH || state.objectsLeft <= 0) {
+      if (kind) return '[' + kind + ']';
+      return Array.isArray(value) ? '[Array]' : '[Object]';
+    }
+    state.objectsLeft--;
+    state.ancestors.push(value);
+    try {
+      return snapshotObject(value, depth + 1, state, kind);
+    } finally {
+      state.ancestors.pop();
+    }
+  }
+
+  function snapshotObject(value, depth, state, kind) {
+    const copy = v => {
+      try {
+        return snapshotValue(v, depth, state);
+      } catch (_) {
+        return '[unreadable]';
+      }
+    };
+    if (kind) {
+      const isMapValue = kind === 'Map';
+      const size = (isMapValue ? _mapSize : _setSize).call(value);
+      const iter = (isMapValue ? Map.prototype.entries : Set.prototype.values).call(value);
+      const items = [];
+      // Stop at the cap rather than walking every entry.
+      for (let step = iter.next(); !step.done && items.length < LOG_MAX_ITEMS; step = iter.next()) {
+        items.push(isMapValue ? [copy(step.value[0]), copy(step.value[1])] : copy(step.value));
+      }
+      const out = isMapValue
+        ? { __type: 'Map', size: size, entries: items }
+        : { __type: 'Set', size: size, values: items };
+      if (size > items.length) out.truncated = size - items.length;
+      return out;
+    }
+    if (Array.isArray(value)) {
+      const len = value.length;
+      const out = [];
+      // A hole is null, as JSON.stringify writes it, so it stays distinct
+      // from a real undefined.
+      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) out.push(i in value ? copy(value[i]) : null);
+      if (len > LOG_MAX_ITEMS) out.push('... ' + (len - LOG_MAX_ITEMS) + ' more items');
+      return out;
+    }
+    // Dates and other objects that define their own JSON form keep it; one
+    // whose toJSON throws is copied key by key instead.
+    if (typeof value.toJSON === 'function') {
+      try {
+        return copy(value.toJSON());
+      } catch (_) {}
+    }
+    const keys = Object.keys(value);
+    const out = {};
+    for (let i = 0; i < keys.length && i < LOG_MAX_ITEMS; i++) {
+      let v;
+      try {
+        v = value[keys[i]];
+      } catch (_) {
+        out[keys[i]] = '[unreadable]';
+        continue;
+      }
+      out[keys[i]] = copy(v);
+    }
+    if (keys.length > LOG_MAX_ITEMS) out['...'] = (keys.length - LOG_MAX_ITEMS) + ' more keys';
+    return out;
   }
 
   function extractSource() {
