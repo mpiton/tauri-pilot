@@ -1,7 +1,7 @@
 //! Regression test for #281: `assert hidden` and the scenario step
 //! `assert-hidden` must ask the bridge's `visible` to treat a selector that
-//! matches nothing as hidden (`missingOk: true`), and `assert visible` must
-//! not.
+//! matches nothing as hidden (`missingOk: true`), and `assert visible`,
+//! `assert-visible` and `assert-exists` must not.
 //!
 //! A mock JSON-RPC unix socket records every request and answers `visible`
 //! with `{"visible": false}`, then the binary is run against it.
@@ -10,6 +10,8 @@
 
 mod common;
 
+// Rust guideline compliant 2026-02-21
+use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::Path;
@@ -24,7 +26,11 @@ use common::{SERVER_DONE_TIMEOUT, unique_socket_path, wait_bounded};
 /// # Panics
 ///
 /// Panics if the socket cannot be bound or the mock server does not finish.
-fn visible_params_sent(tag: &str, cwd: &Path, args: &[&str]) -> (Output, Vec<serde_json::Value>) {
+fn visible_params_sent<I, S>(tag: &str, cwd: &Path, args: I) -> (Output, Vec<serde_json::Value>)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     let socket = unique_socket_path(tag);
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).expect("bind mock socket");
@@ -81,7 +87,7 @@ fn assert_hidden_sends_missing_ok() {
     let (output, params) = visible_params_sent(
         "assert-hidden",
         dir.path(),
-        &["assert", "hidden", "#does-not-exist"],
+        ["assert", "hidden", "#does-not-exist"],
     );
     assert!(
         output.status.success(),
@@ -99,7 +105,7 @@ fn assert_visible_does_not_send_missing_ok() {
     let (_, params) = visible_params_sent(
         "assert-visible",
         dir.path(),
-        &["assert", "visible", "#does-not-exist"],
+        ["assert", "visible", "#does-not-exist"],
     );
     assert_eq!(params.len(), 1, "one visible request, got {params:?}");
     assert!(
@@ -109,27 +115,36 @@ fn assert_visible_does_not_send_missing_ok() {
     );
 }
 
-#[test]
-fn scenario_assert_hidden_sends_missing_ok() {
+/// Writes a one-step scenario running `action` on `#modal` and runs it.
+///
+/// The path goes to the binary as an `OsStr`, so a non-UTF-8 temp dir works.
+///
+/// # Panics
+///
+/// Panics if the temp dir or scenario file cannot be created.
+fn scenario_visible_params_sent(tag: &str, action: &str) -> (Output, Vec<serde_json::Value>) {
     let dir = tempfile::tempdir().expect("tempdir");
     let scenario = dir.path().join("scenario.toml");
     std::fs::write(
         &scenario,
-        r##"
+        format!(
+            r##"
 [scenario]
-name = "hidden"
+name = "{action}"
 [[step]]
-name = "modal gone"
-action = "assert-hidden"
+name = "modal step"
+action = "{action}"
 target = "#modal"
-"##,
+"##
+        ),
     )
     .expect("write scenario");
-    let (output, params) = visible_params_sent(
-        "scenario-hidden",
-        dir.path(),
-        &["run", scenario.to_str().expect("scenario path is UTF-8")],
-    );
+    visible_params_sent(tag, dir.path(), [OsStr::new("run"), scenario.as_os_str()])
+}
+
+#[test]
+fn scenario_assert_hidden_sends_missing_ok() {
+    let (output, params) = scenario_visible_params_sent("scenario-hidden", "assert-hidden");
     assert!(
         output.status.success(),
         "stderr={}",
@@ -138,4 +153,27 @@ target = "#modal"
     assert_eq!(params.len(), 1, "one visible request, got {params:?}");
     assert_eq!(params[0]["selector"], "#modal");
     assert_eq!(params[0]["missingOk"], true, "params={}", params[0]);
+}
+
+#[test]
+fn scenario_assert_exists_does_not_send_missing_ok() {
+    let (_, params) = scenario_visible_params_sent("scenario-exists", "assert-exists");
+    assert_eq!(params.len(), 1, "one visible request, got {params:?}");
+    assert_eq!(params[0]["selector"], "#modal");
+    assert!(
+        params[0].get("missingOk").is_none(),
+        "assert-exists must keep failing on a missing element, params={}",
+        params[0]
+    );
+}
+
+#[test]
+fn scenario_assert_visible_does_not_send_missing_ok() {
+    let (_, params) = scenario_visible_params_sent("scenario-visible", "assert-visible");
+    assert_eq!(params.len(), 1, "one visible request, got {params:?}");
+    assert!(
+        params[0].get("missingOk").is_none(),
+        "assert-visible must keep failing on a missing element, params={}",
+        params[0]
+    );
 }

@@ -24,7 +24,7 @@ const REAL_CONSOLE = {
   info: console.info.bind(console),
 };
 
-function loadBridge({ queryResult, pointResult } = {}) {
+function loadBridge({ queryResult, pointResult, invalidSelector } = {}) {
   // Object.assign would go through the previous bridge's console setter and
   // stack this load on top of it; redefining restores a native console.
   for (const level of Object.keys(REAL_CONSOLE)) {
@@ -43,7 +43,10 @@ function loadBridge({ queryResult, pointResult } = {}) {
     getElementById() {
       return null;
     },
-    querySelector() {
+    querySelector(selector) {
+      if (selector === invalidSelector) {
+        throw new SyntaxError(`'${selector}' is not a valid selector`);
+      }
       return queryResult ?? null;
     },
     querySelectorAll() {
@@ -92,6 +95,15 @@ test("visible with missingOk still throws on an unknown ref (#281)", () => {
   assert.throws(
     () => pilot.visible({ ref: "e5", missingOk: true }),
     /Unknown ref: e5/,
+  );
+});
+
+test("visible with missingOk still throws on an invalid selector (#281)", () => {
+  // A typo'd selector must fail `assert hidden`, not pass it as "missing".
+  const pilot = loadBridge({ invalidSelector: "[" });
+  assert.throws(
+    () => pilot.visible({ selector: "[", missingOk: true }),
+    SyntaxError,
   );
 });
 

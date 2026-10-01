@@ -73,8 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that a modal or toast had been removed needed `assert count <selector> 0`.
   The bridge's `visible` takes a `missingOk` option for this. An unknown ref
   (`@e5`) still fails, since it usually means a stale snapshot. Callers that
-  relied on `assert hidden` failing for a missing element must check presence
-  with `assert count <selector> 1` or the `assert-exists` step. [#281]
+  relied on `assert hidden` failing for a missing element must add a presence
+  check before it: `assert count <selector> N` (exact count) in the CLI or
+  MCP, or an `assert-exists` step in a scenario. [#281]
 
 ### Fixed
 
