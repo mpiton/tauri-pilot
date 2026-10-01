@@ -128,7 +128,7 @@ Use global flags before `mcp` to pin the server to a socket or default window:
 }
 ```
 
-The path is the default on a Linux desktop: replace `1000` with your user ID (`id -u`) and `com.myapp.dev` with your app's identifier. On macOS, where `$XDG_RUNTIME_DIR` is usually unset, use `/tmp/tauri-pilot-com.myapp.dev.sock`.
+The path is the default on a Linux desktop: replace `1000` with your user ID (`id -u`) and `com.myapp.dev` with your app's identifier. On macOS, where `$XDG_RUNTIME_DIR` is usually unset, use `/tmp/tauri-pilot-com.myapp.dev.sock`. On Windows, use the Named Pipe, with each backslash doubled in JSON: `"\\\\.\\pipe\\tauri-pilot-com.myapp.dev"`.
 
 The MCP server exposes tools for the CLI's app-facing commands, including
 `snapshot`, `diff`, `click`, `fill`, `type`, `press`, `select`, `check`, `scroll`,

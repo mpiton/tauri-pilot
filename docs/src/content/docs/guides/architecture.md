@@ -34,6 +34,8 @@ Messages are **newline-delimited JSON-RPC 2.0** — each message ends with `\n`.
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/tauri-pilot-com.myapp.dev.sock"
+# after the /tmp fallback (macOS, or no private $XDG_RUNTIME_DIR):
+echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:/tmp/tauri-pilot-com.myapp.dev.sock
 ```
 
 ## JSON-RPC Message Format

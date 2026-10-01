@@ -203,4 +203,4 @@ window:
 }
 ```
 
-The path is the default on a Linux desktop: replace `1000` with your user ID (`id -u`) and `com.myapp.dev` with your app's identifier. On macOS, where `$XDG_RUNTIME_DIR` is usually unset, use `/tmp/tauri-pilot-com.myapp.dev.sock`.
+The path is the default on a Linux desktop: replace `1000` with your user ID (`id -u`) and `com.myapp.dev` with your app's identifier. On macOS, where `$XDG_RUNTIME_DIR` is usually unset, use `/tmp/tauri-pilot-com.myapp.dev.sock`. On Windows, use the Named Pipe, with each backslash doubled in JSON: `"\\\\.\\pipe\\tauri-pilot-com.myapp.dev"`.

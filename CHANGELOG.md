@@ -241,11 +241,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` when that directory is
   private, `/tmp` otherwise, and a Named Pipe on Windows. They said `/tmp`
   only, so on most Linux desktops a user who looked for
-  `/tmp/tauri-pilot-*.sock` found nothing. The CLI reference, the plugin
-  setup guide, the architecture guide and `SKILL.md` now list the full
-  auto-detection order, including `--socket` and the Windows instance files,
-  and the `socat` and MCP `--socket` examples use the default path. Docs
-  only. [#285]
+  `/tmp/tauri-pilot-*.sock` found nothing. The plugin setup and architecture
+  guides give the socket path per platform, the CLI reference and `SKILL.md`
+  list the full auto-detection order, including `--socket` and the Windows
+  instance files, and the `socat` and MCP `--socket` examples use the default
+  path. Docs only. [#285]
 
 ### Security
 
