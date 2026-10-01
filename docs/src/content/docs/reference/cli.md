@@ -22,10 +22,10 @@ The CLI picks the socket in this order and stops at the first match:
 
 1. `--socket <path>`, the explicit flag. On Windows this is a Named Pipe path such as `\\.\pipe\tauri-pilot-{identifier}`.
 2. `$TAURI_PILOT_SOCKET`, the environment variable.
-3. Linux and macOS: the newest `tauri-pilot-*.sock` in `$XDG_RUNTIME_DIR`, then the newest in `/tmp` when `$XDG_RUNTIME_DIR` is unset or empty or holds no such socket.
+3. Linux and macOS: the newest `tauri-pilot-*.sock` in `$XDG_RUNTIME_DIR`, then the newest in `/tmp` when `$XDG_RUNTIME_DIR` is unset, empty or holds no live socket you own.
 4. Windows: the newest entry in `%LOCALAPPDATA%\tauri-pilot\instances\*.json` whose process is still running. Each entry names the app's Named Pipe.
 
-On Linux and macOS, "newest" means the most recent modification time among the sockets you own that accept a connection, so a socket left behind by a crashed app is skipped; with none left, the command fails with `No tauri-pilot socket found. Is a Tauri app running?`. On Windows, "newest" means the latest `created_at` in the instance file, and an entry whose process has exited is skipped.
+On Linux and macOS, "newest" means the most recent modification time among the sockets you own that accept a connection, so a socket left behind by a crashed app is skipped. When neither directory has one, the command fails with `No tauri-pilot socket found. Is a Tauri app running?`. On Windows, "newest" means the latest `created_at` in the instance file, and an entry whose process has exited is skipped.
 
 The plugin puts its socket at `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` when that directory is private, and in `/tmp` otherwise. See [Socket path](/tauri-pilot/guides/plugin-setup/#4-socket-path). Android apps listen on an abstract socket that auto-detection cannot see; forward it with ADB and set `TAURI_PILOT_SOCKET` (see [Android via ADB](/tauri-pilot/guides/plugin-setup/#android-via-adb)).
 

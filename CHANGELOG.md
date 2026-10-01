@@ -239,8 +239,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `storage --session <command>` worked, and still does. [#283]
 - The docs give the socket's real location:
   `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` when that directory is
-  private, `/tmp` otherwise, and a Named Pipe on Windows. They said `/tmp` only, so on most Linux desktops a user who looked
-  for `/tmp/tauri-pilot-*.sock` found nothing. The CLI reference, the plugin
+  private, `/tmp` otherwise, and a Named Pipe on Windows. They said `/tmp`
+  only, so on most Linux desktops a user who looked for
+  `/tmp/tauri-pilot-*.sock` found nothing. The CLI reference, the plugin
   setup guide, the architecture guide and `SKILL.md` now list the full
   auto-detection order, including `--socket` and the Windows instance files,
   and the `socat` and MCP `--socket` examples use the default path. Docs
