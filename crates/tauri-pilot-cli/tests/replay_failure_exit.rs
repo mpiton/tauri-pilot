@@ -103,12 +103,15 @@ fn replay_with_failed_steps_exits_1_and_reports_each_error() {
         Some(1),
         "a replay with failed steps must exit 1\n--- stderr ---\n{stderr}"
     );
-    assert!(
-        stderr.contains(
-            "[1/4] fill → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5"
-        ),
-        "the failed step must print its error\n--- stderr ---\n{stderr}"
-    );
+    for line in [
+        "[1/4] fill → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
+        "[4/4] type → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
+    ] {
+        assert!(
+            stderr.contains(line),
+            "each failed step must print its error: {line}\n--- stderr ---\n{stderr}"
+        );
+    }
 
     let result: serde_json::Value =
         serde_json::from_str(&stdout).expect("--json prints the replay result");
@@ -120,14 +123,14 @@ fn replay_with_failed_steps_exits_1_and_reports_each_error() {
             {
                 "action": "fill",
                 "status": "failed",
-                "error": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
+                "message": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
             },
             {"action": "click", "status": "passed"},
             {"action": "assert", "status": "skipped"},
             {
                 "action": "type",
                 "status": "failed",
-                "error": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
+                "message": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
             },
         ])
     );

@@ -1255,7 +1255,7 @@ pub(crate) async fn run_replay_command(
 /// Builds the terminal label and the `steps` entry for one replayed action.
 ///
 /// A failed step is part of the report, not an error of the replay, and its
-/// message is kept whole, as `run` keeps it (#275).
+/// message is kept whole under `message`, as `run` keeps it (#275).
 fn replay_step_report(action: &str, outcome: Result<Value>) -> (String, Value) {
     match outcome {
         Ok(_) => (
@@ -1266,7 +1266,7 @@ fn replay_step_report(action: &str, outcome: Result<Value>) -> (String, Value) {
             let message = format!("{err:#}");
             (
                 format!("FAIL: {message}"),
-                json!({"action": action, "status": "failed", "error": message}),
+                json!({"action": action, "status": "failed", "message": message}),
             )
         }
     }

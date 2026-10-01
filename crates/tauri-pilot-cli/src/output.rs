@@ -837,10 +837,11 @@ pub(crate) fn format_record(value: &serde_json::Value) -> String {
 ///
 /// Returns a string like "[3/10] click @e3 → ok" with color based on result.
 /// `result` can carry an error from the app (`FAIL: Unknown ref: e5`), so,
-/// like `action`, it is stripped of escape sequences.
+/// like `action`, it is stripped of escape sequences, and its line breaks
+/// become spaces so it cannot overwrite or forge a step line.
 pub(crate) fn format_replay_step(step: usize, total: usize, action: &str, result: &str) -> String {
     let action_safe = strip_ansi(action);
-    let result_safe = strip_ansi(result);
+    let result_safe = strip_ansi(result).replace(['\r', '\n'], " ");
     let result_display = if result_safe == "ok" {
         crate::style::success(&result_safe)
     } else {
@@ -1054,6 +1055,25 @@ mod tests {
     fn test_format_network_non_array() {
         let output = format_network(&json!({"unexpected": true}));
         assert!(output.contains("Unexpected"));
+    }
+
+    #[test]
+    fn test_format_replay_step_strips_escapes_and_line_breaks_from_the_error() {
+        let line = format_replay_step(
+            1,
+            4,
+            "fill",
+            "FAIL: \x1b]0;pwned\x07\x1b[2JUnknown ref: e5\r[1/4] fill \u{2192} ok\n[2/4] click",
+        );
+        // The label may be colored when stdout is a terminal, so check the
+        // injected sequences rather than every ESC byte.
+        for injected in ["pwned", "\x07", "[2J", "\r", "\n"] {
+            assert!(
+                !line.contains(injected),
+                "the step line must not carry {injected:?}: {line:?}"
+            );
+        }
+        assert!(line.contains("FAIL: Unknown ref: e5 [1/4] fill \u{2192} ok [2/4] click"));
     }
 
     #[test]

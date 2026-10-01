@@ -113,9 +113,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FAIL` (`[1/6] fill → ✗ FAIL: RPC error (-32603): ... Unknown ref: e5`).
   It exited 0 and dropped the error, so a broken replay passed in CI. The
   result, `--json` and MCP `pilot.replay` alike, gains a `steps` array of
-  `{action, status, error}`. Over MCP a finished replay stays a successful
-  tool result with `status` `"failed"`, like `pilot.run`. Scripts that relied
-  on `replay` exiting 0 after failed steps must handle exit status 1. [#275]
+  `{action, status, message}`, with the failure text under `message` as in
+  `run` steps. Over MCP a finished replay stays a successful tool result with
+  `status` `"failed"`, like `pilot.run`. Scripts that relied on `replay`
+  exiting 0 after failed steps must handle exit status 1. [#275]
 
 ### Security
 

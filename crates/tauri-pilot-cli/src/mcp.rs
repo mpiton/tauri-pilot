@@ -979,7 +979,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "replay",
-            description: "Replay or export a recorded tauri-pilot session file. A replay returns `status`, counts, and `steps` (`action`, `status`, and `error` for a failed step). A finished replay including failed steps is a successful tool result with `status` \"failed\"; only read, parse, and connect failures are tool errors.",
+            description: "Replay or export a recorded tauri-pilot session file. A replay returns `status`, counts, and `steps` (`action`, `status`, and `message` for a failed step, the same key as `pilot.run`). A finished replay including failed steps is a successful tool result with `status` \"failed\"; only read, parse, and connect failures are tool errors.",
             schema: replay_schema,
             read_only: false,
             destructive: false,
@@ -2883,7 +2883,7 @@ path = "/tmp/out.png"
                 {
                     "action": "click",
                     "status": "failed",
-                    "error": "RPC error (-32000): click failed",
+                    "message": "RPC error (-32000): click failed",
                 },
                 {"action": "click", "status": "passed"},
             ])

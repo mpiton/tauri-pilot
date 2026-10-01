@@ -1514,14 +1514,15 @@ result lists every step:
 {
   "status": "failed", "total": 3, "passed": 1, "skipped": 1, "failed": 1,
   "steps": [
-    {"action": "fill", "status": "failed", "error": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5"},
+    {"action": "fill", "status": "failed", "message": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5"},
     {"action": "click", "status": "passed"},
     {"action": "assert", "status": "skipped"}
   ]
 }
 ```
 
-Over MCP, `pilot.replay` returns the same object. A finished replay including
+A failed step carries its error in `message`, the key `run` uses. Over MCP,
+`pilot.replay` returns the same object. A finished replay including
 failed steps is a successful tool result with `status` `"failed"`; only read,
 parse, and connect failures are tool errors.
 
