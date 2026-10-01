@@ -36,13 +36,17 @@ const REAL_CONSOLE = {
 };
 
 // Minimal element mock. Only the surface `snapshot`/`getRole`/`getName` read:
-// tagName, nodeType, children, attributes, textContent, and the `value` IDL
-// property (which the test sets explicitly, mirroring real DOM types).
+// tagName, nodeType, children, childNodes, attributes, textContent, `labels`,
+// and the `value` IDL property (which the test sets explicitly, mirroring real
+// DOM types).
 function makeEl(tag, props = {}) {
+  const children = props.children || [];
   const el = {
     tagName: tag.toUpperCase(),
     nodeType: 1, // Node.ELEMENT_NODE
-    children: props.children || [],
+    children,
+    childNodes:
+      children.length > 0 ? children : props.text ? [textNode(props.text)] : [],
     textContent: props.text || "",
     _attrs: props.attrs || {},
     getAttribute(name) {
@@ -60,6 +64,31 @@ function makeEl(tag, props = {}) {
   if ("contentEditable" in props) el.contentEditable = props.contentEditable;
   if ("onclick" in props) el.onclick = props.onclick;
   return el;
+}
+
+function textNode(text) {
+  return { nodeType: 3, nodeValue: text, textContent: text };
+}
+
+// A <label> built from mixed text and element children, with `textContent`
+// computed like the DOM does (every descendant's text, controls included).
+function makeLabel(parts, attrs = {}) {
+  const childNodes = parts.map((p) => (typeof p === "string" ? textNode(p) : p));
+  const label = makeEl("label", { attrs });
+  label.childNodes = childNodes;
+  label.children = childNodes.filter((n) => n.nodeType === 1);
+  label.textContent = childNodes.map((n) => n.textContent).join("");
+  return label;
+}
+
+// A <select> whose `textContent` is the text of all its options, as in the DOM.
+function makeSelect(optionTexts, props = {}) {
+  const options = optionTexts.map((t) => makeEl("option", { text: t }));
+  return makeEl("select", {
+    ...props,
+    children: options,
+    text: optionTexts.join(" "),
+  });
 }
 
 function named(elements, name) {
@@ -349,4 +378,232 @@ test("snapshot -i still lists native controls and skips a wrapping layout div (#
   assert.equal(interactive[0].role, "button");
   assert.equal(interactive[0].name, "Save");
   assert.equal(pilot.resolve(interactive[0].ref), button);
+});
+
+// #277: getName never read `el.labels`, so a control named by its <label> came
+// out unnamed, and a <select> was named after the text of all its options.
+
+test("snapshot names a select from its wrapping label, not its options (#277)", () => {
+  const select = makeSelect(["Dark", "Light", "System"], { value: "dark" });
+  const label = makeLabel(["Theme\n  ", select, "\n"]);
+  select.labels = [label];
+  const body = makeEl("body", { children: [label] });
+  const pilot = loadBridge(body);
+
+  const interactive = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(interactive.length, 1);
+  assert.equal(interactive[0].role, "combobox");
+  assert.equal(interactive[0].name, "Theme");
+  assert.equal(pilot.resolve(interactive[0].ref), select);
+});
+
+test("snapshot names a checkbox from the text after it in its label (#277)", () => {
+  const box = makeEl("input", {
+    attrs: { type: "checkbox", name: "notifications" },
+    value: "on",
+  });
+  box.checked = true;
+  const label = makeLabel(["\n  ", box, " Enable notifications\n"]);
+  box.labels = [label];
+  const body = makeEl("body", { children: [label] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.role, "checkbox");
+  assert.equal(entry.name, "Enable notifications");
+  assert.equal(entry.checked, true);
+});
+
+test("snapshot keeps another control's options out of a shared label (#277)", () => {
+  const qty = makeEl("input", { attrs: { type: "number" } });
+  const unit = makeSelect(["Small", "Medium", "Large"], { value: "Small" });
+  const label = makeLabel(["Size ", qty, " ", unit]);
+  // With no `for`, a label is associated with its first labelable
+  // descendant only, so the DOM gives it to `qty` and not to `unit`.
+  qty.labels = [label];
+  unit.labels = [];
+  const body = makeEl("body", { children: [label] });
+  const pilot = loadBridge(body);
+
+  const [qtyEl, unitEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(qtyEl.name, "Size");
+  assert.equal("name" in unitEl, false);
+});
+
+test("snapshot keeps a textarea's text out of a shared label (#277)", () => {
+  const bio = makeEl("input", { attrs: { type: "text" } });
+  const notes = makeEl("textarea", { text: "draft text" });
+  const label = makeLabel(["Bio ", bio, " ", notes]);
+  bio.labels = [label];
+  notes.labels = [];
+  const body = makeEl("body", { children: [label] });
+  const pilot = loadBridge(body);
+
+  const [bioEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(bioEl.name, "Bio");
+});
+
+test("snapshot names a labelled button from its label then its own text (#277)", () => {
+  // HTML-AAM: a button's associated <label> comes before its subtree, and the
+  // label's text includes the button's own text.
+  const button = makeEl("button", { text: "OK" });
+  const label = makeLabel(["Confirm ", button]);
+  button.labels = [label];
+  const body = makeEl("body", { children: [label] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.role, "button");
+  assert.equal(entry.name, "Confirm OK");
+});
+
+test("snapshot drops hidden label text from the name (#277)", () => {
+  const email = makeEl("input", { attrs: { type: "email" } });
+  const star = makeEl("span", { text: "*", attrs: { "aria-hidden": "true" } });
+  const emailLabel = makeLabel(["Email ", star, " ", email]);
+  email.labels = [emailLabel];
+  const phone = makeEl("input", { attrs: { type: "tel" } });
+  const hint = makeEl("span", { text: "(optional)", attrs: { hidden: "" } });
+  const phoneLabel = makeLabel(["Phone ", hint, " ", phone]);
+  phone.labels = [phoneLabel];
+  const body = makeEl("body", { children: [emailLabel, phoneLabel] });
+  const pilot = loadBridge(body);
+
+  const [emailEl, phoneEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(emailEl.name, "Email", "aria-hidden text is not part of the name");
+  assert.equal(phoneEl.name, "Phone", "hidden text is not part of the name");
+});
+
+test("snapshot drops CSS-hidden label text from the name (#277)", () => {
+  const email = makeEl("input", { attrs: { type: "email" } });
+  const star = makeEl("span", { text: "*", attrs: { class: "req" } });
+  star.computed = { display: "none", visibility: "visible" };
+  const emailLabel = makeLabel(["Email ", star, " ", email]);
+  email.labels = [emailLabel];
+  // visibility is inherited but can be overridden, so a visible child of a
+  // visibility:hidden span still counts, unlike a display:none subtree.
+  const shown = makeEl("span", { text: "number" });
+  shown.computed = { display: "inline", visibility: "visible" };
+  const veiled = makeEl("span", { text: "(optional) " });
+  veiled.childNodes = [textNode("(optional) "), shown];
+  veiled.computed = { display: "inline", visibility: "hidden" };
+  const phone = makeEl("input", { attrs: { type: "tel" } });
+  const phoneLabel = makeLabel(["Phone ", veiled, " ", phone]);
+  phone.labels = [phoneLabel];
+  const caps = makeEl("input", { attrs: { type: "text" } });
+  const capsStar = makeEl("span", { text: "*", attrs: { "aria-hidden": "TRUE" } });
+  const capsLabel = makeLabel(["Name ", capsStar, " ", caps]);
+  caps.labels = [capsLabel];
+  const body = makeEl("body", { children: [emailLabel, phoneLabel, capsLabel] });
+  const pilot = loadBridge(body);
+  globalThis.window.getComputedStyle = (el) =>
+    el.computed || { display: "inline", visibility: "visible" };
+
+  const [emailEl, phoneEl, capsEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(emailEl.name, "Email", "display:none text is not part of the name");
+  assert.equal(phoneEl.name, "Phone number", "visibility:hidden text is not either");
+  assert.equal(capsEl.name, "Name", "aria-hidden is matched case-insensitively");
+});
+
+test("snapshot keeps a button's text ahead of its title (#277)", () => {
+  const button = makeEl("button", { text: "Close", attrs: { title: "Close dialog" } });
+  button.labels = [];
+  const body = makeEl("body", { children: [button] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.name, "Close");
+});
+
+test("snapshot names an input from its title before its placeholder (#277)", () => {
+  // HTML-AAM for text inputs and textareas: label, then title, then placeholder.
+  const input = makeEl("input", {
+    attrs: { type: "search", title: "Search the docs", placeholder: "e.g. tauri" },
+  });
+  input.labels = [];
+  const notes = makeEl("textarea", {
+    attrs: { title: "Release notes", placeholder: "Write here" },
+  });
+  notes.labels = [];
+  const body = makeEl("body", { children: [input, notes] });
+  const pilot = loadBridge(body);
+
+  const [inputEl, notesEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(inputEl.name, "Search the docs");
+  assert.equal(notesEl.name, "Release notes");
+});
+
+test("snapshot names an input from a <label for> elsewhere in the page (#277)", () => {
+  const label = makeLabel(["Email address"], { for: "email" });
+  const input = makeEl("input", {
+    attrs: { type: "email", id: "email", placeholder: "you@example.com" },
+  });
+  input.labels = [label];
+  const body = makeEl("body", {
+    children: [label, makeEl("div", { children: [input] })],
+  });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.role, "textbox");
+  assert.equal(entry.name, "Email address", "a label wins over the placeholder");
+});
+
+test("snapshot keeps aria-label ahead of a label (#277)", () => {
+  const label = makeLabel(["Visible label"]);
+  const input = makeEl("input", { attrs: { "aria-label": "Aria name" } });
+  input.labels = [label];
+  const body = makeEl("body", { children: [input] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.name, "Aria name");
+});
+
+test("snapshot falls back to title, then leaves an unlabelled control unnamed (#277)", () => {
+  const titled = makeEl("input", { attrs: { title: "Search the docs" } });
+  titled.labels = [];
+  const bare = makeEl("input", {});
+  bare.labels = [];
+  const select = makeSelect(["English", "Francais"], { value: "fr" });
+  select.labels = [];
+  const body = makeEl("body", { children: [titled, bare, select] });
+  const pilot = loadBridge(body);
+
+  const [titledEl, bareEl, selectEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(titledEl.name, "Search the docs");
+  assert.equal("name" in bareEl, false, "an input with no label has no name");
+  assert.equal(selectEl.role, "combobox");
+  assert.equal(
+    "name" in selectEl,
+    false,
+    "a select must not be named after its options",
+  );
+});
+
+test("snapshot leaves an input with only a sibling label unnamed (#277)", () => {
+  // <label>Email</label><br><input>: no `for`, so the DOM associates nothing
+  // and browsers do not name the input either.
+  const label = makeLabel(["Email"]);
+  const input = makeEl("input", { attrs: { type: "text" } });
+  input.labels = [];
+  const body = makeEl("body", { children: [label, makeEl("br"), input] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.role, "textbox");
+  assert.equal("name" in entry, false);
 });

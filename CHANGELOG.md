@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `snapshot` names form controls after their `<label>`, wrapping or `for=`,
+  without the text of the controls inside it. Labelled inputs and checkboxes
+  came out unnamed, and a `<select>` was named after the text of all its
+  options. An element with no other name, such as an icon-only button, now
+  falls back to its `title`, and a text input or textarea takes its `title`
+  before its `placeholder`. Hidden parts of a label (`hidden`,
+  `aria-hidden="true"`, `display: none`, `visibility: hidden`) stay out of the
+  name. `diff` against a reference saved before this fix
+  reports the renamed elements as removed and added. [#277]
+
 - `network` reports `request_size` and `response_size` in bytes for text
   bodies. They counted UTF-16 code units, so non-ASCII text came out smaller
   than on the wire, and an XHR text response got a different size than the
@@ -1289,3 +1299,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#269]: https://github.com/mpiton/tauri-pilot/issues/269
 [#270]: https://github.com/mpiton/tauri-pilot/issues/270
 [#272]: https://github.com/mpiton/tauri-pilot/issues/272
+[#277]: https://github.com/mpiton/tauri-pilot/issues/277

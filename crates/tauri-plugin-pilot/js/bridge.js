@@ -680,14 +680,69 @@
       if (alt) return alt.trim().slice(0, 50);
     }
 
+    const fromLabels = labelText(el);
+    if (fromLabels) return fromLabels.slice(0, 50);
+
+    // HTML-AAM: text inputs and textareas take `title` before `placeholder`.
+    // Other elements keep their text ahead of `title` (checked last below).
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      const title = el.getAttribute("title");
+      if (title && title.trim()) return title.trim().slice(0, 50);
+    }
+
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") {
       const placeholder = el.getAttribute("placeholder");
       if (placeholder) return placeholder.trim().slice(0, 50);
     }
 
-    const text = el.textContent || "";
-    const trimmed = text.replace(/\s+/g, " ").trim();
-    return trimmed.slice(0, 50) || null;
+    // A <select>'s text is every option's text, which is not its name (#277).
+    if (el.tagName !== "SELECT") {
+      const text = el.textContent || "";
+      const trimmed = text.replace(/\s+/g, " ").trim();
+      if (trimmed) return trimmed.slice(0, 50);
+    }
+
+    const title = el.getAttribute("title");
+    if (title && title.trim()) return title.trim().slice(0, 50);
+    return null;
+  }
+
+  // Text of the <label>s associated with a form control: `el.labels` covers
+  // both a wrapping label and `<label for=...>` (#277). Nested <select> and
+  // <textarea> subtrees are skipped, the control's own and any other, so a
+  // wrapping label does not leak their options or contents into the name.
+  // A labelled button keeps its own text after the label's, as in accname.
+  // Hidden content is not part of the name (accname step 2A), e.g. a
+  // required-field asterisk: subtrees marked `aria-hidden="true"`, `hidden`
+  // or `display: none` are skipped. `visibility: hidden` drops the node's own
+  // text only, since a descendant can set `visibility: visible` again.
+  function labelText(el) {
+    const labels = el.labels;
+    if (!labels || labels.length === 0) return "";
+    const canStyle = typeof window.getComputedStyle === "function";
+    const parts = [];
+    function collect(node, visible) {
+      if (node.tagName === "SELECT" || node.tagName === "TEXTAREA") return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (visible) parts.push(node.nodeValue || "");
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      const ariaHidden = String(node.getAttribute("aria-hidden") || "").trim().toLowerCase();
+      if (ariaHidden === "true" || node.hasAttribute("hidden")) return;
+      let shown = visible;
+      const style = canStyle ? window.getComputedStyle(node) : null;
+      if (style) {
+        if (style.display === "none") return;
+        shown = style.visibility !== "hidden" && style.visibility !== "collapse";
+      }
+      for (const child of node.childNodes || []) collect(child, shown);
+    }
+    for (const label of labels) {
+      collect(label, true);
+      parts.push(" ");
+    }
+    return parts.join("").replace(/\s+/g, " ").trim();
   }
 
   function isInteractiveElement(el) {
