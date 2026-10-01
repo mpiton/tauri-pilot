@@ -760,7 +760,9 @@ fn require_bool_field(val: &serde_json::Value, field: &str) -> Result<bool> {
 /// Builds the result of a failed assertion.
 ///
 /// `print_result` prints it (JSON on stdout with `--json`, a `FAIL:` line on
-/// stderr otherwise) and exits 1 (#282).
+/// stderr otherwise) and exits 1 (#282). The value must be returned: a bare
+/// `assert_fail(...);` no longer exits, so the assertion would pass.
+#[must_use = "return this value, or the failed assertion reports success"]
 fn assert_fail(message: &str) -> serde_json::Value {
     json!({"ok": false, "message": message})
 }
@@ -768,6 +770,7 @@ fn assert_fail(message: &str) -> serde_json::Value {
 /// Builds the result of a failed assertion that compared two values.
 ///
 /// Same as [`assert_fail`], plus the `expected` and `actual` values.
+#[must_use = "return this value, or the failed assertion reports success"]
 fn assert_mismatch(
     message: &str,
     expected: impl Into<serde_json::Value>,

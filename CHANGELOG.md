@@ -201,7 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{"ok": false, "message": ...}`, plus `expected` and `actual` for `text`,
   `value`, `count`, `contains` and `url`. It printed nothing on stdout and
   only the `FAIL:` line on stderr, which is still what plain-text mode does.
-  The exit status stays 1. [#282]
+  The exit status stays 1. Scripts that treated any stdout under `--json` as
+  a pass must check `ok` or the exit status. [#282]
 
 ### Security
 
