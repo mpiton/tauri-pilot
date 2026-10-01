@@ -120,20 +120,45 @@ fn text_status_flag(value: &serde_json::Value) -> Option<&'static str> {
 
 /// Format a snapshot result as an indented accessibility tree.
 pub(crate) fn format_snapshot(value: &serde_json::Value) {
-    out!("{}", snapshot_text(value));
+    // `StdoutWriter` exits on a closed pipe, so the result is always `Ok`.
+    let _ = write_snapshot(&mut StdoutWriter, value);
+}
+
+/// `fmt::Write` over stdout that exits quietly on a closed pipe, like `out!`.
+///
+/// Renderers write through it line by line, so `snapshot | head -1` stops
+/// at the first line instead of rendering the whole tree first.
+struct StdoutWriter;
+
+impl Write for StdoutWriter {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        write_stdout(format_args!("{s}"));
+        Ok(())
+    }
 }
 
 /// Render a snapshot result as an indented accessibility tree, one line per element.
+#[cfg(test)]
 fn snapshot_text(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    let _ = write_snapshot(&mut out, value);
+    out
+}
+
+/// Write a snapshot result as an indented accessibility tree, one line per element.
+///
+/// # Errors
+///
+/// Stops at the first write error of `out`.
+fn write_snapshot(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::Result {
     let Some(elements) = value.get("elements").and_then(|e| e.as_array()) else {
-        return String::from("(empty snapshot)\n");
+        return writeln!(out, "(empty snapshot)");
     };
 
     if elements.is_empty() {
-        return String::from("(empty snapshot)\n");
+        return writeln!(out, "(empty snapshot)");
     }
 
-    let mut out = String::new();
     for el in elements {
         let depth = usize::try_from(
             el.get("depth")
@@ -170,9 +195,9 @@ fn snapshot_text(value: &serde_json::Value) -> String {
             let _ = write!(line, " {}", crate::style::dim("disabled"));
         }
 
-        let _ = writeln!(out, "{line}");
+        writeln!(out, "{line}")?;
     }
-    out
+    Ok(())
 }
 
 /// Placeholder printed instead of a password value in text output.
@@ -609,12 +634,24 @@ pub(crate) fn format_diff(value: &serde_json::Value) {
     if let Some(warning) = value.get("warning").and_then(serde_json::Value::as_str) {
         eprintln!("{}", crate::style::warn(warning));
     }
-    out!("{}", diff_text(value));
+    // `StdoutWriter` exits on a closed pipe, so the result is always `Ok`.
+    let _ = write_diff(&mut StdoutWriter, value);
 }
 
 /// Render the added, removed, and changed lines of a diff result.
+#[cfg(test)]
 fn diff_text(value: &serde_json::Value) -> String {
     let mut out = String::new();
+    let _ = write_diff(&mut out, value);
+    out
+}
+
+/// Write the added, removed, and changed lines of a diff result.
+///
+/// # Errors
+///
+/// Stops at the first write error of `out`.
+fn write_diff(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::Result {
     let added = value.get("added").and_then(|v| v.as_array());
     let removed = value.get("removed").and_then(|v| v.as_array());
     let changed_entries = value.get("changed").and_then(|v| v.as_array());
@@ -624,38 +661,41 @@ fn diff_text(value: &serde_json::Value) -> String {
         && changed_entries.is_none_or(Vec::is_empty);
 
     if is_empty {
-        let _ = writeln!(out, "{}", crate::style::dim("No changes detected."));
-        return out;
+        return writeln!(out, "{}", crate::style::dim("No changes detected."));
     }
 
     if let Some(entries) = removed {
         for el in entries {
-            let _ = writeln!(out, "{}", format_diff_entry("-", el, &crate::style::error));
+            writeln!(out, "{}", format_diff_entry("-", el, &crate::style::error))?;
         }
     }
 
     if let Some(entries) = added {
         for el in entries {
-            let _ = writeln!(
+            writeln!(
                 out,
                 "{}",
                 format_diff_entry("+", el, &crate::style::success)
-            );
+            )?;
         }
     }
 
     if let Some(entries) = changed_entries {
         for entry in entries {
-            write_changed_entry(&mut out, entry);
+            write_changed_entry(out, entry)?;
         }
     }
-    out
+    Ok(())
 }
 
-/// Append the `~` lines of one changed diff entry, one per changed field.
+/// Write the `~` lines of one changed diff entry, one per changed field.
 ///
 /// A `value` change on a password input prints `[redacted]` on both sides.
-fn write_changed_entry(out: &mut String, entry: &serde_json::Value) {
+///
+/// # Errors
+///
+/// Stops at the first write error of `out`.
+fn write_changed_entry(out: &mut impl Write, entry: &serde_json::Value) -> std::fmt::Result {
     let el = entry.get("new").unwrap_or(entry);
     let role = strip_ansi(
         el.get("role")
@@ -710,7 +750,7 @@ fn write_changed_entry(out: &mut String, entry: &serde_json::Value) {
                 crate::style::dim(display_value(&old_val, masked)),
                 crate::style::dim(display_value(&new_val, masked)),
             );
-            let _ = writeln!(out, "{line}");
+            writeln!(out, "{line}")?;
         }
     } else {
         let mut line = format!("{} {} ", crate::style::warn("~"), crate::style::info(&role));
@@ -718,8 +758,9 @@ fn write_changed_entry(out: &mut String, entry: &serde_json::Value) {
             let _ = write!(line, "{} ", crate::style::bold(format!("\"{n}\"")));
         }
         let _ = write!(line, "{}", crate::style::dim(format!("[ref={ref}]")));
-        let _ = writeln!(out, "{line}");
+        writeln!(out, "{line}")?;
     }
+    Ok(())
 }
 
 fn format_diff_entry(
@@ -1042,6 +1083,62 @@ mod tests {
             text.contains("value=\"user@example.com\""),
             "plain value lost: {text}"
         );
+    }
+
+    /// Collects writes and fails once `limit` lines have been accepted.
+    struct ClosingWriter {
+        written: String,
+        limit: usize,
+    }
+
+    impl std::fmt::Write for ClosingWriter {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            if self.written.matches('\n').count() >= self.limit {
+                return Err(std::fmt::Error);
+            }
+            self.written.push_str(s);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_write_snapshot_streams_line_by_line() {
+        // A reader that hangs up after one line must not wait for the whole tree.
+        let snapshot = json!({
+            "elements": [
+                {"ref": "e1", "role": "button", "depth": 0},
+                {"ref": "e2", "role": "link", "depth": 0},
+                {"ref": "e3", "role": "textbox", "depth": 0},
+            ]
+        });
+        let mut out = ClosingWriter {
+            written: String::new(),
+            limit: 1,
+        };
+        assert!(write_snapshot(&mut out, &snapshot).is_err());
+        let text = strip_ansi(&out.written);
+        assert!(text.contains("[ref=e1]"), "first line missing: {text}");
+        assert!(!text.contains("[ref=e2]"), "kept rendering: {text}");
+    }
+
+    #[test]
+    fn test_write_diff_streams_line_by_line() {
+        let diff = json!({
+            "added": [
+                {"ref": "e1", "role": "button", "depth": 0},
+                {"ref": "e2", "role": "link", "depth": 0},
+            ],
+            "removed": [],
+            "changed": [],
+        });
+        let mut out = ClosingWriter {
+            written: String::new(),
+            limit: 1,
+        };
+        assert!(write_diff(&mut out, &diff).is_err());
+        let text = strip_ansi(&out.written);
+        assert!(text.contains("[ref=e1]"), "first line missing: {text}");
+        assert!(!text.contains("[ref=e2]"), "kept rendering: {text}");
     }
 
     #[test]
