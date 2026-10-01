@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::Result;
+use base64::Engine;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
@@ -996,7 +997,8 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "screenshot",
-            description: "Capture the full page or an element selector as a PNG image content block.",
+            description: "Capture the full page or an element selector as a PNG image content block. \
+                          On long pages pass a selector: some clients reject very large images.",
             schema: selector_schema,
             read_only: true,
             destructive: false,
@@ -1257,16 +1259,55 @@ const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
 /// MCP clients show an `image` block to the model as a picture, whereas the
 /// data URL in a text block is ~175 KB of base64 it cannot look at (#280).
 /// No `structuredContent` is sent: it would carry the image a second time.
-/// A result that is not a PNG data URL becomes a tool error.
+/// A result that is not a PNG data URL, or whose payload is not valid base64,
+/// becomes a tool error naming what the app returned.
 fn screenshot_success(result: &Value) -> CallToolResult {
-    match result
+    let Some(data) = result
         .as_str()
         .and_then(|url| url.strip_prefix(PNG_DATA_URL_PREFIX))
-    {
-        Some(data) => CallToolResult::success(vec![ContentBlock::image(data, "image/png")]),
-        None => tool_error_msg(format!(
-            "screenshot result is not a PNG data URL (expected a string starting with '{PNG_DATA_URL_PREFIX}')"
-        )),
+    else {
+        return tool_error_msg(format!(
+            "screenshot result is not a PNG data URL (expected a string starting with \
+             '{PNG_DATA_URL_PREFIX}', got {})",
+            describe_screenshot_result(result)
+        ));
+    };
+    // A client rejects or fails to render an image block whose data does not
+    // decode, so check it here and report it as this tool's error.
+    if let Err(err) = base64::engine::general_purpose::STANDARD.decode(data) {
+        return tool_error_msg(format!(
+            "screenshot result is a PNG data URL whose payload is not valid base64: {err}"
+        ));
+    }
+    CallToolResult::success(vec![ContentBlock::image(data, "image/png")])
+}
+
+/// Longest prefix of an unexpected screenshot string quoted in the error.
+///
+/// Enough to show a MIME type or a short value such as `data:,`, without
+/// echoing a large payload back to the agent.
+const SCREENSHOT_HINT_CHARS: usize = 32;
+
+/// Describes an unexpected screenshot result in a few words for the error.
+///
+/// A string shows its first [`SCREENSHOT_HINT_CHARS`] characters; any other
+/// value shows its JSON type. `data:,` is what `canvas.toDataURL()` returns
+/// for a 0×0 canvas, i.e. a `selector` matching a hidden or zero-size element.
+fn describe_screenshot_result(result: &Value) -> String {
+    match result {
+        Value::String(text) if text == "data:," => {
+            "'data:,' (an empty image: the element has zero size or is hidden)".to_owned()
+        }
+        Value::String(text) => {
+            let head: String = text.chars().take(SCREENSHOT_HINT_CHARS).collect();
+            let more = if head.len() < text.len() { "…" } else { "" };
+            format!("'{head}{more}'")
+        }
+        Value::Null => "null".to_owned(),
+        Value::Bool(_) => "a JSON boolean".to_owned(),
+        Value::Number(_) => "a JSON number".to_owned(),
+        Value::Array(_) => "a JSON array".to_owned(),
+        Value::Object(_) => "a JSON object".to_owned(),
     }
 }
 
@@ -3412,7 +3453,10 @@ target = "#btn"
         assert_eq!(report["steps"][1]["status"], "skipped");
         let recorded = methods.lock().expect("methods lock");
         assert_eq!(
-            recorded.iter().filter(|method| *method == "click").count(),
+            recorded
+                .iter()
+                .filter(|request| request.method == "click")
+                .count(),
             1
         );
     }
@@ -3435,7 +3479,10 @@ target = "#btn"
         assert_eq!(report["steps"][1]["status"], "passed");
         let recorded = methods.lock().expect("methods lock");
         assert_eq!(
-            recorded.iter().filter(|method| *method == "click").count(),
+            recorded
+                .iter()
+                .filter(|request| request.method == "click")
+                .count(),
             2
         );
     }
@@ -3536,7 +3583,7 @@ target = "#btn"
 
     /// Mock whose first `click` fails and whose `screenshot` succeeds.
     #[cfg(unix)]
-    fn spawn_failing_click_server(socket: &Path) -> Arc<std::sync::Mutex<Vec<String>>> {
+    fn spawn_failing_click_server(socket: &Path) -> Arc<std::sync::Mutex<Vec<Request>>> {
         spawn_failing_click_server_with(socket, ScreenshotMock::Png)
     }
 
@@ -3547,13 +3594,14 @@ target = "#btn"
         Png,
         RpcError,
         NotPng,
+        BadBase64,
     }
 
     #[cfg(unix)]
     fn spawn_failing_click_server_with(
         socket: &Path,
         screenshot: ScreenshotMock,
-    ) -> Arc<std::sync::Mutex<Vec<String>>> {
+    ) -> Arc<std::sync::Mutex<Vec<Request>>> {
         let _ = std::fs::remove_file(socket);
         let listener = UnixListener::bind(socket).expect("bind mock socket");
         let methods = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -3566,10 +3614,7 @@ target = "#btn"
             let mut click_count = 0_u8;
             while reader.read_line(&mut line).await.expect("read line") > 0 {
                 let request: Request = serde_json::from_str(line.trim()).expect("parse request");
-                recorded
-                    .lock()
-                    .expect("methods lock")
-                    .push(request.method.clone());
+                recorded.lock().expect("methods lock").push(request.clone());
                 let resp = match request.method.as_str() {
                     "click" => {
                         click_count += 1;
@@ -3591,14 +3636,25 @@ target = "#btn"
                                 "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
                             ),
                         ),
-                        ScreenshotMock::RpcError => Response::error(
-                            serde_json::Value::Number(request.id.into()),
-                            -32_000,
-                            "window is gone",
-                        ),
+                        ScreenshotMock::RpcError => Response {
+                            error: Some(RpcError {
+                                code: -32_000,
+                                message: "window is gone".to_owned(),
+                                data: Some(json!({"error": "WINDOW_NOT_FOUND"})),
+                            }),
+                            ..Response::error(
+                                serde_json::Value::Number(request.id.into()),
+                                -32_000,
+                                "window is gone",
+                            )
+                        },
                         ScreenshotMock::NotPng => {
                             Response::success(request.id, json!("data:image/jpeg;base64,/9j/"))
                         }
+                        ScreenshotMock::BadBase64 => Response::success(
+                            request.id,
+                            json!("data:image/png;base64,not base64!"),
+                        ),
                     },
                     _ => Response::error(
                         serde_json::Value::Number(request.id.into()),
@@ -3664,17 +3720,90 @@ target = "#btn"
         let _ = std::fs::remove_file(saved);
     }
 
+    /// Calls `pilot.screenshot` with `args`; returns the result and the requests the app got.
     #[cfg(unix)]
-    async fn call_screenshot(socket_name: &str, screenshot: ScreenshotMock) -> CallToolResult {
+    async fn call_screenshot_with(
+        socket_name: &str,
+        screenshot: ScreenshotMock,
+        args: JsonObject,
+    ) -> (CallToolResult, Vec<Request>) {
         let socket = std::env::temp_dir().join(format!(
             "tauri-pilot-mcp-{socket_name}-{}.sock",
             std::process::id()
         ));
-        let _methods = spawn_failing_click_server_with(&socket, screenshot);
-        PilotMcpServer::new(Some(socket), None)
-            .call_tool_by_name("screenshot", Map::new())
+        let requests = spawn_failing_click_server_with(&socket, screenshot);
+        let result = PilotMcpServer::new(Some(socket), None)
+            .call_tool_by_name("screenshot", args)
             .await
-            .expect("tool call succeeds")
+            .expect("tool call succeeds");
+        let requests = requests.lock().expect("requests lock").clone();
+        (result, requests)
+    }
+
+    #[cfg(unix)]
+    async fn call_screenshot(socket_name: &str, screenshot: ScreenshotMock) -> CallToolResult {
+        call_screenshot_with(socket_name, screenshot, Map::new())
+            .await
+            .0
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn screenshot_tool_forwards_the_selector_to_the_app() {
+        let mut args = Map::new();
+        args.insert("selector".to_owned(), json!("#panel"));
+        let (result, requests) =
+            call_screenshot_with("shot-selector", ScreenshotMock::Png, args).await;
+        assert_eq!(result.is_error, Some(false));
+        let screenshot = requests
+            .iter()
+            .find(|request| request.method == "screenshot")
+            .expect("the app got a screenshot request");
+        assert_eq!(screenshot.params, Some(json!({"selector": "#panel"})));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn screenshot_tool_keeps_the_app_error_fields() {
+        let result = call_screenshot("shot-rpc-error", ScreenshotMock::RpcError).await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content,
+            Some(json!({
+                "error": "WINDOW_NOT_FOUND",
+                "message": "window is gone",
+                "rpc_code": -32_000,
+            }))
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn screenshot_tool_rejects_a_png_data_url_that_is_not_base64() {
+        let result = call_screenshot("shot-bad-b64", ScreenshotMock::BadBase64).await;
+        assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(error.contains("base64"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn screenshot_error_names_what_the_app_returned() {
+        let empty = screenshot_success(&json!("data:,"));
+        assert_eq!(empty.is_error, Some(true));
+        let error = tool_error_text(&empty);
+        assert!(error.contains("got 'data:,'"), "unexpected error: {error}");
+        assert!(error.contains("zero size"), "unexpected error: {error}");
+
+        let object = screenshot_success(&json!({"ok": true}));
+        let error = tool_error_text(&object);
+        assert!(
+            error.contains("got a JSON object"),
+            "unexpected error: {error}"
+        );
+
+        let long = format!("data:text/plain,{}", "x".repeat(500));
+        let error = tool_error_text(&screenshot_success(&json!(long))).to_owned();
+        assert!(error.len() < 250, "hint is not bounded: {error}");
     }
 
     #[tokio::test]
@@ -3704,6 +3833,10 @@ target = "#btn"
         assert_eq!(result.is_error, Some(true));
         let error = tool_error_text(&result);
         assert!(error.contains("PNG data URL"), "unexpected error: {error}");
+        assert!(
+            error.contains("got 'data:image/jpeg;base64,/9j/'"),
+            "unexpected error: {error}"
+        );
     }
 
     #[cfg(unix)]
