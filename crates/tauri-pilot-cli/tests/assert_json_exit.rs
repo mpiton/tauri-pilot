@@ -48,62 +48,6 @@ fn stdout_json(output: &Output) -> serde_json::Value {
     })
 }
 
-#[test]
-fn json_text_mismatch_prints_failure_object_and_exits_1() {
-    let output = run_assert(true, &["text", "#btn", "nope"], serde_json::json!("Log in"));
-
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stdout_json(&output),
-        serde_json::json!({
-            "ok": false,
-            "message": "expected text \"nope\", got \"Log in\"",
-            "expected": "nope",
-            "actual": "Log in",
-        })
-    );
-    assert!(
-        output.stderr.is_empty(),
-        "stderr={:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[test]
-fn json_count_mismatch_reports_numbers() {
-    let output = run_assert(
-        true,
-        &["count", ".item", "5"],
-        serde_json::json!({"count": 3}),
-    );
-
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stdout_json(&output),
-        serde_json::json!({
-            "ok": false,
-            "message": "expected 5 elements, found 3",
-            "expected": 5,
-            "actual": 3,
-        })
-    );
-}
-
-#[test]
-fn json_visible_failure_has_message_only() {
-    let output = run_assert(
-        true,
-        &["visible", "#form"],
-        serde_json::json!({"visible": false}),
-    );
-
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(
-        stdout_json(&output),
-        serde_json::json!({"ok": false, "message": "element is not visible"})
-    );
-}
-
 /// Every assertion kind prints its own failure object on stdout under
 /// `--json`, exits 1, and writes nothing on stderr.
 #[test]
