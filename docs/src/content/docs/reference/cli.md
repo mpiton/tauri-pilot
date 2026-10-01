@@ -243,6 +243,8 @@ e3  button    "Refresh"
 
 An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt` on images, its `<label>` (wrapping or `for=`, without the text of any nested `<select>` or `<textarea>` or of hidden parts: `hidden`, `aria-hidden="true"`, `display: none`, `visibility: hidden`; a labelled button adds its own text after the label's), `title` then `placeholder` on text inputs and textareas, `placeholder` on `<select>`, its text content (never for `<select>`, whose text is its options), then `title`. A label that is only a visual sibling, with no `for`, does not name the control.
 
+Password inputs display `value=[redacted]` in human-readable output, like `forms`. The raw value stays in `--json` mode and in `--save` files, where the element carries `"sensitive": true`. `value @ref` still reads it.
+
 ---
 
 ### `diff`
@@ -263,6 +265,8 @@ tauri-pilot diff [OPTIONS]
 | `-d`, `--depth <n>` | Maximum tree depth to traverse. Must match the reference snapshot, or `diff` refuses |
 
 A `--ref` file saved by 0.7.3 or earlier records no options. `diff` compares against it anyway and prints a warning.
+
+`diff` compares password values raw but prints `[redacted]` on both sides of a change, as `snapshot` does. `--json` keeps the raw values.
 
 **Output format:**
 
@@ -1468,6 +1472,7 @@ tauri-pilot forms [OPTIONS]
 **Notes:**
 
 - Password fields display `[redacted]` in human-readable output (raw values are available in `--json` mode)
+- `snapshot` and `diff` mask password inputs the same way
 - Output is limited to 100 forms and 500 fields per form; a truncation warning appears if exceeded
 - The `--selector` must match a `<form>` element; other elements are rejected with an error
 

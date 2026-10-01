@@ -203,6 +203,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the `FAIL:` line on stderr, which is still what plain-text mode does.
   The exit status stays 1. Scripts that treated any stdout under `--json` as
   a pass must check `ok` or the exit status. [#282]
+- `snapshot` and `diff` print `[redacted]` for the value of a password input
+  in text output, as `forms` does. They printed it in clear, so a
+  `snapshot -i` taken after a login fill leaked the password into
+  transcripts and CI logs. `--json` keeps the raw value and flags the element
+  with `"sensitive": true`. [#279]
 
 ### Security
 
@@ -1401,3 +1406,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#274]: https://github.com/mpiton/tauri-pilot/issues/274
 [#281]: https://github.com/mpiton/tauri-pilot/issues/281
 [#282]: https://github.com/mpiton/tauri-pilot/issues/282
+[#279]: https://github.com/mpiton/tauri-pilot/issues/279
