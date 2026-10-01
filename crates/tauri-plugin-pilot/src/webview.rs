@@ -382,10 +382,16 @@ pub(crate) mod fake {
         }
 
         /// Close the window labeled `label`. A handle already resolved keeps
-        /// its label, so it stands for a dead window.
+        /// its label, so it stands for a dead window: unfocused, with no
+        /// focus query error, and a label reused later starts clean.
         #[cfg(feature = "press")]
         pub(crate) fn close(&self, label: &str) {
             self.windows.lock().expect("windows mutex").remove(label);
+            self.focused.lock().expect("focused mutex").remove(label);
+            self.focus_query_error
+                .lock()
+                .expect("focus query error mutex")
+                .remove(label);
         }
 
         /// Report `focused` from [`TargetWindow::is_focused`] for `label`.
