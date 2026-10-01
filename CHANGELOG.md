@@ -1245,8 +1245,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#254]: https://github.com/mpiton/tauri-pilot/issues/254
 [#255]: https://github.com/mpiton/tauri-pilot/issues/255
 [#256]: https://github.com/mpiton/tauri-pilot/issues/256
-<<<<<<< HEAD
 [#257]: https://github.com/mpiton/tauri-pilot/issues/257
-=======
 [#260]: https://github.com/mpiton/tauri-pilot/issues/260
->>>>>>> 709a4e1 (fix(plugin): navigate waits for the destination document's hello (#260))

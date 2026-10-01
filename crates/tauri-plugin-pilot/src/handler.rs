@@ -692,8 +692,9 @@ const BRIDGE_GRACE: Duration = Duration::from_secs(3);
 /// alone proves nothing about the destination. Whenever the navigation loads
 /// a new document, the hello of that document is the proof, even when its
 /// origin already has a bridge. A `javascript:` URL or a fragment change
-/// stays in the current document and resolves on the callback. So does any
-/// navigate before the first hello, same-origin or not.
+/// stays in the current document and resolves on the callback. So does a
+/// navigate with a known current page before the first hello, same-origin
+/// or not.
 async fn handle_navigate(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,

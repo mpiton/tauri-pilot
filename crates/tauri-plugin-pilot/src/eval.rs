@@ -50,8 +50,10 @@ pub(crate) fn origin_key(url: &Url) -> String {
 
 /// Origin keys `url` can match, including an `http` → `https` upgrade.
 ///
-/// HSTS (and similar) hops store the hello under `https://host` while
-/// `navigate` still asked for `http://host`. Same host and port, new scheme.
+/// HSTS (and similar) hops store the hello under `https://host:443` while
+/// `navigate` still asked for `http://host` or `http://host:80`. Drop an
+/// explicit HTTP default port so the upgrade key is `https://host:443`, not
+/// `https://host:80`.
 fn origin_keys(url: &Url) -> Vec<String> {
     let key = origin_key(url);
     if url.scheme() != "http" {
@@ -60,6 +62,9 @@ fn origin_keys(url: &Url) -> Vec<String> {
     let mut https = url.clone();
     if https.set_scheme("https").is_err() {
         return vec![key];
+    }
+    if https.port() == Some(80) {
+        let _ = https.set_port(None);
     }
     let https_key = origin_key(&https);
     if https_key == key {
@@ -642,6 +647,29 @@ mod tests {
                 .await,
             "a hello after since from the https upgrade must count"
         );
+        let http80 = Url::parse("http://example.com:80/").expect("valid test URL");
+        assert!(
+            engine.said_hello_since(&http80, since),
+            "http://host:80 must match a hello stored as https://host:443"
+        );
+        assert!(
+            engine
+                .wait_bridge(&http80, since, Duration::from_secs(1))
+                .await,
+            "wait_bridge must use the same :80 upgrade as said_hello_since"
+        );
+    }
+
+    #[test]
+    fn test_origin_keys_http_explicit_80_matches_https_443() {
+        let http80 = Url::parse("http://example.com:80/path").expect("valid test URL");
+        let https = Url::parse("https://example.com/").expect("valid test URL");
+        let keys = origin_keys(&http80);
+        assert!(
+            keys.contains(&origin_key(&https)),
+            "explicit :80 must upgrade to https://host:443, got {keys:?}"
+        );
+        assert_eq!(origin_key(&https), "https://example.com:443");
     }
 
     #[tokio::test(start_paused = true)]
