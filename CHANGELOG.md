@@ -246,8 +246,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list the full auto-detection order, including `--socket` and the Windows
   instance files, and the `socat`, MCP `--socket` and `login-flow.toml`
   examples use the default path. The plugin setup guide notes that the
-  socket log lines need a `tracing` subscriber and gives an `ls` check that
-  works without one. Docs only. [#285]
+  socket log lines need a `tracing` subscriber and gives a check per
+  platform that works without one. Docs only. [#285]
 
 ### Security
 
