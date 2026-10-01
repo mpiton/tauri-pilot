@@ -52,7 +52,7 @@ fn stdout_json(output: &Output) -> serde_json::Value {
 /// `--json`, exits 1, and writes nothing on stderr.
 #[test]
 fn json_failure_object_for_every_assert_kind() {
-    let cases: [(&[&str], serde_json::Value, serde_json::Value); 8] = [
+    let cases: [(&[&str], serde_json::Value, serde_json::Value); 9] = [
         (
             &["text", "#btn", "nope"],
             serde_json::json!("Log in"),
@@ -117,6 +117,11 @@ fn json_failure_object_for_every_assert_kind() {
             &["checked", "#terms"],
             serde_json::json!({"checked": false}),
             serde_json::json!({"ok": false, "message": "element is not checked"}),
+        ),
+        (
+            &["unchecked", "#terms"],
+            serde_json::json!({"checked": true}),
+            serde_json::json!({"ok": false, "message": "element is checked"}),
         ),
     ];
 
