@@ -1012,8 +1012,20 @@ command if the document is elsewhere. If the URL already moved after eval,
 the RPC fails immediately; a later timeout is reclassified the same way.
 `navigate` is not pinned. It assigns the absolute destination resolved from
 the URL at check time, so a relative path cannot resolve against a page that
-already left, and it still loads any URL. If the destination origin has never
-said hello, it waits up to 3 seconds for one and fails without it. A slow
+already left, and it still loads any URL. It returns once the new document's
+bridge says hello in the target window (a hello from another window on the
+same origin does not count), so the next command runs on the destination, not on the
+page being left. A `javascript:` URL or a change of `#fragment` alone keeps
+the document and returns on the page's answer, as does any `navigate` before
+the first hello. The page being left gets up to 3 seconds to answer first. If
+the destination origin has never said hello, `navigate` then waits up to 3
+seconds for one and fails without it; otherwise it waits up to 10 seconds, so
+the worst case is up to about 13 seconds. A same-origin `navigate` also
+accepts a hello from another bridged origin the window was redirected to.
+For a same-origin `navigate`, the error says whether the
+window never left the page (the navigation was cancelled or blocked) or
+loaded a document whose bridge stayed silent; a cross-origin destination
+fails with a "no pilot bridge answered there" error either way. A slow
 page allowed by `remote.urls` can miss that window on its first visit; later
 commands succeed once the hello arrives. On an origin that cannot call back,
 later commands fail at once with an error that names the page and the origins
