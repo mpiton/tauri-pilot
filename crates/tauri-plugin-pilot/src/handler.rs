@@ -715,14 +715,7 @@ async fn handle_navigate(
 
     match (page.as_ref(), dest.as_ref()) {
         (Some(page), Some(dest)) if origin_key(page) == origin_key(dest) => {
-            if !engine.has_bridge(page) {
-                Err(fail_no_bridge(engine, id, page))
-            } else if loads_new_document(page, dest, raw) {
-                await_departure(engine, id, rx).await?;
-                wait_dest_bridge(engine, dest, since).await
-            } else {
-                wait(engine, id, rx, DEFAULT_TIMEOUT).await
-            }
+            navigate_same_origin(engine, (id, rx), page, dest, raw, since).await
         }
         (Some(page), Some(dest)) => {
             if engine.has_bridge(page) {
@@ -745,6 +738,34 @@ async fn handle_navigate(
             wait_dest_bridge(engine, dest, since).await
         }
         (None, None) => wait(engine, id, rx, DEFAULT_TIMEOUT).await,
+    }
+}
+
+/// Finish a navigate whose destination shares the page's origin.
+///
+/// A new document must say hello after `since` (#260). A fragment change or
+/// a `javascript:` URL keeps the document, and before any hello the engine
+/// cannot know one will come, so those resolve on the page's callback.
+///
+/// # Errors
+///
+/// Fails when the page has no bridge, the page reports an eval error, or
+/// no hello arrives from the new document in time.
+async fn navigate_same_origin(
+    engine: &EvalEngine,
+    (id, rx): CallbackSlot,
+    page: &tauri::Url,
+    dest: &tauri::Url,
+    raw: Option<&str>,
+    since: u64,
+) -> Result<serde_json::Value, RpcError> {
+    if !engine.has_bridge(page) {
+        Err(fail_no_bridge(engine, id, page))
+    } else if since > 0 && loads_new_document(page, dest, raw) {
+        await_departure(engine, id, rx).await?;
+        wait_dest_bridge(engine, dest, since).await
+    } else {
+        wait(engine, id, rx, DEFAULT_TIMEOUT).await
     }
 }
 
@@ -824,11 +845,7 @@ async fn await_departure(
 ) -> Result<(), RpcError> {
     match engine.wait(id, rx, BRIDGE_GRACE).await {
         Ok(_) | Err(EvalError::Timeout(_)) => Ok(()),
-        Err(e) => Err(RpcError {
-            code: -32603,
-            message: format!("Eval error: {e}"),
-            data: None,
-        }),
+        Err(e) => Err(eval_rpc_error(&e)),
     }
 }
 
@@ -3170,6 +3187,7 @@ mod tests {
         let webviews = FakeWebviews::window("main", Some(APP_PAGE))
             .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
 
+        let start = tokio::time::Instant::now();
         let err = dispatch(
             "navigate",
             Some(&json!({"url": "/settings.html"})),
@@ -3180,11 +3198,56 @@ mod tests {
         .await
         .expect_err("no destination hello must not report ok");
         assert!(
+            start.elapsed() >= DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert!(
             err.message.contains("tauri://localhost/settings.html")
                 && err.message.contains("no pilot bridge answered"),
             "got: {}",
             err.message
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_before_any_hello_resolves_on_callback() {
+        // Without a hello the engine cannot tell whether hellos will come,
+        // so every command, navigate included, keeps the plain path.
+        let engine = EvalEngine::new();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
+
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("navigate before any hello resolves on the callback");
+        assert_eq!(result, json!({"ok": true}));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_within_app_origin_reports_departing_page_error() {
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Err("boom".to_owned())));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("an error from the departing page must be reported");
+        assert!(err.message.contains("boom"), "got: {}", err.message);
     }
 
     #[tokio::test(start_paused = true)]
