@@ -683,6 +683,7 @@ mod tests {
         let fill_body = bridge_fn_body(js, "function fill(params)");
         let type_body = bridge_fn_body(js, "function typeText(params)");
         let check_body = bridge_fn_body(js, "function check(params)");
+        let checked_body = bridge_fn_body(js, "function checked(params)");
         let editable_body = bridge_fn_body(js, "function requireEditable(");
         let checkable_body = bridge_fn_body(js, "function requireCheckable(");
 
@@ -695,8 +696,12 @@ mod tests {
             "typeText must reject non-editable targets before writing (#154)"
         );
         assert!(
-            check_body.contains("requireCheckable("),
+            check_body.contains("requireCheckable(el, \"check\")"),
             "check must reject non-checkbox/radio targets before toggling (#154)"
+        );
+        assert!(
+            checked_body.contains("requireCheckable(el, \"checked\")"),
+            "checked must reject non-checkbox/radio targets so assert unchecked cannot pass on them (#286)"
         );
         assert!(
             editable_body
@@ -704,9 +709,10 @@ mod tests {
             "fill/type error must name the accepted elements (#154)"
         );
         assert!(
-            checkable_body
-                .contains("check requires an <input type=\"checkbox\"> or <input type=\"radio\">"),
-            "check error must name checkbox and radio (#154)"
+            checkable_body.contains(
+                "action + ' requires an <input type=\"checkbox\"> or <input type=\"radio\">"
+            ),
+            "check/checked error must name the action, checkbox and radio (#154, #286)"
         );
         assert!(
             !editable_body.contains("instanceof") && !checkable_body.contains("instanceof"),

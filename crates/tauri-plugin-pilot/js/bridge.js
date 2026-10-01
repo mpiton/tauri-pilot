@@ -1236,12 +1236,12 @@
     throw new Error(action + " requires an <input>, <textarea>, or contenteditable element, got: " + reported);
   }
 
-  function requireCheckable(el) {
+  function requireCheckable(el, action) {
     const tag = elementTag(el);
     const type = el && el.type != null ? String(el.type).toLowerCase() : "";
     if (tag === "input" && (type === "checkbox" || type === "radio")) return;
     const reported = (tag === "input" ? "input type=" + type : tag || String(el)).slice(0, 64);
-    throw new Error('check requires an <input type="checkbox"> or <input type="radio">, got: ' + reported);
+    throw new Error(action + ' requires an <input type="checkbox"> or <input type="radio">, got: ' + reported);
   }
 
   function ownerDoc(el) {
@@ -1401,7 +1401,7 @@
 
   function check(params) {
     const el = resolveTarget(params);
-    requireCheckable(el);
+    requireCheckable(el, "check");
     const type = el && el.type != null ? String(el.type).toLowerCase() : "";
     // Radios have no click-to-uncheck; a selected one stays as it is.
     if (type === "radio" && el.checked) return { ok: true };
@@ -1754,6 +1754,9 @@
 
   function checked(params) {
     const el = resolveTarget(params);
+    // Without the guard, any other element reports `false` and
+    // `assert unchecked` passes on a wrong target (#286).
+    requireCheckable(el, "checked");
     return { checked: !!el.checked };
   }
 

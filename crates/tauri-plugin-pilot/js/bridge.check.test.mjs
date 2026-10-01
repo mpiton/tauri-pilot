@@ -156,3 +156,28 @@ test("check throws on a non-checkable input", () => {
   );
   assert.equal(el.checked, false);
 });
+
+// `checked` backs `assert checked` and `assert unchecked` (#286). Reading
+// `!!el.checked` on any target reported `false` for a <div> or a text input,
+// so `assert unchecked` passed on a wrong selector. It must reject the target
+// with the same guard as `check`, and name the action in the error.
+test("checked reports the state of a checkbox and a radio", () => {
+  assert.deepEqual(loadBridge(makeInput("checkbox", true)).checked({ selector: "input" }), { checked: true });
+  assert.deepEqual(loadBridge(makeInput("radio", false)).checked({ selector: "input" }), { checked: false });
+});
+
+test("checked throws on a non-input target", () => {
+  const pilot = loadBridge({ tagName: "DIV" });
+  assert.throws(
+    () => pilot.checked({ selector: "#remember" }),
+    /^Error: checked requires an <input type="checkbox"> or <input type="radio">, got: div$/,
+  );
+});
+
+test("checked throws on a non-checkable input", () => {
+  const pilot = loadBridge(makeInput("text", false));
+  assert.throws(
+    () => pilot.checked({ selector: "input[name=q]" }),
+    /^Error: checked requires an <input type="checkbox"> or <input type="radio">, got: input type=text$/,
+  );
+});

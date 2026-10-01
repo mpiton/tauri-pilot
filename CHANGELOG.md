@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `assert checked` and `assert unchecked` (and the MCP `assert_checked` and
+  `assert_unchecked` tools) now fail with an error when the target is not a
+  checkbox or radio input. The bridge's `checked` method used to report
+  `false` for any other element, so `assert unchecked` passed on a wrong
+  selector. [#286]
+
 - `tauri` floor raised from 2.11.3 to 2.12.0. `tauri-runtime` 2.12.0 changed
   its monitor and window traits, and `tauri` 2.11.3 accepts it through a caret
   requirement, so a fresh resolve of 2.11.3 no longer compiles. `tauri` 2.12.0

@@ -305,7 +305,7 @@ pub(crate) enum AssertKind {
     Value { target: String, expected: String },
     /// Assert element count matching selector
     Count { selector: String, expected: u64 },
-    /// Assert checkbox is checked
+    /// Assert checkbox or radio is checked
     Checked { target: String },
     /// Assert checkbox or radio is not checked
     Unchecked { target: String },
