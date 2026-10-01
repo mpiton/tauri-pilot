@@ -1044,10 +1044,13 @@ the worst case is up to about 13 seconds. A same-origin `navigate` also
 accepts a hello from another bridged origin the window was redirected to.
 For a same-origin `navigate`, the error says whether the
 window never left the page (the navigation was cancelled or blocked) or
-loaded a document whose bridge stayed silent; a cross-origin destination
-fails with a "no pilot bridge answered there" error either way. A slow
-page allowed by `remote.urls` can miss that window on its first visit; later
-commands succeed once the hello arrives. On an origin that cannot call back,
+loaded a document whose bridge stayed silent. A cross-origin destination
+that never loads (for example, a server that refuses the connection) fails
+with "did not load" and names the page the window still shows; a page that
+loads without a bridge fails with a "no pilot bridge answered there" error
+that names it. A slow page allowed by `remote.urls` can miss that window on
+its first visit; later commands succeed once the hello arrives. On an origin
+that cannot call back,
 later commands fail at once with an error that names the page and the origins
 that work. Run `tauri-pilot navigate` with an app URL to get the session
 back.

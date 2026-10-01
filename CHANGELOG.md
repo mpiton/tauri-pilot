@@ -117,6 +117,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `run` steps. Over MCP a finished replay stays a successful tool result with
   `status` `"failed"`, like `pilot.run`. Scripts that relied on `replay`
   exiting 0 after failed steps must handle exit status 1. [#275]
+- A cross-origin `navigate` whose destination never loads, such as a server
+  that refuses the connection, fails with `navigate to <url> did not load:
+  the window still shows <page>`. It said `navigated to <url>` and told the
+  user to allow the origin in a capability's `remote.urls`, while the window
+  had stayed on the old page. When the window landed on another page than the
+  destination, the error now names that page. The old message remains when
+  the window reached the destination and no bridge answers there. [#278]
 
 ### Security
 
@@ -1309,3 +1316,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#272]: https://github.com/mpiton/tauri-pilot/issues/272
 [#277]: https://github.com/mpiton/tauri-pilot/issues/277
 [#275]: https://github.com/mpiton/tauri-pilot/issues/275
+[#278]: https://github.com/mpiton/tauri-pilot/issues/278
