@@ -234,6 +234,27 @@ impl EvalEngine {
             .is_ok_and(|seen| seen.is_ok())
     }
 
+    /// Whether the origin of `url` said hello after hello number `since`.
+    ///
+    /// Accepts the `https` upgrade of an `http` URL, like [`Self::wait_bridge`].
+    pub fn said_hello_since(&self, url: &Url, since: u64) -> bool {
+        let bridges = self.bridges.borrow();
+        origin_keys(url)
+            .iter()
+            .any(|key| bridges.latest.get(key).is_some_and(|&n| n > since))
+    }
+
+    /// Wait until the hello count exceeds `seen`, from any origin.
+    ///
+    /// Returns `false` when no new hello arrives within `limit`.
+    pub async fn wait_hello_after(&self, seen: u64, limit: Duration) -> bool {
+        let mut rx = self.bridges.subscribe();
+        let hello = rx.wait_for(move |b| b.hellos > seen);
+        tokio::time::timeout(limit, hello)
+            .await
+            .is_ok_and(|seen| seen.is_ok())
+    }
+
     /// Store the last snapshot result for later diff comparison.
     ///
     /// Note: `store_snapshot` and `get_last_snapshot` each acquire the lock independently.

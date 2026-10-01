@@ -65,7 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when its origin already said hello before. It returned on the departing
   page's answer, which is sent before the load starts, so the next `eval`,
   `snapshot` or `click` could run on the page being left. A `javascript:` URL
-  or a fragment-only change still returns on the page's answer. [#260]
+  or a fragment-only change still returns on the page's answer. A same-origin
+  `navigate` to a document that never says hello now fails, after up to about
+  13 seconds, instead of reporting ok. [#260]
 
 ## [0.8.0] - 2026-09-24
 

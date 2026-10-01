@@ -692,7 +692,8 @@ const BRIDGE_GRACE: Duration = Duration::from_secs(3);
 /// alone proves nothing about the destination. Whenever the navigation loads
 /// a new document, the hello of that document is the proof, even when its
 /// origin already has a bridge. A `javascript:` URL or a fragment change
-/// stays in the current document and resolves on the callback.
+/// stays in the current document and resolves on the callback. So does any
+/// navigate before the first hello, same-origin or not.
 async fn handle_navigate(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
@@ -714,8 +715,13 @@ async fn handle_navigate(
     let (id, rx) = send_script(&script, engine, target.as_ref(), None)?;
 
     match (page.as_ref(), dest.as_ref()) {
+        // Before the first hello the engine cannot know a hello will ever
+        // come, for this origin or any other, so every branch keeps the plain
+        // path and resolves on the page's callback, as all commands do.
+        (Some(_), _) if since == 0 => wait(engine, id, rx, DEFAULT_TIMEOUT).await,
         (Some(page), Some(dest)) if origin_key(page) == origin_key(dest) => {
-            navigate_same_origin(engine, (id, rx), page, dest, raw, since).await
+            let slot = (id, rx);
+            navigate_same_origin(engine, slot, target, page, dest, raw, since).await
         }
         (Some(page), Some(dest)) => {
             if engine.has_bridge(page) {
@@ -744,8 +750,8 @@ async fn handle_navigate(
 /// Finish a navigate whose destination shares the page's origin.
 ///
 /// A new document must say hello after `since` (#260). A fragment change or
-/// a `javascript:` URL keeps the document, and before any hello the engine
-/// cannot know one will come, so those resolve on the page's callback.
+/// a `javascript:` URL keeps the document, so those resolve on the page's
+/// callback. The caller handles `since == 0`.
 ///
 /// # Errors
 ///
@@ -754,6 +760,7 @@ async fn handle_navigate(
 async fn navigate_same_origin(
     engine: &EvalEngine,
     (id, rx): CallbackSlot,
+    target: Box<dyn TargetWindow + '_>,
     page: &tauri::Url,
     dest: &tauri::Url,
     raw: Option<&str>,
@@ -761,11 +768,74 @@ async fn navigate_same_origin(
 ) -> Result<serde_json::Value, RpcError> {
     if !engine.has_bridge(page) {
         Err(fail_no_bridge(engine, id, page))
-    } else if since > 0 && loads_new_document(page, dest, raw) {
+    } else if loads_new_document(page, dest, raw) {
         await_departure(engine, id, rx).await?;
-        wait_dest_bridge(engine, dest, since).await
+        wait_same_origin_hello(engine, target, page, dest, since).await
     } else {
         wait(engine, id, rx, DEFAULT_TIMEOUT).await
+    }
+}
+
+/// Wait for the new document of a same-origin navigate to say hello.
+///
+/// A hello from `dest`'s origin after `since` is the proof. A server redirect
+/// can land on another origin whose bridge also works, so a
+/// hello after `since` from the origin the window now shows counts too.
+///
+/// # Errors
+///
+/// Fails after [`DEFAULT_TIMEOUT`] with an error that tells a navigation
+/// that never happened from a document whose bridge stayed silent.
+async fn wait_same_origin_hello(
+    engine: &EvalEngine,
+    target: Box<dyn TargetWindow + '_>,
+    page: &tauri::Url,
+    dest: &tauri::Url,
+    since: u64,
+) -> Result<serde_json::Value, RpcError> {
+    let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
+    loop {
+        // Read the count before checking, so a hello landing in between
+        // wakes the wait below instead of being missed.
+        let seen = engine.hellos();
+        let now = target.url();
+        let redirected_hello = now
+            .as_ref()
+            .is_some_and(|now| now != page && engine.said_hello_since(now, since));
+        if engine.said_hello_since(dest, since) || redirected_hello {
+            return Ok(serde_json::json!({"ok": true}));
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() || !engine.wait_hello_after(seen, remaining).await {
+            return Err(same_origin_silence_error(page, dest, target.url().as_ref()));
+        }
+    }
+}
+
+/// Error for a same-origin navigate whose new document never said hello.
+///
+/// The page's origin is known to answer, so the "navigate back or allow
+/// this origin in `remote.urls`" hint of [`no_bridge_error`] does not apply.
+fn same_origin_silence_error(
+    page: &tauri::Url,
+    dest: &tauri::Url,
+    now: Option<&tauri::Url>,
+) -> RpcError {
+    let message = match now {
+        Some(now) if now == page && dest != page => format!(
+            "navigate to {dest} did not happen: the window still shows {page} after \
+             {DEFAULT_TIMEOUT:?}, so the navigation was cancelled or blocked"
+        ),
+        now => format!(
+            "navigate to {dest} loaded a new document ({}), but its pilot bridge \
+             never said hello within {DEFAULT_TIMEOUT:?}",
+            now.unwrap_or(dest)
+        ),
+    };
+    RpcError {
+        code: -32603,
+        message,
+        data: None,
     }
 }
 
@@ -3202,12 +3272,157 @@ mod tests {
             "took {:?}",
             start.elapsed()
         );
-        assert!(
-            err.message.contains("tauri://localhost/settings.html")
-                && err.message.contains("no pilot bridge answered"),
-            "got: {}",
-            err.message
+        // The window never left the page, so the navigation did not happen.
+        assert_eq!(
+            err.message,
+            "navigate to tauri://localhost/settings.html did not happen: the window \
+             still shows tauri://localhost/ after 10s, so the navigation was cancelled \
+             or blocked"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_within_app_origin_reports_silent_new_document() {
+        // The window reached the new document, but its bridge stayed silent.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || {
+            engine_clone.resolve(1, Ok(json!({"ok": true})));
+            webviews_clone.set_url("main", Some("tauri://localhost/settings.html"));
+        });
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a silent new document must not report ok");
+        assert_eq!(
+            err.message,
+            "navigate to tauri://localhost/settings.html loaded a new document \
+             (tauri://localhost/settings.html), but its pilot bridge never said hello \
+             within 10s"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_within_app_origin_accepts_redirect_to_bridged_origin() {
+        // A same-origin URL whose server redirects to another origin with a
+        // working bridge must still succeed on that origin's hello.
+        let engine = engine_with_app_bridge();
+        let redirect = "https://auth.example/login";
+        handle_callback(&engine, HELLO_ID, None, None, Some(&url(redirect)));
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let webviews_clone = webviews.clone();
+        let delay = Duration::from_millis(500);
+        let webviews = webviews.on_eval(move || {
+            let engine = engine_clone.clone();
+            engine.resolve(1, Ok(json!({"ok": true})));
+            webviews_clone.set_url("main", Some(redirect));
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                handle_callback(&engine, HELLO_ID, None, None, Some(&url(redirect)));
+            });
+        });
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/logout"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("a redirect to a bridged origin succeeds on its hello");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() >= delay && start.elapsed() < DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_within_app_origin_survives_departure_timeout() {
+        // WebKitGTK can tear the page down before `__callback` runs.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let hello_after = Duration::from_secs(4);
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE)).on_eval(move || {
+            let engine = engine_clone.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(hello_after).await;
+                handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
+            });
+        });
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("a lost departure callback is not fatal when the dest says hello");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() >= BRIDGE_GRACE,
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_reload_waits_for_hello() {
+        // `navigate <same url>` reloads, so the new document must say hello.
+        let engine = engine_with_app_bridge();
+        let delay = Duration::from_millis(500);
+        let webviews = navigating_webviews(&engine, APP_PAGE, APP_PAGE, delay);
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": APP_PAGE})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("reload succeeds once the page says hello again");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(start.elapsed() >= delay, "took {:?}", start.elapsed());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_before_any_hello_resolves_on_callback() {
+        // Same rule as same-origin: without a hello the engine cannot know
+        // one will come, so a cross-origin navigate keeps the plain path.
+        let engine = EvalEngine::new();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": FOREIGN_PAGE})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("cross-origin navigate before any hello resolves on the callback");
+        assert_eq!(result, json!({"ok": true}));
+        assert_eq!(start.elapsed(), Duration::ZERO, "must not wait for a hello");
     }
 
     #[tokio::test(start_paused = true)]
