@@ -252,8 +252,12 @@ Failure screenshots auto-saved to `./tauri-pilot-failures/`, or to `run --screen
 
 ## Socket Auto-Detection
 
-1. `$TAURI_PILOT_SOCKET` env var
-2. Most recent `/tmp/tauri-pilot-*.sock` file
+1. `--socket <path>` flag
+2. `$TAURI_PILOT_SOCKET` env var
+3. Linux/macOS: newest live `tauri-pilot-*.sock` in `$XDG_RUNTIME_DIR`, then in `/tmp`
+4. Windows: newest live instance in `%LOCALAPPDATA%\tauri-pilot\instances\*.json`, which names the Named Pipe
+
+The plugin creates `$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock` when that directory is private (owned by you, no group/other access), else `/tmp/tauri-pilot-{identifier}.sock`.
 
 ## Examples
 

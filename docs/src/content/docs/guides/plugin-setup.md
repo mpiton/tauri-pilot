@@ -74,18 +74,28 @@ Release builds never see any of this.
 Once your app starts in dev mode, the plugin creates a Unix socket at:
 
 ```text
-/tmp/tauri-pilot-{identifier}.sock
+$XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock
 ```
 
 The `{identifier}` value comes from the `identifier` field in your `tauri.conf.json`.
 
-**Example:** an app with identifier `com.myapp.dev` creates the socket at:
+The plugin uses `$XDG_RUNTIME_DIR` only when it is a private directory: owned by you, with no group or other access. When it is unset, empty or not private, the socket goes to `/tmp/tauri-pilot-{identifier}.sock` instead; a non-private directory also logs `XDG_RUNTIME_DIR is not a private directory, falling back to /tmp`. Most Linux desktops set a private `$XDG_RUNTIME_DIR` (`/run/user/<uid>`). macOS usually leaves it unset, so the socket lands in `/tmp`.
+
+On Windows the plugin listens on the Named Pipe `\\.\pipe\tauri-pilot-{identifier}` and registers it in `%LOCALAPPDATA%\tauri-pilot\instances\{identifier}.json`.
+
+**Example:** an app with identifier `com.myapp.dev`, run by user 1000 on a Linux desktop, creates the socket at:
 
 ```text
-/tmp/tauri-pilot-com.myapp.dev.sock
+/run/user/1000/tauri-pilot-com.myapp.dev.sock
 ```
 
-The CLI auto-discovers this socket when you run commands.
+The startup log line `tauri-pilot socket listening` (`tauri-pilot named pipe listening` on Windows) shows the path in use. The CLI auto-discovers the socket when you run commands; see [Socket Auto-Detection](/tauri-pilot/reference/cli/#socket-auto-detection) for the order it searches in. To talk to it by hand:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/tauri-pilot-com.myapp.dev.sock"
+# after the /tmp fallback:
+echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:/tmp/tauri-pilot-com.myapp.dev.sock
+```
 
 ## 5. Permissions
 
