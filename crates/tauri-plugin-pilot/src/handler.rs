@@ -751,14 +751,16 @@ async fn handle_navigate(
 /// Finish a navigate sent before the first hello, as at app startup (#270).
 ///
 /// Before the first hello the engine cannot know a hello will ever come.
-/// By the time the page calls back it can: `eval` only runs in a document
-/// whose init script already ran, and the bridge says hello at the end of
-/// that script. So once the callback lands, a navigate that loads a new
+/// By the time the page calls back it usually can: `eval` only runs in a
+/// document whose init script already ran, and the bridge sends its hello
+/// at the end of that script. The hello is not awaited, so it is sent
+/// before the callback but nothing guarantees it is recorded first. Once
+/// the callback lands with a hello recorded, a navigate that loads a new
 /// document waits for the target window's hello like any later navigate:
 /// up to [`DEFAULT_TIMEOUT`] on an origin that already said hello, up to
 /// [`BRIDGE_GRACE`] on one that never did, then fails (#153). Without a
-/// recorded hello by then (the hello was dropped) or without a new
-/// document, the callback settles it, as before #270.
+/// recorded hello by then (the hello is still in flight or was dropped) or
+/// without a new document, the callback settles it, as before #270.
 ///
 /// # Errors
 ///
@@ -3894,8 +3896,9 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_dispatch_navigate_at_startup_without_hello_resolves_on_callback() {
-        // The page calls back but no hello was recorded (dropped on an
-        // origin mismatch): no proof a hello will come, keep the plain path.
+        // The page calls back but no hello was recorded (still in flight,
+        // or dropped on an origin mismatch): no proof a hello will come,
+        // keep the plain path.
         let engine = EvalEngine::new();
         let engine_clone = engine.clone();
         let webviews = FakeWebviews::window("main", Some(APP_PAGE))

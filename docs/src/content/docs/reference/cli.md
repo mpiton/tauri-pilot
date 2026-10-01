@@ -1021,7 +1021,8 @@ the app starts, before any page said hello, gives the page up to 10 seconds
 to answer, then waits for the destination's hello as below: up to 10
 seconds when the destination origin has said hello by then, up to 3 seconds
 when it has not, so up to about 20 seconds. If no hello at all was
-recorded by the time the page answers (a dropped hello), it returns on the
+recorded by the time the page answers (the hello is still in flight or was
+dropped), it returns on the
 answer. In all other cases, the page being left
 gets up to 3 seconds to answer first. If
 the destination origin has never said hello, `navigate` then waits up to 3
