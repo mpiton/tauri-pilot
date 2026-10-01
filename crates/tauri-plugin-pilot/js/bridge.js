@@ -712,26 +712,34 @@
   // <textarea> subtrees are skipped, the control's own and any other, so a
   // wrapping label does not leak their options or contents into the name.
   // A labelled button keeps its own text after the label's, as in accname.
-  // Subtrees marked `aria-hidden="true"` or `hidden` are not part of the name
-  // (accname step 2A), e.g. a required-field asterisk.
+  // Hidden content is not part of the name (accname step 2A), e.g. a
+  // required-field asterisk: subtrees marked `aria-hidden="true"`, `hidden`
+  // or `display: none` are skipped. `visibility: hidden` drops the node's own
+  // text only, since a descendant can set `visibility: visible` again.
   function labelText(el) {
     const labels = el.labels;
     if (!labels || labels.length === 0) return "";
+    const canStyle = typeof window.getComputedStyle === "function";
     const parts = [];
-    function collect(node) {
+    function collect(node, visible) {
       if (node.tagName === "SELECT" || node.tagName === "TEXTAREA") return;
       if (node.nodeType === Node.TEXT_NODE) {
-        parts.push(node.nodeValue || "");
+        if (visible) parts.push(node.nodeValue || "");
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (node.getAttribute("aria-hidden") === "true" || node.hasAttribute("hidden")) {
-        return;
+      const ariaHidden = String(node.getAttribute("aria-hidden") || "").trim().toLowerCase();
+      if (ariaHidden === "true" || node.hasAttribute("hidden")) return;
+      let shown = visible;
+      const style = canStyle ? window.getComputedStyle(node) : null;
+      if (style) {
+        if (style.display === "none") return;
+        shown = style.visibility !== "hidden" && style.visibility !== "collapse";
       }
-      for (const child of node.childNodes || []) collect(child);
+      for (const child of node.childNodes || []) collect(child, shown);
     }
     for (const label of labels) {
-      collect(label);
+      collect(label, true);
       parts.push(" ");
     }
     return parts.join("").replace(/\s+/g, " ").trim();

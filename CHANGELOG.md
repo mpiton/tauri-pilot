@@ -43,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   options. An element with no other name, such as an icon-only button, now
   falls back to its `title`, and a text input or textarea takes its `title`
   before its `placeholder`. Hidden parts of a label (`hidden`,
-  `aria-hidden="true"`) stay out of the name. `diff` against a reference saved before this fix
+  `aria-hidden="true"`, `display: none`, `visibility: hidden`) stay out of the
+  name. `diff` against a reference saved before this fix
   reports the renamed elements as removed and added. [#277]
 
 - `network` reports `request_size` and `response_size` in bytes for text

@@ -480,6 +480,38 @@ test("snapshot drops hidden label text from the name (#277)", () => {
   assert.equal(phoneEl.name, "Phone", "hidden text is not part of the name");
 });
 
+test("snapshot drops CSS-hidden label text from the name (#277)", () => {
+  const email = makeEl("input", { attrs: { type: "email" } });
+  const star = makeEl("span", { text: "*", attrs: { class: "req" } });
+  star.computed = { display: "none", visibility: "visible" };
+  const emailLabel = makeLabel(["Email ", star, " ", email]);
+  email.labels = [emailLabel];
+  // visibility is inherited but can be overridden, so a visible child of a
+  // visibility:hidden span still counts, unlike a display:none subtree.
+  const shown = makeEl("span", { text: "number" });
+  shown.computed = { display: "inline", visibility: "visible" };
+  const veiled = makeEl("span", { text: "(optional) " });
+  veiled.childNodes = [textNode("(optional) "), shown];
+  veiled.computed = { display: "inline", visibility: "hidden" };
+  const phone = makeEl("input", { attrs: { type: "tel" } });
+  const phoneLabel = makeLabel(["Phone ", veiled, " ", phone]);
+  phone.labels = [phoneLabel];
+  const caps = makeEl("input", { attrs: { type: "text" } });
+  const capsStar = makeEl("span", { text: "*", attrs: { "aria-hidden": "TRUE" } });
+  const capsLabel = makeLabel(["Name ", capsStar, " ", caps]);
+  caps.labels = [capsLabel];
+  const body = makeEl("body", { children: [emailLabel, phoneLabel, capsLabel] });
+  const pilot = loadBridge(body);
+  globalThis.window.getComputedStyle = (el) =>
+    el.computed || { display: "inline", visibility: "visible" };
+
+  const [emailEl, phoneEl, capsEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(emailEl.name, "Email", "display:none text is not part of the name");
+  assert.equal(phoneEl.name, "Phone number", "visibility:hidden text is not either");
+  assert.equal(capsEl.name, "Name", "aria-hidden is matched case-insensitively");
+});
+
 test("snapshot keeps a button's text ahead of its title (#277)", () => {
   const button = makeEl("button", { text: "Close", attrs: { title: "Close dialog" } });
   button.labels = [];
