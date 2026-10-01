@@ -113,6 +113,11 @@ The MCP server exposes tools for the CLI's app-facing commands, including
 `navigate`, `url`, `title`, `wait`, `watch`, `logs`, `network`, `storage_*`,
 `forms`, `assert_*`, `record_*`, `replay`, and `run`.
 
+`pilot.screenshot` returns the PNG as one MCP `image` content block
+(`mimeType: "image/png"`, base64 `data` without the `data:` prefix) and no
+structured content; errors keep the usual `error` fields. On long pages pass
+`selector`: a full-page capture can exceed a client's image size limit.
+
 `pilot.run` executes a declarative TOML scenario. Pass `path` to a `.toml` file
 or inline `content` (not both), optionally set `fail_fast` to override the file,
 and read the JSON report (`ok`, counts, `summary`, `steps`). A failed step also
