@@ -133,6 +133,14 @@ pub(crate) enum EvalError {
 /// synchronous `__callback` command), so `hellos` counts exactly the hellos
 /// the engine saw before this callback. Reading [`EvalEngine::hellos`] once
 /// the waiter wakes up could already include a later hello (#270).
+///
+/// A navigate at startup uses this count as its baseline, which assumes the
+/// departing page's callback is recorded before the destination's hello.
+/// Nothing orders those two requests, but in practice the callback lands
+/// first (about 660 ms after the navigate in #270, well before the
+/// destination loads). If the destination's hello is recorded first, the
+/// wait does not see it and navigate fails after the timeout: a false
+/// error, never a false ok.
 #[derive(Debug)]
 pub(crate) struct Reply {
     result: Result<serde_json::Value, String>,

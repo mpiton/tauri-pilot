@@ -693,8 +693,8 @@ const BRIDGE_GRACE: Duration = Duration::from_secs(3);
 /// a new document, the hello of that document is the proof, even when its
 /// origin already has a bridge. A `javascript:` URL or a fragment change
 /// stays in the current document and resolves on the callback. A navigate
-/// sent before the first hello is settled once the page calls back: see
-/// [`navigate_at_startup`].
+/// sent before the first hello waits for the page's callback first, then
+/// for the destination's hello the same way: see [`navigate_at_startup`].
 async fn handle_navigate(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
@@ -754,10 +754,11 @@ async fn handle_navigate(
 /// By the time the page calls back it can: `eval` only runs in a document
 /// whose init script already ran, and the bridge says hello at the end of
 /// that script. So once the callback lands, a navigate that loads a new
-/// document on an origin that already said hello waits for the target
-/// window's hello like any later navigate. Without a recorded hello by then
-/// (the hello was dropped), on an origin that never said hello, or without
-/// a new document, the callback settles it, as before #270.
+/// document waits for the target window's hello like any later navigate:
+/// up to [`DEFAULT_TIMEOUT`] on an origin that already said hello, up to
+/// [`BRIDGE_GRACE`] on one that never did, then fails (#153). Without a
+/// recorded hello by then (the hello was dropped) or without a new
+/// document, the callback settles it, as before #270.
 ///
 /// # Errors
 ///
@@ -774,8 +775,12 @@ async fn navigate_at_startup(
     // The baseline is the hello count when the callback was recorded, not
     // when this task wakes up. The destination can say hello in between,
     // and a baseline read after it would hide that hello until the timeout.
-    // A hello recorded before the callback comes from the departing page,
-    // which calls back before it unloads.
+    // This assumes the departing page's callback is recorded before the
+    // destination's hello. They are two IPC requests from two documents and
+    // nothing orders them, but in practice the callback lands first (about
+    // 660 ms after the navigate in #270, well before the destination loads).
+    // If the destination's hello is recorded first, the wait does not see it
+    // and navigate fails after the timeout: a false error, never a false ok.
     let (value, hellos_at_callback) = engine
         .wait_with_hellos(id, rx, DEFAULT_TIMEOUT)
         .await
@@ -783,7 +788,7 @@ async fn navigate_at_startup(
     let Some(dest) = dest else {
         return Ok(value);
     };
-    if hellos_at_callback == 0 || !engine.has_bridge(dest) || !loads_new_document(page, dest, raw) {
+    if hellos_at_callback == 0 || !loads_new_document(page, dest, raw) {
         Ok(value)
     } else if origin_key(page) == origin_key(dest) {
         wait_same_origin_hello(engine, target, page, dest, hellos_at_callback).await
@@ -3777,6 +3782,80 @@ mod tests {
             "returned before the destination loaded, after {:?}",
             start.elapsed()
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_to_foreign_origin_does_not_report_ok() {
+        // #153 at startup: once the start page said hello, a navigate to an
+        // origin that never says hello fails like any later navigate.
+        let engine = EvalEngine::new();
+        let webviews = startup_webviews(
+            &engine,
+            &[("main", Some(APP_PAGE))],
+            "main",
+            APP_PAGE,
+            |_| {},
+        );
+
+        let start = tokio::time::Instant::now();
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": FOREIGN_PAGE})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("navigate at startup to a silent foreign origin must not report ok");
+
+        assert!(
+            start.elapsed() >= BRIDGE_GRACE,
+            "must wait the 3s grace, took {:?}",
+            start.elapsed()
+        );
+        assert!(
+            start.elapsed() < DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+        assert_eq!(err.code, -32603);
+        assert!(err.message.contains(FOREIGN_PAGE), "got: {}", err.message);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_to_new_origin_reports_ok_on_its_hello() {
+        // A foreign origin allowed in `remote.urls` says hello within the
+        // grace on its first visit, so the startup navigate reports ok then.
+        let engine = EvalEngine::new();
+        let dest = "https://allowed.example/";
+        let delay = Duration::from_millis(500);
+        let webviews = startup_webviews(
+            &engine,
+            &[("main", Some(APP_PAGE))],
+            "main",
+            APP_PAGE,
+            move |engine| {
+                hello_later(engine, "main", dest, delay);
+            },
+        );
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": dest})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("navigate to a new origin succeeds once it says hello");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() >= delay,
+            "returned before the destination loaded, after {:?}",
+            start.elapsed()
+        );
+        assert!(start.elapsed() < BRIDGE_GRACE, "took {:?}", start.elapsed());
     }
 
     #[tokio::test(start_paused = true)]

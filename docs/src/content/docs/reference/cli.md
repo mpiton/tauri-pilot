@@ -1018,11 +1018,11 @@ same origin does not count), so the next command runs on the destination, not on
 page being left. A `javascript:` URL or a change of `#fragment` alone keeps
 the document and returns on the page's answer. A `navigate` sent right after
 the app starts, before any page said hello, gives the page up to 10 seconds
-to answer, then waits up to 10 seconds for the destination's hello when the
-destination origin has said hello by then, so up to about 20 seconds. If no
-hello was recorded by then, or the destination origin never said hello, it
-returns on the answer. In all other cases, the page being left gets up to 3
-seconds to answer first. If
+to answer, then waits for the destination's hello as below: up to 10
+seconds when the destination origin has said hello by then, up to 3 seconds
+when it has not, so up to about 20 seconds. If no hello was recorded by
+then, it returns on the answer. In all other cases, the page being left
+gets up to 3 seconds to answer first. If
 the destination origin has never said hello, `navigate` then waits up to 3
 seconds for one and fails without it; otherwise it waits up to 10 seconds, so
 the worst case is up to about 13 seconds. A same-origin `navigate` also

@@ -75,10 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer, so the first `eval` of a script that launches the app and then
   navigates still ran on the start page. The start page says hello before it
   can answer, so once it answers, `navigate` waits for the destination's
-  hello whenever the destination origin has said hello, as later navigates
-  do, for up to about 20 seconds in all. A destination origin with no hello
-  yet, a `javascript:` URL and a fragment-only change still return on the
-  page's answer. [#270]
+  hello as later navigates do: up to 10 seconds when the destination origin
+  has said hello, up to 3 seconds when it has not, then fails, for up to
+  about 20 seconds in all. A startup `navigate` to an origin that never says
+  hello no longer reports ok. A `javascript:` URL and a fragment-only change
+  still return on the page's answer. [#270]
 
 ### Security
 
