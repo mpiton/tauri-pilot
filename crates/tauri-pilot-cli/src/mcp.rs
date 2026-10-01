@@ -347,6 +347,17 @@ impl PilotMcpServer {
                 )
                 .await
             }
+            "storage_delete" => {
+                self.call_app_tool(
+                    "storage.delete",
+                    Some(json!({
+                        "key": required_string(&args, "key")?,
+                        "session": optional_bool(&args, "session")?.unwrap_or(false),
+                    })),
+                    window,
+                )
+                .await
+            }
             "storage_clear" => {
                 self.call_app_tool(
                     "storage.clear",
@@ -1057,9 +1068,17 @@ fn tool_specs() -> Vec<ToolSpec> {
             idempotent: true,
         },
         ToolSpec {
+            name: "storage_delete",
+            description: "Remove one localStorage or sessionStorage key; succeeds when it is missing.",
+            schema: storage_key_schema,
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        ToolSpec {
             name: "storage_get",
             description: "Read a localStorage or sessionStorage key.",
-            schema: storage_get_schema,
+            schema: storage_key_schema,
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1797,7 +1816,8 @@ fn session_schema() -> Arc<JsonObject> {
     )
 }
 
-fn storage_get_schema() -> Arc<JsonObject> {
+/// Schema for tools taking one storage `key` (`storage_get`, `storage_delete`).
+fn storage_key_schema() -> Arc<JsonObject> {
     object_schema(
         props([
             ("key", string_prop("Storage key.")),
@@ -2086,6 +2106,7 @@ mod tests {
             "snapshot",
             "state",
             "storage_clear",
+            "storage_delete",
             "storage_get",
             "storage_list",
             "storage_set",
@@ -2816,6 +2837,58 @@ path = "/tmp/out.png"
         let (_, params) = visible_params_for_assert("assert_visible").await;
         assert_eq!(params["selector"], json!("#gone"));
         assert!(params.get("missingOk").is_none(), "params={params}");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn storage_delete_forwards_key_and_session() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-storage-delete-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "storage.delete");
+            assert_eq!(
+                request.params,
+                Some(json!({"key": "tab_id", "session": true}))
+            );
+            let response = Response::success(request.id, json!({"deleted": false}));
+            let mut bytes = serde_json::to_vec(&response).expect("serialize response");
+            bytes.push(b'\n');
+            writer.write_all(&bytes).await.expect("write response");
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert("key".to_owned(), json!("tab_id"));
+        args.insert("session".to_owned(), json!(true));
+        let result = pilot
+            .call_tool_by_name("storage_delete", args)
+            .await
+            .expect("tool call succeeds");
+        assert_eq!(result.is_error, Some(false));
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[test]
+    fn storage_delete_requires_a_key() {
+        let spec = tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "storage_delete")
+            .expect("storage_delete is listed");
+        assert!(!spec.read_only && spec.destructive && spec.idempotent);
+        let schema = (spec.schema)();
+        assert_eq!(schema.get("required"), Some(&json!(["key"])));
     }
 
     #[test]

@@ -104,6 +104,7 @@ const STEP_KEYS: &[(&str, &[&str], &[&str])] = &[
     ("assert-value", &["target", "expected"], &[]),
     ("assert-url", &["expected"], &[]),
     ("storage-get", &["key"], &[]),
+    ("storage-delete", &["key"], &[]),
 ];
 
 impl Step {
@@ -617,6 +618,7 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
             Ok(json!({"ok": true}))
         }
         "storage-get" => storage_get_step(client, step, window).await,
+        "storage-delete" => storage_delete_step(client, step, window).await,
         other => anyhow::bail!("unknown step action: {other:?}"),
     }
 }
@@ -654,6 +656,35 @@ async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>
     if !found {
         anyhow::bail!("storage key {key:?} was not found");
     }
+    Ok(result)
+}
+
+/// Remove a localStorage key; the step passes whether or not it existed.
+///
+/// Matches `tauri-pilot storage delete`. `deleted` must be a boolean, for the
+/// same reason [`storage_get_step`] checks `found`: a null result would
+/// otherwise pass as a deletion the app never confirmed.
+async fn storage_delete_step(
+    client: &mut Client,
+    step: &Step,
+    window: Option<&str>,
+) -> Result<Value> {
+    let key = step
+        .key
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("storage-delete step requires 'key'"))?;
+    let result = client
+        .call(
+            "storage.delete",
+            with_window(Some(json!({"key": key, "session": false})), window),
+        )
+        .await?;
+    result
+        .get("deleted")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            anyhow::anyhow!("storage.delete returned invalid response: missing boolean 'deleted'")
+        })?;
     Ok(result)
 }
 
@@ -1359,10 +1390,14 @@ expected = "/home"
 [[step]]
 action = "storage-get"
 key = "theme"
+
+[[step]]
+action = "storage-delete"
+key = "theme"
 "##,
         )
         .expect("every documented key loads");
-        assert_eq!(scenario.step.len(), 20);
+        assert_eq!(scenario.step.len(), 21);
     }
 
     #[test]

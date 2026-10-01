@@ -155,6 +155,7 @@ Exit code 0 + `ok` on success. Exit code 1 + `FAIL: ...` on failure (with `--jso
 | `storage get <key>` | Read from localStorage (exits 1 if the key is missing) |
 | `storage set <key> <value>` | Write to localStorage |
 | `storage list` | Dump all key-value pairs |
+| `storage delete <key>` | Remove one key (succeeds when missing; `--json` reports `deleted`) |
 | `storage clear` | Clear all storage |
 | `storage <command> --session` | Use sessionStorage instead (applies to all storage commands; also accepted as `storage --session <command>`) |
 | `forms` | Dump all form fields on the page |
@@ -226,6 +227,10 @@ a key holding an empty string still passes.
 action = "storage-get"
 key = "theme"
 ```
+
+A `storage-delete` step (`action = "storage-delete"`) requires `key` and
+removes it from localStorage, with the same no-`session` limit. It passes
+whether or not the key existed.
 
 Each step is checked against its action when the scenario loads, before
 `run` or `pilot.run` connects. An unknown action, a missing required key, or a

@@ -2280,6 +2280,18 @@
     return { entries: entries, truncated: total > MAX_STORAGE_ENTRIES };
   }
 
+  // Removing a missing key succeeds, as `removeItem` does; `deleted` reports
+  // whether the key existed beforehand (#284).
+  function storageDelete(params) {
+    if (typeof params.key !== "string") {
+      throw new Error("storageDelete requires a string key");
+    }
+    var storage = params.session ? sessionStorage : localStorage;
+    var existed = storage.getItem(params.key) !== null;
+    storage.removeItem(params.key);
+    return { deleted: existed };
+  }
+
   function storageClear(params) {
     var storage = params.session ? sessionStorage : localStorage;
     storage.clear();
@@ -2388,6 +2400,7 @@
     storageGet: storageGet,
     storageSet: storageSet,
     storageList: storageList,
+    storageDelete: storageDelete,
     storageClear: storageClear,
     formDump: formDump,
   };
