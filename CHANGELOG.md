@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.0.1, the floors `cargo_toml` 1.0 asks for once `tauri-build` 2.7 pulls it
   in. Apps consuming the plugin must now be on `tauri` 2.12.0 or newer.
 
+- `tauri` floor raised from 2.12.0 to 2.12.1. `tauri-runtime` 2.12.1 makes
+  `WindowBuilder::transparent` required on macOS, but the test mock runtime of
+  `tauri` 2.12.0 still gates it behind `macos-private-api`, so a fresh resolve
+  of `tauri` 2.12.0 no longer compiles on macOS. Apps consuming the plugin
+  must now be on `tauri` 2.12.1 or newer.
+
 - `windows` leaves out `title` for a window with no native title instead of
   reporting `""`. Android and iOS windows never have one; `title` still reads
   the page's `document.title`. The rows of `error.data.available_windows`
