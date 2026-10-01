@@ -173,7 +173,9 @@ errors.
 `tools/list` advertises
 the prefixed names; bare names (e.g. `snapshot`) still resolve via `tools/call`
 for backwards compatibility. Tool calls return structured JSON content, so
-agents do not need to parse terminal output.
+agents do not need to parse terminal output. `pilot.screenshot` is the
+exception: it returns one `image` content block (`mimeType: "image/png"`,
+base64 `data`) and no structured content, so the agent sees the picture.
 
 A tool error the app raised keeps its fields: `error` holds the domain code
 when the app sent one (e.g. `WINDOW_NOT_FOUND`, else the message), next to

@@ -10,9 +10,9 @@ use anyhow::Result;
 use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ErrorCode, Implementation,
-        JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
-        Tool, ToolAnnotations,
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorCode,
+        Implementation, JsonObject, ListToolsResult, PaginatedRequestParams, ServerCapabilities,
+        ServerConfig, Tool, ToolAnnotations,
     },
     service::{MaybeSendFuture, RequestContext, RoleServer},
     transport::stdio,
@@ -264,12 +264,13 @@ impl PilotMcpServer {
                 .await
             }
             "screenshot" => {
-                self.call_app_tool(
-                    "screenshot",
-                    Some(json!({"selector": optional_string(&args, "selector")?})),
-                    window,
+                let params = json!({"selector": optional_string(&args, "selector")?});
+                Ok(
+                    match self.call_app("screenshot", Some(params), window).await {
+                        Ok(result) => screenshot_success(&result),
+                        Err(err) => tool_error(&err),
+                    },
                 )
-                .await
             }
             "screenshot_native" => {
                 let mut payload = json!({
@@ -995,7 +996,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "screenshot",
-            description: "Capture the full page or an element selector as a PNG data URL.",
+            description: "Capture the full page or an element selector as a PNG image content block.",
             schema: selector_schema,
             read_only: true,
             destructive: false,
@@ -1246,6 +1247,27 @@ fn tool_success(result: Value) -> CallToolResult {
     let mut payload = Map::new();
     payload.insert("result".to_owned(), result);
     CallToolResult::structured(Value::Object(payload))
+}
+
+/// Prefix of the PNG data URL the bridge `screenshot` method answers with.
+const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
+
+/// Turns a bridge screenshot into one MCP image content block.
+///
+/// MCP clients show an `image` block to the model as a picture, whereas the
+/// data URL in a text block is ~175 KB of base64 it cannot look at (#280).
+/// No `structuredContent` is sent: it would carry the image a second time.
+/// A result that is not a PNG data URL becomes a tool error.
+fn screenshot_success(result: &Value) -> CallToolResult {
+    match result
+        .as_str()
+        .and_then(|url| url.strip_prefix(PNG_DATA_URL_PREFIX))
+    {
+        Some(data) => CallToolResult::success(vec![ContentBlock::image(data, "image/png")]),
+        None => tool_error_msg(format!(
+            "screenshot result is not a PNG data URL (expected a string starting with '{PNG_DATA_URL_PREFIX}')"
+        )),
+    }
 }
 
 /// Turns a failed call into a tool error, keeping an app error's fields.
@@ -3524,6 +3546,7 @@ target = "#btn"
     enum ScreenshotMock {
         Png,
         RpcError,
+        NotPng,
     }
 
     #[cfg(unix)]
@@ -3573,6 +3596,9 @@ target = "#btn"
                             -32_000,
                             "window is gone",
                         ),
+                        ScreenshotMock::NotPng => {
+                            Response::success(request.id, json!("data:image/jpeg;base64,/9j/"))
+                        }
                     },
                     _ => Response::error(
                         serde_json::Value::Number(request.id.into()),
@@ -3636,6 +3662,48 @@ target = "#btn"
         );
         // The default outlives the test, so only the PNG goes.
         let _ = std::fs::remove_file(saved);
+    }
+
+    #[cfg(unix)]
+    async fn call_screenshot(socket_name: &str, screenshot: ScreenshotMock) -> CallToolResult {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-{socket_name}-{}.sock",
+            std::process::id()
+        ));
+        let _methods = spawn_failing_click_server_with(&socket, screenshot);
+        PilotMcpServer::new(Some(socket), None)
+            .call_tool_by_name("screenshot", Map::new())
+            .await
+            .expect("tool call succeeds")
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn screenshot_tool_returns_an_image_content_block() {
+        let result = call_screenshot("shot-image", ScreenshotMock::Png).await;
+        let body = serde_json::to_value(&result).expect("serialize result");
+        assert_eq!(body["isError"], json!(false));
+        assert_eq!(
+            body["content"],
+            json!([{
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+            }])
+        );
+        assert!(
+            body.get("structuredContent").is_none(),
+            "screenshot must not repeat the image as structuredContent: {body}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn screenshot_tool_rejects_a_result_that_is_not_a_png_data_url() {
+        let result = call_screenshot("shot-not-png", ScreenshotMock::NotPng).await;
+        assert_eq!(result.is_error, Some(true));
+        let error = tool_error_text(&result);
+        assert!(error.contains("PNG data URL"), "unexpected error: {error}");
     }
 
     #[cfg(unix)]

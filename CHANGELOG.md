@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the old code sent agents asking the user for one. Callers matching on
   `PERMISSION_DENIED` must switch to the new code. [#254]
 
+- **Breaking:** MCP `screenshot` returns the PNG as one `image` content block
+  (`mimeType: "image/png"`, base64 `data` without the `data:` prefix) instead
+  of a text block plus `structuredContent.result` holding the data URL. MCP
+  clients show the image to the model, and the base64 is sent once instead of
+  twice. A result that is not a PNG data URL is a tool error. Clients that read
+  `structuredContent.result` must read `content[0].data` instead and prepend
+  `data:image/png;base64,` if they need the data URL. [#280]
+
 ### Fixed
 
 - `snapshot` names form controls after their `<label>`, wrapping or `for=`,
@@ -1326,3 +1334,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#277]: https://github.com/mpiton/tauri-pilot/issues/277
 [#275]: https://github.com/mpiton/tauri-pilot/issues/275
 [#278]: https://github.com/mpiton/tauri-pilot/issues/278
+[#280]: https://github.com/mpiton/tauri-pilot/issues/280
