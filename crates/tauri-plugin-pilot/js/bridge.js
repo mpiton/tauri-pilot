@@ -87,6 +87,21 @@
   const _mapSize = Object.getOwnPropertyDescriptor(Map.prototype, 'size').get;
   const _setSize = Object.getOwnPropertyDescriptor(Set.prototype, 'size').get;
   const _regExpSource = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get;
+  // The %TypedArray% intrinsics read internal slots: the tag getter answers
+  // the constructor name for a typed array from any realm and undefined for
+  // anything else (a DataView included), whatever Symbol.toStringTag or an
+  // own `length` claim.
+  const _typedArrayProto = Object.getPrototypeOf(Uint8Array.prototype);
+  const _typedArrayTag = Object.getOwnPropertyDescriptor(_typedArrayProto, Symbol.toStringTag).get;
+  const _typedArrayLength = Object.getOwnPropertyDescriptor(_typedArrayProto, 'length').get;
+  function typedArrayName(value) {
+    try {
+      return _typedArrayTag.call(value) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function collectionKind(value) {
     // A failed brand check throws, and throwing for every plain object made
     // each logged object cost far more than copying it. The tag is only a
@@ -142,7 +157,9 @@
   // and the same rules apply at every level. `state.ancestors` holds the
   // objects on the current path, so a cycle is cut but a shared reference is
   // copied at each place it appears.
-  function snapshotValue(value, depth, state) {
+  // `key` is the property name (or array index) `value` was read from, '' at
+  // the top: JSON.stringify hands it to toJSON, so it is passed on too.
+  function snapshotValue(value, depth, state, key) {
     if (value === null) return null;
     if (value === undefined) return 'undefined';
     const type = typeof value;
@@ -187,7 +204,7 @@
         copyKeys(out, value, errorKeys.filter(k => k !== '__type' && k !== 'message'), depth + 1, state);
         return out;
       }
-      return snapshotObject(value, depth + 1, state, kind);
+      return snapshotObject(value, depth + 1, state, kind, key === undefined ? '' : key);
     } finally {
       state.ancestors.pop();
     }
@@ -209,7 +226,7 @@
     for (let i = 0; i < keys.length && i < LOG_MAX_ITEMS; i++) {
       let v;
       try {
-        v = snapshotValue(value[keys[i]], depth, state);
+        v = snapshotValue(value[keys[i]], depth, state, keys[i]);
       } catch (_) {
         v = '[unreadable]';
       }
@@ -220,10 +237,10 @@
     if (keys.length > LOG_MAX_ITEMS) out['...'] = (keys.length - LOG_MAX_ITEMS) + ' more keys';
   }
 
-  function snapshotObject(value, depth, state, kind) {
-    const copy = v => {
+  function snapshotObject(value, depth, state, kind, key) {
+    const copy = (v, k) => {
       try {
-        return snapshotValue(v, depth, state);
+        return snapshotValue(v, depth, state, k);
       } catch (_) {
         return '[unreadable]';
       }
@@ -248,7 +265,7 @@
       const out = [];
       // A hole is null, as JSON.stringify writes it, so it stays distinct
       // from a real undefined.
-      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) out.push(i in value ? copy(value[i]) : null);
+      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) out.push(i in value ? copy(value[i], String(i)) : null);
       if (len > LOG_MAX_ITEMS) out.push('... ' + (len - LOG_MAX_ITEMS) + ' more items');
       return out;
     }
@@ -260,17 +277,18 @@
     } catch (_) {}
     if (typeof toJSON === 'function') {
       try {
-        return copy(toJSON.call(value));
+        return copy(toJSON.call(value, key), key);
       } catch (_) {}
     }
     const tag = brandTag(value);
     // A typed array is checked before Object.keys, which would list every
     // index of a large one.
-    if (ArrayBuffer.isView(value) && tag !== '[object DataView]') {
-      const len = value.length;
+    const typedName = typedArrayName(value);
+    if (typedName) {
+      const len = _typedArrayLength.call(value);
       const values = [];
-      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) values.push(copy(value[i]));
-      const out = { __type: tag.slice(8, -1), length: len, values: values };
+      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) values.push(copy(value[i], String(i)));
+      const out = { __type: typedName, length: len, values: values };
       if (len > values.length) out.truncated = len - values.length;
       return out;
     }

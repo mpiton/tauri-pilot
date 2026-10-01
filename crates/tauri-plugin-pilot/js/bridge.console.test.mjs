@@ -1085,3 +1085,29 @@ test("plain data is not probed with the Node getter", () => {
   assert.deepEqual(entry.args, [{ a: { b: [1, { c: 2 }] } }]);
   assert.equal(probes, 0);
 });
+
+test("toJSON receives its property key, as JSON.stringify passes it", () => {
+  const pilot = loadBridge();
+  const keyed = { toJSON(key) { return "key:" + key; } };
+  console.log(keyed, { a: keyed }, [keyed]);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, ["key:", { a: "key:a" }, ["key:0"]]);
+});
+
+test("a typed array is recognised by its internal slot, not its tag", () => {
+  const pilot = loadBridge();
+  const dataView = new DataView(new ArrayBuffer(2));
+  Object.defineProperty(dataView, Symbol.toStringTag, { value: "Uint8Array" });
+  const bytes = new Uint8Array([1, 2]);
+  Object.defineProperty(bytes, Symbol.toStringTag, { value: "DataView" });
+  Object.defineProperty(bytes, "length", { value: 1e9 });
+  console.log(dataView, bytes, runInNewContext("new Int16Array([7])"));
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [
+    "[Uint8Array]",
+    { __type: "Uint8Array", length: 2, values: [1, 2] },
+    { __type: "Int16Array", length: 1, values: [7] },
+  ]);
+});

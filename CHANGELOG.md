@@ -25,9 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `logs --json` carries different values for console arguments, now copied
   when they are logged (see Fixed). A logged `undefined`, `NaN` or
   `Infinity` was `null` and is now the string `"undefined"`, `"NaN"` or
-  `"Infinity"`. An `Error` was `{}` (or only its enumerable fields) and is
-  now `"Name: message"`, or `{"__type":"Error","message":"Name: message",...}`
-  with its own fields and `cause` when it has any; its stack is not kept.
+  `"Infinity"`. A BigInt is `"10n"` (it was `"10"`, and one nested in an
+  object turned the whole argument into `"[object Object]"`) and a symbol
+  `"Symbol(x)"` (it was dropped). An `Error` was `{}` (or only its
+  enumerable fields) and is now `"Name: message"`, or
+  `{"__type":"Error","message":"Name: message",...}` with its own fields and
+  `cause` when it has any; its stack is not kept.
   `Map`, `Set` and typed arrays are tagged objects, a DOM node a string, a
   `RegExp` its source and other key-less built-ins (`Promise`, `WeakMap`)
   `"[Promise]"`-style names. Getters and `toJSON` on a logged object run at
