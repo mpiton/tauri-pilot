@@ -118,7 +118,7 @@ fn json_pass_prints_ok_and_exits_0() {
 }
 
 #[test]
-fn text_mismatch_prints_fail_line_on_stderr_and_exits_1() {
+fn plain_text_mismatch_prints_fail_line_on_stderr_and_exits_1() {
     let output = run_assert(
         false,
         &["text", "#btn", "nope"],
@@ -138,7 +138,7 @@ fn text_mismatch_prints_fail_line_on_stderr_and_exits_1() {
 }
 
 #[test]
-fn text_pass_prints_ok_and_exits_0() {
+fn plain_visible_pass_prints_ok_and_exits_0() {
     let output = run_assert(
         false,
         &["visible", "#form"],
