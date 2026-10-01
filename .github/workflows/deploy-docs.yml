@@ -12,6 +12,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read  # deploy-pages v4+ reads the artifact through the Actions API
 
 concurrency:
   group: pages
