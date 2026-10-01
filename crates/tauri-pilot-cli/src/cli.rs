@@ -954,6 +954,22 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_storage_set_session_between_positionals() {
+        let storage = parse_storage(&["set", "tab_id", "--session", "tab-42"]);
+        assert!(storage.session);
+        assert!(matches!(
+            storage.action,
+            StorageAction::Set { ref key, ref value } if key == "tab_id" && value == "tab-42"
+        ));
+    }
+
+    /// `--session` is scoped to `storage`; other commands must still reject it.
+    #[test]
+    fn test_parse_session_rejected_outside_storage() {
+        assert!(Cli::try_parse_from(["tauri-pilot", "snapshot", "--session"]).is_err());
+    }
+
+    #[test]
     fn test_parse_storage_clear() {
         let cli = Cli::parse_from(["tauri-pilot", "--socket", "/tmp/t.sock", "storage", "clear"]);
         assert!(matches!(
