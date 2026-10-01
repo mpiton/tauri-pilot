@@ -1,5 +1,5 @@
 use crate::diff;
-use crate::eval::{EvalEngine, EvalError, HELLO_ID, origin_key};
+use crate::eval::{EvalEngine, EvalError, HELLO_ID, ReplyReceiver, origin_key};
 #[cfg(feature = "press")]
 use crate::key;
 use crate::protocol::{RPC_INTERNAL_ERROR, RPC_INVALID_PARAMS, RpcError};
@@ -692,9 +692,9 @@ const BRIDGE_GRACE: Duration = Duration::from_secs(3);
 /// alone proves nothing about the destination. Whenever the navigation loads
 /// a new document, the hello of that document is the proof, even when its
 /// origin already has a bridge. A `javascript:` URL or a fragment change
-/// stays in the current document and resolves on the callback. So does a
-/// navigate with a known current page before the first hello, same-origin
-/// or not.
+/// stays in the current document and resolves on the callback. A navigate
+/// sent before the first hello is settled once the page calls back: see
+/// [`navigate_at_startup`].
 async fn handle_navigate(
     params: Option<&serde_json::Value>,
     engine: &EvalEngine,
@@ -717,10 +717,9 @@ async fn handle_navigate(
     let label = target.label().to_owned();
 
     match (page.as_ref(), dest.as_ref()) {
-        // Before the first hello the engine cannot know a hello will ever
-        // come, for this origin or any other, so every branch keeps the plain
-        // path and resolves on the page's callback, as all commands do.
-        (Some(_), _) if since == 0 => wait(engine, id, rx, DEFAULT_TIMEOUT).await,
+        (Some(page), dest) if since == 0 => {
+            navigate_at_startup(engine, (id, rx), target, page, dest, raw).await
+        }
         (Some(page), Some(dest)) if origin_key(page) == origin_key(dest) => {
             let slot = (id, rx);
             navigate_same_origin(engine, slot, target, page, dest, raw, since).await
@@ -746,6 +745,50 @@ async fn handle_navigate(
             wait_dest_bridge(engine, &label, dest, since).await
         }
         (None, None) => wait(engine, id, rx, DEFAULT_TIMEOUT).await,
+    }
+}
+
+/// Finish a navigate sent before the first hello, as at app startup (#270).
+///
+/// Before the first hello the engine cannot know a hello will ever come.
+/// By the time the page calls back it can: `eval` only runs in a document
+/// whose init script already ran, and the bridge says hello at the end of
+/// that script. So once the callback lands, a navigate that loads a new
+/// document on an origin that already said hello waits for the target
+/// window's hello like any later navigate. Without a recorded hello by then
+/// (the hello was dropped), on an origin that never said hello, or without
+/// a new document, the callback settles it, as before #270.
+///
+/// # Errors
+///
+/// Fails when the page reports an eval error or never calls back, or when
+/// the destination does not say hello in time.
+async fn navigate_at_startup(
+    engine: &EvalEngine,
+    (id, rx): CallbackSlot,
+    target: Box<dyn TargetWindow + '_>,
+    page: &tauri::Url,
+    dest: Option<&tauri::Url>,
+    raw: Option<&str>,
+) -> Result<serde_json::Value, RpcError> {
+    // The baseline is the hello count when the callback was recorded, not
+    // when this task wakes up. The destination can say hello in between,
+    // and a baseline read after it would hide that hello until the timeout.
+    // A hello recorded before the callback comes from the departing page,
+    // which calls back before it unloads.
+    let (value, hellos_at_callback) = engine
+        .wait_with_hellos(id, rx, DEFAULT_TIMEOUT)
+        .await
+        .map_err(|e| eval_rpc_error(&e))?;
+    let Some(dest) = dest else {
+        return Ok(value);
+    };
+    if hellos_at_callback == 0 || !engine.has_bridge(dest) || !loads_new_document(page, dest, raw) {
+        Ok(value)
+    } else if origin_key(page) == origin_key(dest) {
+        wait_same_origin_hello(engine, target, page, dest, hellos_at_callback).await
+    } else {
+        wait_dest_bridge(engine, target.label(), dest, hellos_at_callback).await
     }
 }
 
@@ -912,11 +955,7 @@ fn is_javascript_url(raw: &str) -> bool {
 /// # Errors
 ///
 /// Returns the eval error the departing page reported.
-async fn await_departure(
-    engine: &EvalEngine,
-    id: u64,
-    rx: tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>,
-) -> Result<(), RpcError> {
+async fn await_departure(engine: &EvalEngine, id: u64, rx: ReplyReceiver) -> Result<(), RpcError> {
     match engine.wait(id, rx, BRIDGE_GRACE).await {
         Ok(_) | Err(EvalError::Timeout(_)) => Ok(()),
         Err(e) => Err(eval_rpc_error(&e)),
@@ -1112,16 +1151,13 @@ fn send_script(
 }
 
 /// Callback id and its receiver.
-type CallbackSlot = (
-    u64,
-    tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>,
-);
+type CallbackSlot = (u64, ReplyReceiver);
 
 /// Wait for the callback of eval `id`.
 async fn wait(
     engine: &EvalEngine,
     id: u64,
-    rx: tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>,
+    rx: ReplyReceiver,
     timeout: Duration,
 ) -> Result<serde_json::Value, RpcError> {
     engine
@@ -1800,7 +1836,7 @@ mod tests {
             None,
             None,
         );
-        let val = rx.await.expect("channel not dropped").expect("eval ok");
+        let val = engine.wait(id, rx, DEFAULT_TIMEOUT).await.expect("eval ok");
         assert_eq!(val, json!({"title": "hello"}));
     }
 
@@ -1812,7 +1848,7 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         handle_callback(&engine, "main", id, Some("null".to_owned()), None, None);
-        let val = rx.await.expect("channel not dropped").expect("eval ok");
+        let val = engine.wait(id, rx, DEFAULT_TIMEOUT).await.expect("eval ok");
         assert_eq!(val, serde_json::Value::Null);
     }
 
@@ -1828,8 +1864,11 @@ mod tests {
             Some("TypeError: x".to_owned()),
             None,
         );
-        let result = rx.await.expect("channel not dropped");
-        assert_eq!(result, Err("TypeError: x".to_owned()));
+        let result = engine.wait(id, rx, DEFAULT_TIMEOUT).await;
+        assert!(
+            matches!(result, Err(EvalError::JsError(ref m)) if m == "TypeError: x"),
+            "got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -3582,6 +3621,243 @@ mod tests {
         .await
         .expect("navigate before any hello resolves on the callback");
         assert_eq!(result, json!({"ok": true}));
+    }
+
+    /// Webviews on `start` at app startup: the start page says hello only
+    /// once the navigate script is queued, then calls back. `after` runs
+    /// right after the callback, before `dispatch` reads it.
+    fn startup_webviews(
+        engine: &EvalEngine,
+        windows: &[(&str, Option<&str>)],
+        target: &'static str,
+        start: &'static str,
+        after: impl Fn(&EvalEngine) + Send + Sync + 'static,
+    ) -> FakeWebviews {
+        let engine = engine.clone();
+        FakeWebviews::windows(windows).on_eval(move || {
+            handle_callback(&engine, target, HELLO_ID, None, None, Some(&url(start)));
+            engine.resolve(1, Ok(json!({"ok": true})));
+            after(&engine);
+        })
+    }
+
+    /// Say hello from `dest` in webview `label` after `delay`.
+    fn hello_later(engine: &EvalEngine, label: &'static str, dest: &'static str, delay: Duration) {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            handle_callback(&engine, label, HELLO_ID, None, None, Some(&url(dest)));
+        });
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_waits_for_destination_hello() {
+        // #270: right after startup no hello has arrived when navigate
+        // starts, but the start page says hello before it can call back.
+        let engine = EvalEngine::new();
+        let delay = Duration::from_millis(500);
+        let webviews = startup_webviews(
+            &engine,
+            &[("main", Some(APP_PAGE))],
+            "main",
+            APP_PAGE,
+            move |engine| hello_later(engine, "main", "tauri://localhost/settings.html", delay),
+        );
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("navigate at startup succeeds once the destination says hello");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() >= delay,
+            "returned before the destination loaded, after {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// Two app windows at startup: navigate targets `popup`. `main` says
+    /// hello again at 100 ms, and `popup` says hello from `dest` at 500 ms
+    /// when `popup_hello` is set.
+    fn startup_two_windows(
+        engine: &EvalEngine,
+        dest: &'static str,
+        popup_hello: bool,
+    ) -> FakeWebviews {
+        let windows = [("main", Some(APP_PAGE)), ("popup", Some(APP_PAGE))];
+        startup_webviews(engine, &windows, "popup", APP_PAGE, move |engine| {
+            handle_callback(engine, "main", HELLO_ID, None, None, Some(&url(APP_PAGE)));
+            hello_later(engine, "main", APP_PAGE, Duration::from_millis(100));
+            if popup_hello {
+                hello_later(engine, "popup", dest, Duration::from_millis(500));
+            }
+        })
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_waits_for_target_window_hello() {
+        let engine = EvalEngine::new();
+        let webviews = startup_two_windows(&engine, "tauri://localhost/settings.html", true);
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html", "window": "popup"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("the target window's hello reports ok");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() >= Duration::from_millis(500),
+            "returned before the target window's hello, after {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_ignores_hello_from_another_window() {
+        let engine = EvalEngine::new();
+        let webviews = startup_two_windows(&engine, "tauri://localhost/settings.html", false);
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html", "window": "popup"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "another window's hello must not report ok, got {result:?}"
+        );
+        assert!(
+            start.elapsed() >= DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_to_known_origin_waits_for_destination_hello() {
+        // Cross-origin at startup: `side` already shows the destination
+        // origin and says hello there, but only `main`'s hello counts.
+        let engine = EvalEngine::new();
+        let dest = "https://allowed.example/";
+        let delay = Duration::from_millis(500);
+        let windows = [("main", Some(APP_PAGE)), ("side", Some(dest))];
+        let webviews = startup_webviews(&engine, &windows, "main", APP_PAGE, move |engine| {
+            handle_callback(engine, "side", HELLO_ID, None, None, Some(&url(dest)));
+            hello_later(engine, "main", dest, delay);
+        });
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": dest, "window": "main"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("navigate to a known origin succeeds once main says hello there");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() >= delay,
+            "returned before the destination loaded, after {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_counts_destination_hello_before_dispatch_resumes() {
+        // The destination's hello can be recorded before `dispatch` reads
+        // the callback. It must still count as the destination's hello.
+        let engine = EvalEngine::new();
+        let webviews = startup_webviews(
+            &engine,
+            &[("main", Some(APP_PAGE))],
+            "main",
+            APP_PAGE,
+            |engine| {
+                let dest = url("tauri://localhost/settings.html");
+                handle_callback(engine, "main", HELLO_ID, None, None, Some(&dest));
+            },
+        );
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("a destination hello recorded early still counts");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_without_hello_resolves_on_callback() {
+        // The page calls back but no hello was recorded (dropped on an
+        // origin mismatch): no proof a hello will come, keep the plain path.
+        let engine = EvalEngine::new();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("navigate without any hello resolves on the callback");
+        assert_eq!(result, json!({"ok": true}));
+        assert_eq!(start.elapsed(), Duration::ZERO, "must not wait for a hello");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_at_startup_in_same_document_resolves_on_callback() {
+        // A `javascript:` URL or a fragment change keeps the document, so
+        // no new hello will come even though the start page said hello.
+        let page = "tauri://localhost/index.html";
+        for raw in ["javascript:void(0)", "#section"] {
+            let engine = EvalEngine::new();
+            let webviews = startup_webviews(&engine, &[("main", Some(page))], "main", page, |_| {});
+
+            let start = tokio::time::Instant::now();
+            let result = dispatch(
+                "navigate",
+                Some(&json!({"url": raw})),
+                &engine,
+                &webviews,
+                &Recorder::new(),
+            )
+            .await
+            .expect("navigate in the same document resolves on the callback");
+            assert_eq!(result, json!({"ok": true}), "{raw}");
+            assert_eq!(start.elapsed(), Duration::ZERO, "{raw} must not wait");
+        }
     }
 
     #[tokio::test(start_paused = true)]

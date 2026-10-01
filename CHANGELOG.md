@@ -70,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `navigate` to a document that never says hello now fails, after up to about
   13 seconds, instead of reporting ok. [#260]
 
+- `navigate` sent right after the app starts, before any page has answered,
+  also waits for the destination's hello. It returned on the start page's
+  answer, so the first `eval` of a script that launches the app and then
+  navigates still ran on the start page. The start page says hello before it
+  can answer, so once it answers, `navigate` waits for the destination's
+  hello whenever the destination origin has said hello, as later navigates
+  do, for up to about 20 seconds in all. A destination origin with no hello
+  yet, a `javascript:` URL and a fragment-only change still return on the
+  page's answer. [#270]
+
 ### Security
 
 - Upgrade undici in the docs lockfile to 8.11.2 (from 8.10.0), clearing 11
@@ -1257,3 +1267,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#257]: https://github.com/mpiton/tauri-pilot/issues/257
 [#260]: https://github.com/mpiton/tauri-pilot/issues/260
 [#269]: https://github.com/mpiton/tauri-pilot/issues/269
+[#270]: https://github.com/mpiton/tauri-pilot/issues/270

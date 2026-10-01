@@ -127,7 +127,22 @@ pub(crate) enum EvalError {
     ChannelClosed,
 }
 
-type PendingMap = HashMap<u64, oneshot::Sender<Result<serde_json::Value, String>>>;
+/// A callback's payload, stamped with the hello count when it was resolved.
+///
+/// Callbacks and hellos are recorded one at a time (both come through the
+/// synchronous `__callback` command), so `hellos` counts exactly the hellos
+/// the engine saw before this callback. Reading [`EvalEngine::hellos`] once
+/// the waiter wakes up could already include a later hello (#270).
+#[derive(Debug)]
+pub(crate) struct Reply {
+    result: Result<serde_json::Value, String>,
+    hellos: u64,
+}
+
+/// Receiving end of a pending eval, as returned by [`EvalEngine::register`].
+pub(crate) type ReplyReceiver = oneshot::Receiver<Reply>;
+
+type PendingMap = HashMap<u64, oneshot::Sender<Reply>>;
 
 /// Engine for executing JS in a `WebView` and resolving eval results delivered via the `__callback` IPC command.
 ///
@@ -304,7 +319,7 @@ impl EvalEngine {
     }
 
     /// Register a pending eval request. Returns the ID and a receiver.
-    pub fn register(&self) -> (u64, oneshot::Receiver<Result<serde_json::Value, String>>) {
+    pub fn register(&self) -> (u64, ReplyReceiver) {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending
@@ -324,7 +339,8 @@ impl EvalEngine {
 
         match sender {
             Some(tx) => {
-                let _ = tx.send(result);
+                let hellos = self.hellos();
+                let _ = tx.send(Reply { result, hellos });
             }
             None => {
                 tracing::warn!(id, "resolve called for unknown eval ID");
@@ -373,13 +389,35 @@ impl EvalEngine {
     pub async fn wait(
         &self,
         id: u64,
-        rx: oneshot::Receiver<Result<serde_json::Value, String>>,
+        rx: ReplyReceiver,
         timeout: Duration,
     ) -> Result<serde_json::Value, EvalError> {
+        self.wait_with_hellos(id, rx, timeout)
+            .await
+            .map(|(value, _)| value)
+    }
+
+    /// Wait like [`Self::wait`], also returning the hello count at callback time.
+    ///
+    /// The count includes every hello recorded before the callback and none
+    /// recorded after it, even when a hello lands before this waiter wakes.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::wait`]: a timeout, a JavaScript error reported by the
+    /// page, or a dropped channel.
+    pub async fn wait_with_hellos(
+        &self,
+        id: u64,
+        rx: ReplyReceiver,
+        timeout: Duration,
+    ) -> Result<(serde_json::Value, u64), EvalError> {
         let result = tokio::time::timeout(timeout, rx).await;
 
         match result {
-            Ok(Ok(inner)) => inner.map_err(EvalError::JsError),
+            Ok(Ok(Reply { result, hellos })) => result
+                .map(|value| (value, hellos))
+                .map_err(EvalError::JsError),
             Ok(Err(_)) => {
                 // Defensive cleanup — sender dropped without sending
                 self.pending
@@ -425,8 +463,8 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         engine.resolve(id, Ok(json!(42)));
-        let result = rx.await.expect("resolve channel dropped");
-        assert_eq!(result, Ok(json!(42)));
+        let reply = rx.await.expect("resolve channel dropped");
+        assert_eq!(reply.result, Ok(json!(42)));
     }
 
     #[tokio::test]
@@ -434,8 +472,8 @@ mod tests {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
         engine.resolve(id, Err("ReferenceError: x is not defined".to_owned()));
-        let result = rx.await.expect("resolve channel dropped");
-        assert!(result.is_err());
+        let reply = rx.await.expect("resolve channel dropped");
+        assert!(reply.result.is_err());
     }
 
     #[test]
