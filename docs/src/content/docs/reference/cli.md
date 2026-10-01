@@ -902,6 +902,15 @@ $ tauri-pilot eval 'await fetch("/api/items").then(r => r.json())'
 […]
 ```
 
+An `await` inside a nested function (such as an async IIFE), a template
+literal or a regex literal is not top-level, so the script keeps the statement
+path and its final `Promise` is awaited:
+
+```bash
+$ tauri-pilot eval 'const x = 1; (async () => { if (x) { await 0; } return "done"; })()'
+done
+```
+
 For multi-statement scripts (e.g. `const` followed by a value to surface), use
 an explicit `return` since the wrapper has no completion-value semantics:
 

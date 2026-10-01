@@ -551,3 +551,69 @@ test("a log after an await in a pilot eval under V8 names the eval", async () =>
   const [entry] = pilot.consoleLogs({ level: "log" });
   assert.equal(entry.source, "tauri-pilot-eval");
 });
+
+// An `await` inside a nested async function is not top-level (#272). The
+// detector used to miss function bodies holding any `{`, so these scripts
+// went to the async-statement wrapper, which has no completion value: the
+// result was `null` and a rejection from the IIFE went unhandled.
+test("eval returns the result of an async IIFE whose body has a nested block", async () => {
+  const pilot = loadBridge();
+  const cases = [
+    ['const x = 1; (async () => { if (x) { await 0; } return "done"; })()', "done"],
+    ['const x = 1; (async () => { try { await 0; } catch (e) {} return "done"; })()', "done"],
+    ["const x = 1; (async () => { const o = { a: 1 }; await 0; return o.a; })()", 1],
+    // `await (expr)` compiles in both modes, so the text scan decides.
+    ['const x = 1; (async () => { if (x) { await (Promise.resolve(2)); } return "done"; })()', "done"],
+    // Controls that already worked.
+    ['const x = 1; (async () => { await 0; return "done"; })()', "done"],
+  ];
+  for (const [script, expected] of cases) {
+    assert.equal(await pilot.eval({ script }), expected, script);
+  }
+});
+
+test("eval rejects when an async IIFE with a nested block throws", async () => {
+  const pilot = loadBridge();
+  for (const script of [
+    'const x = 1; (async () => { if (x) { await 0; throw new Error("boom"); } })()',
+    // Control that already worked.
+    '(async () => { if (1) { await 0; throw new Error("boom"); } })()',
+  ]) {
+    await assert.rejects(Promise.resolve().then(() => pilot.eval({ script })), /boom/, script);
+  }
+});
+
+test("eval keeps the completion value when await only appears in a literal or a class method", async () => {
+  // Former false positives of the regex detector: they were wrapped and
+  // returned `null`.
+  const pilot = loadBridge();
+  const cases = [
+    ["const s = `await`; s", "await"],
+    ["const r = /await/; r.source", "await"],
+    ["class C { async m() { await 0; return 1; } } new C().m()", 1],
+  ];
+  for (const [script, expected] of cases) {
+    assert.equal(await pilot.eval({ script }), expected, script);
+  }
+});
+
+test("eval still wraps top-level await, including the await (expr) form", async () => {
+  const pilot = loadBridge();
+  const cases = [
+    ['await Promise.resolve("hi")', "hi"],
+    ["const v = await Promise.resolve(2); return v * 3", 6],
+    ["const x = 1; if (x) { await 0; } return 7", 7],
+    ["const p = Promise.resolve(5); return await (p)", 5],
+    ["const p = Promise.resolve(4); return await [p][0]", 4],
+  ];
+  for (const [script, expected] of cases) {
+    assert.equal(await pilot.eval({ script }), expected, script);
+  }
+});
+
+test("eval does not let a script close the await probe's wrapper", () => {
+  // Pasted into an arrow body, this script closes it and compiles, so it was
+  // taken for top-level await and returned nothing instead of failing.
+  const pilot = loadBridge();
+  assert.throws(() => pilot.eval({ script: "}); 1; (() => {" }), SyntaxError);
+});
