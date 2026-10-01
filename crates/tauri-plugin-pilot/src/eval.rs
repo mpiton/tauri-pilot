@@ -20,11 +20,26 @@ pub(crate) const HELLO_ID: u64 = 0;
 /// the same value.
 pub(crate) const WRAPPER_NAME: &str = "__PILOT_EVAL__";
 
-/// Origins whose bridge said hello, each with the hello count at its latest hello.
+/// Bridge hellos received so far.
+///
+/// `latest` keys origins and answers which origins can call back. `windows`
+/// keys webview labels, then origins, so a navigate waits for its own
+/// window's new document, not a same-origin hello from another window.
 #[derive(Debug, Default)]
 struct Bridges {
     hellos: u64,
     latest: HashMap<String, u64>,
+    windows: HashMap<String, HashMap<String, u64>>,
+}
+
+impl Bridges {
+    /// Whether webview `label` said hello from one of `keys` after `since`.
+    fn window_said_hello_since(&self, label: &str, keys: &[String], since: u64) -> bool {
+        self.windows.get(label).is_some_and(|origins| {
+            keys.iter()
+                .any(|key| origins.get(key).is_some_and(|&n| n > since))
+        })
+    }
 }
 
 /// Key a URL by scheme, host and port.
@@ -181,13 +196,19 @@ impl EvalEngine {
             .lock()
             .expect("page url lock poisoned")
             .retain(|label, _| live.contains(label.as_str()));
+        // Removing entries cannot satisfy a waiter, so do not wake them.
+        self.bridges.send_if_modified(|b| {
+            b.windows.retain(|label, _| live.contains(label.as_str()));
+            false
+        });
     }
 
-    /// Record a hello from `page` (the invoking webview's URL).
+    /// Record a hello from `page` (the invoking webview's URL) in webview `label`.
     ///
     /// Only pages whose origin may call `__callback` can say hello, so the
-    /// hellos tell which origins answer bridge commands (#153).
-    pub fn bridge_hello(&self, page: &str) {
+    /// hellos tell which origins answer bridge commands (#153). The label
+    /// lets a navigate tell its own window's hello from another window's.
+    pub fn bridge_hello(&self, label: &str, page: &str) {
         let Ok(url) = Url::parse(page) else {
             tracing::warn!(page, "bridge hello with an invalid page URL");
             return;
@@ -195,7 +216,11 @@ impl EvalEngine {
         let key = origin_key(&url);
         self.bridges.send_modify(|b| {
             b.hellos += 1;
-            b.latest.insert(key, b.hellos);
+            b.latest.insert(key.clone(), b.hellos);
+            b.windows
+                .entry(label.to_owned())
+                .or_default()
+                .insert(key, b.hellos);
         });
     }
 
@@ -222,31 +247,29 @@ impl EvalEngine {
         origins
     }
 
-    /// Wait for a hello from the origin of `url` newer than hello number `since`.
+    /// Wait for webview `label` to say hello from the origin of `url` after hello number `since`.
     ///
-    /// Returns `false` when none arrives within `limit`. An `http` destination
-    /// also succeeds when the hello comes from the `https` upgrade of the
-    /// same host and port.
-    pub async fn wait_bridge(&self, url: &Url, since: u64, limit: Duration) -> bool {
+    /// Returns `false` when none arrives within `limit`. A hello from another
+    /// window on the same origin does not count. An `http` destination also
+    /// succeeds when the hello comes from the `https` upgrade of the same
+    /// host and port.
+    pub async fn wait_bridge(&self, label: &str, url: &Url, since: u64, limit: Duration) -> bool {
         let keys = origin_keys(url);
+        let label = label.to_owned();
         let mut rx = self.bridges.subscribe();
-        let hello = rx.wait_for(move |b| {
-            keys.iter()
-                .any(|key| b.latest.get(key).is_some_and(|&n| n > since))
-        });
+        let hello = rx.wait_for(move |b| b.window_said_hello_since(&label, &keys, since));
         tokio::time::timeout(limit, hello)
             .await
             .is_ok_and(|seen| seen.is_ok())
     }
 
-    /// Whether the origin of `url` said hello after hello number `since`.
+    /// Whether webview `label` said hello from the origin of `url` after hello number `since`.
     ///
     /// Accepts the `https` upgrade of an `http` URL, like [`Self::wait_bridge`].
-    pub fn said_hello_since(&self, url: &Url, since: u64) -> bool {
-        let bridges = self.bridges.borrow();
-        origin_keys(url)
-            .iter()
-            .any(|key| bridges.latest.get(key).is_some_and(|&n| n > since))
+    pub fn said_hello_since(&self, label: &str, url: &Url, since: u64) -> bool {
+        self.bridges
+            .borrow()
+            .window_said_hello_since(label, &origin_keys(url), since)
     }
 
     /// Wait until the hello count exceeds `seen`, from any origin.
@@ -594,12 +617,12 @@ mod tests {
         // Before any hello the engine cannot tell origins apart.
         assert!(engine.has_bridge(&url("https://example.com/")));
 
-        engine.bridge_hello("tauri://localhost/index.html");
+        engine.bridge_hello("main", "tauri://localhost/index.html");
         // `Url::origin` is opaque for custom schemes; app pages must share a key.
         assert!(engine.has_bridge(&url("tauri://localhost/settings")));
         assert!(!engine.has_bridge(&url("https://example.com/")));
 
-        engine.bridge_hello("http://127.0.0.1:8080/");
+        engine.bridge_hello("main", "http://127.0.0.1:8080/");
         assert!(!engine.has_bridge(&url("http://127.0.0.1:9090/")));
         assert_eq!(
             engine.bridge_origins(),
@@ -611,7 +634,7 @@ mod tests {
     fn test_origin_key_normalizes_default_ports_and_opaque_urls() {
         let engine = EvalEngine::new();
         let url = |text| Url::parse(text).expect("valid test URL");
-        engine.bridge_hello("https://example.com/");
+        engine.bridge_hello("main", "https://example.com/");
         assert!(engine.has_bridge(&url("https://example.com:443/login")));
         assert!(
             !engine.has_bridge(&url("http://example.com/")),
@@ -619,7 +642,7 @@ mod tests {
         );
         assert!(!engine.has_bridge(&url("https://other.example/")));
 
-        engine.bridge_hello("file:///tmp/a.html");
+        engine.bridge_hello("main", "file:///tmp/a.html");
         assert!(engine.has_bridge(&url("file:///tmp/a.html")));
         assert!(
             !engine.has_bridge(&url("file:///tmp/b.html")),
@@ -632,29 +655,29 @@ mod tests {
         let engine = EvalEngine::new();
         let https = Url::parse("https://example.com/").expect("valid test URL");
         let http = Url::parse("http://example.com/").expect("valid test URL");
-        engine.bridge_hello(https.as_str());
+        engine.bridge_hello("main", https.as_str());
         let since = engine.hellos();
         assert!(
             !engine
-                .wait_bridge(&http, since, Duration::from_secs(1))
+                .wait_bridge("main", &http, since, Duration::from_secs(1))
                 .await,
             "an old https hello must not count as this navigation's upgrade"
         );
-        engine.bridge_hello(https.as_str());
+        engine.bridge_hello("main", https.as_str());
         assert!(
             engine
-                .wait_bridge(&http, since, Duration::from_secs(1))
+                .wait_bridge("main", &http, since, Duration::from_secs(1))
                 .await,
             "a hello after since from the https upgrade must count"
         );
         let http80 = Url::parse("http://example.com:80/").expect("valid test URL");
         assert!(
-            engine.said_hello_since(&http80, since),
+            engine.said_hello_since("main", &http80, since),
             "http://host:80 must match a hello stored as https://host:443"
         );
         assert!(
             engine
-                .wait_bridge(&http80, since, Duration::from_secs(1))
+                .wait_bridge("main", &http80, since, Duration::from_secs(1))
                 .await,
             "wait_bridge must use the same :80 upgrade as said_hello_since"
         );
@@ -677,12 +700,12 @@ mod tests {
         let engine = EvalEngine::new();
         let app = Url::parse("tauri://localhost/").expect("valid test URL");
         let foreign = Url::parse("https://example.com/").expect("valid test URL");
-        engine.bridge_hello(app.as_str());
+        engine.bridge_hello("main", app.as_str());
         let since = engine.hellos();
-        engine.bridge_hello(app.as_str());
+        engine.bridge_hello("main", app.as_str());
         assert!(
             !engine
-                .wait_bridge(&foreign, since, Duration::from_secs(1))
+                .wait_bridge("main", &foreign, since, Duration::from_secs(1))
                 .await,
             "a later hello from the app origin must not count for a foreign dest"
         );
@@ -692,20 +715,40 @@ mod tests {
     async fn test_wait_bridge_ignores_hellos_before_since() {
         let engine = EvalEngine::new();
         let app = Url::parse("tauri://localhost/").expect("valid test URL");
-        engine.bridge_hello(app.as_str());
+        engine.bridge_hello("main", app.as_str());
         let since = engine.hellos();
         assert!(
             !engine
-                .wait_bridge(&app, since, Duration::from_secs(1))
+                .wait_bridge("main", &app, since, Duration::from_secs(1))
                 .await,
             "an old hello must not count as the new page's"
         );
-        engine.bridge_hello(app.as_str());
+        engine.bridge_hello("main", app.as_str());
         assert!(
             engine
-                .wait_bridge(&app, since, Duration::from_secs(1))
+                .wait_bridge("main", &app, since, Duration::from_secs(1))
                 .await
         );
+    }
+
+    #[test]
+    fn test_said_hello_since_is_scoped_to_the_window_label() {
+        let engine = EvalEngine::new();
+        let app = Url::parse("tauri://localhost/").expect("valid test URL");
+        let since = engine.hellos();
+        engine.bridge_hello("main", app.as_str());
+        assert!(engine.said_hello_since("main", &app, since));
+        assert!(
+            !engine.said_hello_since("popup", &app, since),
+            "a same-origin hello from another window must not count"
+        );
+        assert!(engine.has_bridge(&app), "origin tracking stays global");
+        engine.forget_closed_webviews(["popup"]);
+        assert!(
+            !engine.said_hello_since("main", &app, since),
+            "a closed window's hellos must be dropped"
+        );
+        assert!(engine.has_bridge(&app));
     }
 
     #[test]

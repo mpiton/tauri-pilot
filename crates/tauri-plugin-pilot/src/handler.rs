@@ -714,6 +714,7 @@ async fn handle_navigate(
         data: None,
     })?;
     let (id, rx) = send_script(&script, engine, target.as_ref(), None)?;
+    let label = target.label().to_owned();
 
     match (page.as_ref(), dest.as_ref()) {
         // Before the first hello the engine cannot know a hello will ever
@@ -731,7 +732,7 @@ async fn handle_navigate(
                 // The script still navigates, but this page cannot call back.
                 engine.resolve(id, Err("page has no pilot bridge".to_owned()));
             }
-            wait_dest_bridge(engine, dest, since).await
+            wait_dest_bridge(engine, &label, dest, since).await
         }
         (Some(page), None) => {
             if engine.has_bridge(page) {
@@ -742,7 +743,7 @@ async fn handle_navigate(
         }
         (None, Some(dest)) => {
             engine.resolve(id, Err("waiting for destination bridge".to_owned()));
-            wait_dest_bridge(engine, dest, since).await
+            wait_dest_bridge(engine, &label, dest, since).await
         }
         (None, None) => wait(engine, id, rx, DEFAULT_TIMEOUT).await,
     }
@@ -779,9 +780,10 @@ async fn navigate_same_origin(
 
 /// Wait for the new document of a same-origin navigate to say hello.
 ///
-/// A hello from `dest`'s origin after `since` is the proof. A server redirect
-/// can land on another origin whose bridge also works, so a
-/// hello after `since` from the origin the window now shows counts too.
+/// A hello from the target window on `dest`'s origin after `since` is the
+/// proof. A server redirect can land on another origin whose bridge also
+/// works, so a hello after `since` from the origin the window now shows
+/// counts too. Hellos from other windows on the same origin do not count.
 ///
 /// # Errors
 ///
@@ -795,6 +797,7 @@ async fn wait_same_origin_hello(
     since: u64,
 ) -> Result<serde_json::Value, RpcError> {
     let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
+    let label = target.label();
     loop {
         // Read the count before checking, so a hello landing in between
         // wakes the wait below instead of being missed.
@@ -802,8 +805,8 @@ async fn wait_same_origin_hello(
         let now = target.url();
         let redirected_hello = now
             .as_ref()
-            .is_some_and(|now| now != page && engine.said_hello_since(now, since));
-        if engine.said_hello_since(dest, since) || redirected_hello {
+            .is_some_and(|now| now != page && engine.said_hello_since(label, now, since));
+        if engine.said_hello_since(label, dest, since) || redirected_hello {
             return Ok(serde_json::json!({"ok": true}));
         }
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -920,9 +923,10 @@ async fn await_departure(
     }
 }
 
-/// Wait for a hello from `dest`, using the 3s grace on a first visit.
+/// Wait for webview `label` to say hello from `dest`, using the 3s grace on a first visit.
 async fn wait_dest_bridge(
     engine: &EvalEngine,
+    label: &str,
     dest: &tauri::Url,
     since: u64,
 ) -> Result<serde_json::Value, RpcError> {
@@ -931,7 +935,7 @@ async fn wait_dest_bridge(
     } else {
         BRIDGE_GRACE
     };
-    if engine.wait_bridge(dest, since, limit).await {
+    if engine.wait_bridge(label, dest, since, limit).await {
         Ok(serde_json::json!({"ok": true}))
     } else {
         Err(no_bridge_error(
@@ -1177,8 +1181,12 @@ fn build_bridge_call(method: &str, params: Option<&serde_json::Value>) -> Result
 }
 
 /// Process the IPC callback from the JS bridge (ADR-001).
+///
+/// `label` is the invoking webview. A hello is recorded under it, so a
+/// navigate waits for its own window (see [`EvalEngine::bridge_hello`]).
 pub(crate) fn handle_callback(
     engine: &EvalEngine,
+    label: &str,
     id: u64,
     result: Option<String>,
     error: Option<String>,
@@ -1195,7 +1203,7 @@ pub(crate) fn handle_callback(
             (Some(webview), Some(client)) if origin_key(webview) != origin_key(client) => {
                 tracing::warn!("bridge hello origin mismatch, ignoring");
             }
-            (Some(webview), _) => engine.bridge_hello(webview.as_str()),
+            (Some(webview), _) => engine.bridge_hello(label, webview.as_str()),
             (None, _) => tracing::warn!("bridge hello without a webview URL"),
         }
         return;
@@ -1266,7 +1274,14 @@ fn finish_callback<R: tauri::Runtime>(
     error: Option<String>,
 ) {
     let page = eval_engine.page_at_start(webview.label());
-    handle_callback(eval_engine, id, result, error, page.as_ref());
+    handle_callback(
+        eval_engine,
+        webview.label(),
+        id,
+        result,
+        error,
+        page.as_ref(),
+    );
 }
 
 #[cfg(test)]
@@ -1779,6 +1794,7 @@ mod tests {
         let (id, rx) = engine.register();
         handle_callback(
             &engine,
+            "main",
             id,
             Some(r#"{"title":"hello"}"#.to_owned()),
             None,
@@ -1795,7 +1811,7 @@ mod tests {
         // Value::Null so the client sees a clean success, not a warn fallback.
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
-        handle_callback(&engine, id, Some("null".to_owned()), None, None);
+        handle_callback(&engine, "main", id, Some("null".to_owned()), None, None);
         let val = rx.await.expect("channel not dropped").expect("eval ok");
         assert_eq!(val, serde_json::Value::Null);
     }
@@ -1804,7 +1820,14 @@ mod tests {
     async fn test_callback_with_error() {
         let engine = EvalEngine::new();
         let (id, rx) = engine.register();
-        handle_callback(&engine, id, None, Some("TypeError: x".to_owned()), None);
+        handle_callback(
+            &engine,
+            "main",
+            id,
+            None,
+            Some("TypeError: x".to_owned()),
+            None,
+        );
         let result = rx.await.expect("channel not dropped");
         assert_eq!(result, Err("TypeError: x".to_owned()));
     }
@@ -2811,7 +2834,7 @@ mod tests {
     /// when the app page loads.
     fn engine_with_app_bridge() -> EvalEngine {
         let engine = EvalEngine::new();
-        handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
+        handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(APP_PAGE)));
         engine
     }
 
@@ -3034,7 +3057,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn test_dispatch_after_origin_change_does_not_claim_new_page_has_no_bridge() {
         let engine = engine_with_app_bridge();
-        handle_callback(&engine, HELLO_ID, None, None, Some(&url(FOREIGN_PAGE)));
+        handle_callback(
+            &engine,
+            "main",
+            HELLO_ID,
+            None,
+            None,
+            Some(&url(FOREIGN_PAGE)),
+        );
         let webviews = FakeWebviews::window("main", Some(APP_PAGE));
         let pages = webviews.clone();
         let webviews = webviews.on_eval(move || {
@@ -3119,7 +3149,7 @@ mod tests {
             let engine = engine_clone.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
+                handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(APP_PAGE)));
             });
         });
 
@@ -3191,7 +3221,7 @@ mod tests {
             engine.resolve(1, Ok(json!({"ok": true})));
             tokio::spawn(async move {
                 tokio::time::sleep(delay).await;
-                handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
+                handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(dest)));
             });
         })
     }
@@ -3228,7 +3258,7 @@ mod tests {
         // #260: an origin that said hello before still needs this load's hello.
         let engine = engine_with_app_bridge();
         let dest = "https://allowed.example/";
-        handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
+        handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(dest)));
         let delay = Duration::from_millis(500);
         let webviews = navigating_webviews(&engine, APP_PAGE, dest, delay);
 
@@ -3247,6 +3277,113 @@ mod tests {
             start.elapsed() >= delay,
             "returned before the destination loaded, after {:?}",
             start.elapsed()
+        );
+    }
+
+    /// Two app windows: the navigate targets `popup`, and `main` (same
+    /// origin) says hello once the departing page answered. `popup` itself
+    /// says hello only when `popup_hello` is set.
+    fn two_window_navigate(
+        engine: &EvalEngine,
+        dest: &'static str,
+        popup_hello: bool,
+    ) -> FakeWebviews {
+        let engine = engine.clone();
+        FakeWebviews::windows(&[("main", Some(APP_PAGE)), ("popup", Some(APP_PAGE))]).on_eval(
+            move || {
+                let engine = engine.clone();
+                engine.resolve(1, Ok(json!({"ok": true})));
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(APP_PAGE)));
+                    if popup_hello {
+                        tokio::time::sleep(Duration::from_millis(400)).await;
+                        handle_callback(&engine, "popup", HELLO_ID, None, None, Some(&url(dest)));
+                    }
+                });
+            },
+        )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_ignores_same_origin_hello_from_another_window() {
+        // A hello from another window on the same origin is not the target's
+        // new document, so navigate must keep waiting and fail.
+        let engine = engine_with_app_bridge();
+        let webviews = two_window_navigate(&engine, "tauri://localhost/settings.html", false);
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html", "window": "popup"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "another window's hello must not report ok, got {result:?}"
+        );
+        assert!(
+            start.elapsed() >= DEFAULT_TIMEOUT,
+            "took {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_succeeds_on_target_window_hello() {
+        let engine = engine_with_app_bridge();
+        let webviews = two_window_navigate(&engine, "tauri://localhost/settings.html", true);
+
+        let start = tokio::time::Instant::now();
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": "/settings.html", "window": "popup"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("the target window's hello reports ok");
+        assert_eq!(result, json!({"ok": true}));
+        assert!(
+            start.elapsed() >= Duration::from_millis(500),
+            "returned on the other window's hello, after {:?}",
+            start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_ignores_hello_from_another_window() {
+        // Same race on the cross-origin path: `main` already shows the
+        // destination origin and reloads while `popup` navigates there.
+        let engine = engine_with_app_bridge();
+        let dest = "https://allowed.example/";
+        handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(dest)));
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::windows(&[("main", Some(dest)), ("popup", Some(APP_PAGE))])
+            .on_eval(move || {
+                let engine = engine_clone.clone();
+                engine.resolve(1, Ok(json!({"ok": true})));
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(dest)));
+                });
+            });
+
+        let result = dispatch(
+            "navigate",
+            Some(&json!({"url": dest, "window": "popup"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "another window's hello must not report ok, got {result:?}"
         );
     }
 
@@ -3317,7 +3454,7 @@ mod tests {
         // working bridge must still succeed on that origin's hello.
         let engine = engine_with_app_bridge();
         let redirect = "https://auth.example/login";
-        handle_callback(&engine, HELLO_ID, None, None, Some(&url(redirect)));
+        handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(redirect)));
         let engine_clone = engine.clone();
         let webviews = FakeWebviews::window("main", Some(APP_PAGE));
         let webviews_clone = webviews.clone();
@@ -3328,7 +3465,7 @@ mod tests {
             webviews_clone.set_url("main", Some(redirect));
             tokio::spawn(async move {
                 tokio::time::sleep(delay).await;
-                handle_callback(&engine, HELLO_ID, None, None, Some(&url(redirect)));
+                handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(redirect)));
             });
         });
 
@@ -3360,7 +3497,7 @@ mod tests {
             let engine = engine_clone.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(hello_after).await;
-                handle_callback(&engine, HELLO_ID, None, None, Some(&url(APP_PAGE)));
+                handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(APP_PAGE)));
             });
         });
 
@@ -3522,7 +3659,7 @@ mod tests {
             engine.resolve(1, Ok(json!({"ok": true})));
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
+                handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(dest)));
             });
         });
 
@@ -3574,6 +3711,7 @@ mod tests {
         let engine = engine_with_app_bridge();
         handle_callback(
             &engine,
+            "main",
             HELLO_ID,
             Some("https://evil.example/".to_owned()),
             None,
@@ -3591,6 +3729,7 @@ mod tests {
         let engine = engine_with_app_bridge();
         handle_callback(
             &engine,
+            "main",
             HELLO_ID,
             Some(APP_PAGE.to_owned()),
             None,
@@ -3612,7 +3751,7 @@ mod tests {
             let engine = engine_clone.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                handle_callback(&engine, HELLO_ID, None, None, Some(&url(dest)));
+                handle_callback(&engine, "main", HELLO_ID, None, None, Some(&url(dest)));
             });
         });
 

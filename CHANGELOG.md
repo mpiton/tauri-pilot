@@ -61,8 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Android an old `adb forward` points at the socket name of the previous
   launch. [#257]
 
-- `navigate` returns once the destination document's bridge says hello, even
-  when its origin already said hello before. It returned on the departing
+- `navigate` returns once the destination document's bridge says hello in the
+  target window, even when its origin already said hello before. A hello from
+  another window on the same origin no longer counts. It returned on the departing
   page's answer, which is sent before the load starts, so the next `eval`,
   `snapshot` or `click` could run on the page being left. A `javascript:` URL
   or a fragment-only change still returns on the page's answer. A same-origin
