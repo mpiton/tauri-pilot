@@ -70,6 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `navigate` to a document that never says hello now fails, after up to about
   13 seconds, instead of reporting ok. [#260]
 
+### Security
+
+- Upgrade undici in the docs lockfile to 8.11.2 (from 8.10.0), clearing 11
+  open Dependabot alerts, 3 of them high. The CI, docs and release workflows
+  move to action versions that run on the Node 24 runtime, and the docs build
+  and the JS bridge tests now run on Node 26. Docs and CI only — the plugin
+  and CLI crates are untouched. [#269]
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
@@ -1248,3 +1256,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#256]: https://github.com/mpiton/tauri-pilot/issues/256
 [#257]: https://github.com/mpiton/tauri-pilot/issues/257
 [#260]: https://github.com/mpiton/tauri-pilot/issues/260
+[#269]: https://github.com/mpiton/tauri-pilot/issues/269
