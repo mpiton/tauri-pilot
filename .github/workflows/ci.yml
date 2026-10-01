@@ -34,7 +34,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
@@ -49,7 +49,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           # Intentionally exclude `~/.cargo/bin/`: the toolchain action above
           # provisions cargo/rustc/clippy/rustfmt, and caching the bin dir
@@ -98,6 +98,13 @@ jobs:
 
       # The injected bridge ships as plain JS with its own node:test suite.
       # `node --test <dir>` cannot resolve the files, so pass the glob.
+      # Pin Node rather than use the runner image's default, which lags.
+      - name: Install Node 26
+        if: runner.os == 'Linux'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+
       - name: Test JS bridge
         if: runner.os == 'Linux'
         run: node --test 'crates/tauri-plugin-pilot/js/*.test.mjs'
@@ -129,7 +136,7 @@ jobs:
       # regression that has nothing to do with our floors. Bump deliberately.
       NIGHTLY: nightly-2026-09-01
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         if: runner.os == 'Linux'
@@ -152,7 +159,7 @@ jobs:
       # restores. `Cargo.lock` is not a cached path, so the floors resolved
       # here cannot reach `check` either way.
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/
