@@ -22,6 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `tauri` 2.12.0 no longer compiles on macOS. Apps consuming the plugin
   must now be on `tauri` 2.12.1 or newer.
 
+- `logs --json` carries different values for console arguments, now copied
+  when they are logged (see Fixed). A logged `undefined`, `NaN` or
+  `Infinity` was `null` and is now the string `"undefined"`, `"NaN"` or
+  `"Infinity"`. A BigInt is `"10n"` (it was `"10"`, and one nested in an
+  object turned the whole argument into `"[object Object]"`) and a symbol
+  `"Symbol(x)"` (it was dropped). An `Error` was `{}` (or only its
+  enumerable fields) and is now `"Name: message"`, or
+  `{"__type":"Error","message":"Name: message",...}` with its own fields and
+  `cause` when it has any; its stack is not kept.
+  `Map`, `Set` and typed arrays are tagged objects, a DOM node a string, a
+  `RegExp` its source and other key-less built-ins (`Promise`, `WeakMap`)
+  `"[Promise]"`-style names. Getters and `toJSON` on a logged object run at
+  call time instead of when `logs` reads the buffer. Consumers that read a
+  logged `undefined` as `null`, or an Error's fields at the top level, must
+  now expect the new shapes. [#274]
+
 - `windows` leaves out `title` for a window with no native title instead of
   reporting `""`. Android and iOS windows never have one; `title` still reads
   the page's `document.title`. The rows of `error.data.available_windows`
@@ -159,6 +175,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `error.data.error = "NO_WEBVIEW"` (see Changed for what MCP and CLI
   clients now read), so a client can retry it without matching the text. A successful `ping` still does not mean a window is
   ready. [#273]
+- `logs` shows each console argument as it was when it was logged. The
+  bridge kept the live object and serialized it only when `logs` read it, so
+  an object changed after the call showed its later state, and an `Error`,
+  `Map`, `Set` or DOM node came out as `{}`: `console.error("Request
+  failed", err)` lost the error's name and message. An `Error` now leads
+  with `"Name: message"`, a DOM element is `"<tag#id.class>"`, `Map` and
+  `Set` are tagged objects (`{"__type":"Map","size":1,"entries":[["k",1]]}`),
+  and `undefined`, `NaN` and `Infinity` keep their names instead of `null`.
+  Nested values follow the same rules; cycles become `"[Circular]"`, and a
+  copy stops at 8 levels, 100 items per container, 1000 objects per argument
+  and 10,000 characters per nested string. The value changes `--json`
+  consumers see are listed under Changed. [#274]
 
 ### Security
 
@@ -1354,3 +1382,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#278]: https://github.com/mpiton/tauri-pilot/issues/278
 [#280]: https://github.com/mpiton/tauri-pilot/issues/280
 [#273]: https://github.com/mpiton/tauri-pilot/issues/273
+[#274]: https://github.com/mpiton/tauri-pilot/issues/274

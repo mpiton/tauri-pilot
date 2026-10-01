@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { runInNewContext } from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BRIDGE_SRC = readFileSync(join(here, "bridge.js"), "utf8");
@@ -67,6 +68,8 @@ after(() => {
 
 function installGlobals(native) {
   resetConsole(native);
+  // A DOM test installs a Node stand-in; a plain test must not inherit it.
+  delete globalThis.Node;
   globalThis.location = { href: "https://app.example/" };
   globalThis.XMLHttpRequest = function () {};
   globalThis.XMLHttpRequest.prototype.open = function () {};
@@ -656,4 +659,455 @@ test("eval gives a plain syntax error when a broken script's await is deeply nes
     () => pilot.eval({ script }),
     (e) => e instanceof SyntaxError && !/could not be auto-wrapped/.test(e.message),
   );
+});
+
+// Console arguments are snapshotted when they are logged (#274).
+//
+// serializeArg kept the live reference and only checked that JSON.stringify
+// did not throw, so an object was rendered with its state at read time, and an
+// Error, Map, Set or DOM node came out as {} because none of them has
+// enumerable own properties.
+
+// Stand-ins for the DOM: as in a browser, nodeType is an accessor on
+// Node.prototype, which is what tells a node from an object with the same
+// fields. Installed per test because loadBridge resets the globals.
+class FakeNode {
+  get nodeType() { return this._type; }
+}
+class FakeElement extends FakeNode {
+  constructor(localName, id = "", className = "") {
+    super();
+    this._type = 1;
+    this.nodeName = localName.toUpperCase();
+    this.localName = localName;
+    this.id = id;
+    this.className = className;
+  }
+}
+class FakeText extends FakeNode {
+  constructor() {
+    super();
+    this._type = 3;
+    this.nodeName = "#text";
+  }
+}
+
+function loadBridgeWithDom() {
+  const pilot = loadBridge();
+  globalThis.Node = FakeNode;
+  return pilot;
+}
+
+after(() => { delete globalThis.Node; });
+
+test("an object is logged with its state at call time", () => {
+  const pilot = loadBridge();
+  const o = { a: 1 };
+  console.log("state", o);
+  o.a = 2;
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, ["state", { a: 1 }]);
+});
+
+test("errors, collections, nodes and undefined say what they are", () => {
+  const pilot = loadBridgeWithDom();
+  console.log(
+    "err",
+    new TypeError("bad input"),
+    new Map([["k", 1]]),
+    new Set([1]),
+    new FakeElement("body"),
+    undefined,
+    [new Error("in array")],
+  );
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  const expected = [
+    "err",
+    "TypeError: bad input",
+    { __type: "Map", size: 1, entries: [["k", 1]] },
+    { __type: "Set", size: 1, values: [1] },
+    "<body>",
+    "undefined",
+    ["Error: in array"],
+  ];
+  assert.deepEqual(entry.args, expected);
+  // What the CLI receives is the JSON form of the entry, so nothing may be
+  // lost or changed on the way through.
+  assert.deepEqual(JSON.parse(JSON.stringify(entry.args)), expected);
+});
+
+test("an element names its tag, id and classes", () => {
+  const pilot = loadBridgeWithDom();
+  console.log(new FakeElement("button", "save", "primary  wide"), { target: new FakeElement("div") });
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, ["<button#save.primary.wide>", { target: "<div>" }]);
+});
+
+test("an object with node-like fields that is not a node is logged as data", () => {
+  const pilot = loadBridgeWithDom();
+  class AstNode {
+    constructor() { this.nodeType = 3; this.nodeName = "Ident"; this.value = 42; }
+  }
+  console.log({ nodeType: 1, nodeName: "row" }, new AstNode());
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [
+    { nodeType: 1, nodeName: "row" },
+    { nodeType: 3, nodeName: "Ident", value: 42 },
+  ]);
+});
+
+test("nested values follow the same rules as top-level ones", () => {
+  const pilot = loadBridge();
+  const inner = { n: 1 };
+  console.log({
+    err: new RangeError("too far"),
+    map: new Map([["inner", inner]]),
+    missing: undefined,
+    when: new Date(0),
+  });
+  inner.n = 2;
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args[0], {
+    err: "RangeError: too far",
+    map: { __type: "Map", size: 1, entries: [["inner", { n: 1 }]] },
+    missing: "undefined",
+    when: "1970-01-01T00:00:00.000Z",
+  });
+});
+
+test("a cyclic object is logged instead of falling back to [object Object]", () => {
+  const pilot = loadBridge();
+  const o = { name: "loop" };
+  o.self = o;
+  console.log(o);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args[0], { name: "loop", self: "[Circular]" });
+});
+
+test("deep nesting and large containers are capped", () => {
+  const pilot = loadBridge();
+  let deep = { leaf: true };
+  for (let i = 0; i < 20; i++) deep = { child: deep };
+  const big = Array.from({ length: 1000 }, (_, i) => i);
+  console.log(deep, big);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  const text = JSON.stringify(entry.args[0]);
+  assert.doesNotMatch(text, /leaf/, "nesting past the depth cap is cut");
+  assert.match(text, /\[Object\]/);
+  assert.equal(entry.args[1].length, 101, "100 items plus one marker");
+  assert.equal(entry.args[1][99], 99);
+  assert.equal(entry.args[1][100], "... 900 more items");
+});
+
+test("a wide graph is capped in total, not only per level", () => {
+  // 100 rows of 100 objects: every container is under the per-level cap, but
+  // the whole graph holds 10,101 objects.
+  const pilot = loadBridge();
+  const row = () => Object.fromEntries(Array.from({ length: 100 }, (_, i) => ["k" + i, { v: i }]));
+  const wide = Object.fromEntries(Array.from({ length: 100 }, (_, i) => ["r" + i, row()]));
+  console.log(wide);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  const text = JSON.stringify(entry.args[0]);
+  assert.ok(text.length < 100_000, `snapshot is ${text.length} chars`);
+  assert.match(text, /\[Object\]/, "objects past the total cap are cut");
+});
+
+test("an object that throws while being read does not break the log", () => {
+  const pilot = loadBridge();
+  const hostile = {};
+  Object.defineProperty(hostile, "boom", { enumerable: true, get() { throw new Error("no"); } });
+  console.log("before", hostile);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, ["before", { boom: "[unreadable]" }]);
+});
+
+test("a throwing nodeType or toJSON still leaves the object's keys", () => {
+  const pilot = loadBridgeWithDom();
+  const trap = { a: 1 };
+  Object.defineProperty(trap, "nodeType", { get() { throw new Error("no"); } });
+  const badJson = { b: 2, toJSON() { throw new Error("no"); } };
+  console.log(trap, badJson);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args[0], { a: 1 });
+  assert.equal(entry.args[1].b, 2);
+});
+
+test("a large Map keeps its first entries and says how many it dropped", () => {
+  const pilot = loadBridge();
+  console.log(new Map(Array.from({ length: 1000 }, (_, i) => [i, i])));
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(entry.args[0].size, 1000);
+  assert.equal(entry.args[0].entries.length, 100);
+  assert.deepEqual(entry.args[0].entries[99], [99, 99]);
+  assert.equal(entry.args[0].truncated, 900);
+});
+
+test("long strings inside a logged object are cut", () => {
+  const pilot = loadBridge();
+  const long = "x".repeat(50_000);
+  console.log(long, { body: long });
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(entry.args[0], long, "a top-level string argument is kept whole");
+  assert.equal(entry.args[1].body, "x".repeat(10_000) + "... (40000 more chars)");
+});
+
+test("an array hole is logged as null, not as undefined", () => {
+  const pilot = loadBridge();
+  // eslint-disable-next-line no-sparse-arrays
+  console.log([1, , undefined]);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args[0], [1, null, "undefined"]);
+});
+
+test("NaN and Infinity keep their names instead of becoming null", () => {
+  const pilot = loadBridge();
+  console.log(NaN, { inf: -Infinity }, 1.5);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(JSON.parse(JSON.stringify(entry.args)), ["NaN", { inf: "-Infinity" }, 1.5]);
+});
+
+// `levels` wrappers around `leaf`: the leaf sits at that depth.
+function nest(leaf, levels) {
+  let value = leaf;
+  for (let i = 0; i < levels; i++) value = { c: value };
+  return value;
+}
+
+function at(value, levels) {
+  for (let i = 0; i < levels; i++) value = value.c;
+  return value;
+}
+
+test("an Error keeps its own fields and its cause", () => {
+  const pilot = loadBridge();
+  const fields = Object.assign(new Error("boom"), { code: "ECONNRESET", status: 404 });
+  const chained = new Error("outer", { cause: new TypeError("inner") });
+  const loop = new Error("loop");
+  loop.cause = loop;
+  console.error(fields, chained, loop, new Error("plain"));
+
+  const [entry] = pilot.consoleLogs({ level: "error" });
+  assert.deepEqual(entry.args, [
+    { __type: "Error", message: "Error: boom", code: "ECONNRESET", status: 404 },
+    { __type: "Error", message: "Error: outer", cause: "TypeError: inner" },
+    { __type: "Error", message: "Error: loop", cause: "[Circular]" },
+    "Error: plain",
+  ]);
+});
+
+test("an object wearing only the Error tag is logged as data", () => {
+  const pilot = loadBridge();
+  console.log({ [Symbol.toStringTag]: "Error", code: 7 });
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [{ code: 7 }]);
+});
+
+test("a long Error message or node description is cut like a string", () => {
+  const pilot = loadBridgeWithDom();
+  console.log(new Error("x".repeat(50_000)), { el: new FakeElement("div", "y".repeat(50_000)) });
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(entry.args[0], "Error: " + "x".repeat(9_993) + "... (40007 more chars)");
+  assert.equal(entry.args[1].el, "<div#" + "y".repeat(9_995) + "... (40006 more chars)");
+});
+
+test("a throwing toJSON getter still leaves the object's keys", () => {
+  const pilot = loadBridge();
+  const trap = { b: 2 };
+  Object.defineProperty(trap, "toJSON", { enumerable: false, get() { throw new Error("no"); } });
+  console.log(trap);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [{ b: 2 }]);
+});
+
+test("an own __proto__ key is kept as data", () => {
+  const pilot = loadBridge();
+  console.log(JSON.parse('{"__proto__":{"x":1},"a":2}'));
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(JSON.stringify(entry.args[0]), '{"__proto__":{"x":1},"a":2}');
+});
+
+test("a shared reference is copied at each place, not cut as a cycle", () => {
+  const pilot = loadBridge();
+  const shared = { n: 1 };
+  console.log({ a: shared, b: shared });
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [{ a: { n: 1 }, b: { n: 1 } }]);
+});
+
+test("values from another realm are recognised", () => {
+  const pilot = loadBridge();
+  console.log(runInNewContext('[new Map([["k", 1]]), new Set([2]), new TypeError("far")]'));
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [[
+    { __type: "Map", size: 1, entries: [["k", 1]] },
+    { __type: "Set", size: 1, values: [2] },
+    "TypeError: far",
+  ]]);
+});
+
+test("bigints, symbols and functions are named", () => {
+  const pilot = loadBridge();
+  console.log({ big: 10n, sym: Symbol("s"), named: function f() {}, anon: [() => {}] });
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [{ big: "10n", sym: "Symbol(s)", named: "[Function f]", anon: ["[Function]"] }]);
+});
+
+test("a node that is not an element is its node name", () => {
+  const pilot = loadBridgeWithDom();
+  console.log(new FakeText());
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, ["#text"]);
+});
+
+test("element classes come from the class attribute, not className", () => {
+  // An SVG element's className is an SVGAnimatedString, not a string.
+  const pilot = loadBridgeWithDom();
+  const svg = new FakeElement("svg", "", { baseVal: "icon" });
+  svg.getAttribute = (name) => (name === "class" ? "icon big" : null);
+  console.log(svg);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, ["<svg.icon.big>"]);
+});
+
+test("nesting is cut at exactly 8 levels, with the container's kind", () => {
+  const pilot = loadBridge();
+  console.log(
+    nest({ leaf: true }, 7),
+    nest({ leaf: true }, 8),
+    nest(new Map(), 8),
+    nest(new Set(), 8),
+    nest([1], 8),
+  );
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(at(entry.args[0], 7), { leaf: true });
+  assert.equal(at(entry.args[1], 8), "[Object]");
+  assert.equal(at(entry.args[2], 8), "[Map]");
+  assert.equal(at(entry.args[3], 8), "[Set]");
+  assert.equal(at(entry.args[4], 8), "[Array]");
+});
+
+test("one argument copies exactly 1000 objects", () => {
+  // 1 outer array + 10 rows + 1000 leaves = 1011 objects: the last 11 leaves
+  // are past the cap.
+  const pilot = loadBridge();
+  const rows = Array.from({ length: 10 }, () => Array.from({ length: 100 }, () => ({})));
+  console.log(rows);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  const cut = entry.args[0].flat().filter((v) => v === "[Object]").length;
+  assert.equal(cut, 11);
+});
+
+test("an object past 100 keys says how many it dropped", () => {
+  const pilot = loadBridge();
+  console.log(Object.fromEntries(Array.from({ length: 150 }, (_, i) => ["k" + i, i])));
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  const keys = Object.keys(entry.args[0]);
+  assert.equal(keys.length, 101);
+  assert.equal(entry.args[0].k99, 99);
+  assert.equal(entry.args[0]["..."], "50 more keys");
+});
+
+test("built-ins with no keys say what they are", () => {
+  const pilot = loadBridge();
+  console.log(
+    /ab+c/gi,
+    { r: /x/ },
+    Promise.resolve(1),
+    new WeakMap(),
+    new ArrayBuffer(8),
+    new DataView(new ArrayBuffer(2)),
+    new Uint8Array([1, 2, 3]),
+    new BigInt64Array([5n]),
+    { [Symbol.toStringTag]: "RegExp" },
+  );
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [
+    "/ab+c/gi",
+    { r: "/x/" },
+    "[Promise]",
+    "[WeakMap]",
+    "[ArrayBuffer]",
+    "[DataView]",
+    { __type: "Uint8Array", length: 3, values: [1, 2, 3] },
+    { __type: "BigInt64Array", length: 1, values: ["5n"] },
+    "[RegExp]",
+  ]);
+});
+
+test("a large typed array keeps its first items and says how many it dropped", () => {
+  const pilot = loadBridge();
+  console.log(new Float64Array(1000));
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.equal(entry.args[0].length, 1000);
+  assert.equal(entry.args[0].values.length, 100);
+  assert.equal(entry.args[0].truncated, 900);
+});
+
+test("plain data is not probed with the Node getter", () => {
+  // In a browser the getter throws for a non-node, and an exception per
+  // logged object made console.log far slower.
+  const pilot = loadBridge();
+  let probes = 0;
+  globalThis.Node = class {
+    get nodeType() { probes += 1; throw new TypeError("Illegal invocation"); }
+  };
+  console.log({ a: { b: [1, { c: 2 }] } });
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [{ a: { b: [1, { c: 2 }] } }]);
+  assert.equal(probes, 0);
+});
+
+test("toJSON receives its property key, as JSON.stringify passes it", () => {
+  const pilot = loadBridge();
+  const keyed = { toJSON(key) { return "key:" + key; } };
+  console.log(keyed, { a: keyed }, [keyed]);
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, ["key:", { a: "key:a" }, ["key:0"]]);
+});
+
+test("a typed array is recognised by its internal slot, not its tag", () => {
+  const pilot = loadBridge();
+  const dataView = new DataView(new ArrayBuffer(2));
+  Object.defineProperty(dataView, Symbol.toStringTag, { value: "Uint8Array" });
+  const bytes = new Uint8Array([1, 2]);
+  Object.defineProperty(bytes, Symbol.toStringTag, { value: "DataView" });
+  Object.defineProperty(bytes, "length", { value: 1e9 });
+  console.log(dataView, bytes, runInNewContext("new Int16Array([7])"));
+
+  const [entry] = pilot.consoleLogs({ level: "log" });
+  assert.deepEqual(entry.args, [
+    "[Uint8Array]",
+    { __type: "Uint8Array", length: 2, values: [1, 2] },
+    { __type: "Int16Array", length: 1, values: [7] },
+  ]);
 });

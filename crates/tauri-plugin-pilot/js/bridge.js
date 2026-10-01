@@ -53,16 +53,262 @@
     "combobox",
   ]);
 
+  // Caps for a logged value, so one call cannot hold a huge graph in the
+  // 500-entry buffer: nesting depth, items kept per container, objects copied
+  // per argument in all, and characters kept per string inside a container.
+  const LOG_MAX_DEPTH = 8;
+  const LOG_MAX_ITEMS = 100;
+  const LOG_MAX_OBJECTS = 1000;
+  const LOG_MAX_STRING = 10000;
+
+  // Console arguments are copied when they are logged, not when `logs` reads
+  // them: a live reference shows whatever state the object has by then and
+  // keeps it (and any DOM node it reaches) alive in the buffer (#274).
   function serializeArg(arg) {
-    if (arg === null) return null;
-    if (arg === undefined) return null;
-    if (typeof arg === 'string' || typeof arg === 'number' || typeof arg === 'boolean') return arg;
+    if (typeof arg === 'string') return arg;
     try {
-      JSON.stringify(arg);
-      return arg;
+      return snapshotValue(arg, 0, { ancestors: [], objectsLeft: LOG_MAX_OBJECTS });
     } catch (_) {
-      return String(arg);
+      return '[unprintable]';
     }
+  }
+
+  // `[object Tag]` for `value`, or '' when even that throws (a revoked proxy).
+  function brandTag(value) {
+    try {
+      return Object.prototype.toString.call(value);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // 'Map', 'Set' or null. Brand checks through the size getters work across
+  // realms and cannot be faked with Symbol.toStringTag.
+  const _mapSize = Object.getOwnPropertyDescriptor(Map.prototype, 'size').get;
+  const _setSize = Object.getOwnPropertyDescriptor(Set.prototype, 'size').get;
+  const _regExpSource = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get;
+  // The %TypedArray% intrinsics read internal slots: the tag getter answers
+  // the constructor name for a typed array from any realm and undefined for
+  // anything else (a DataView included), whatever Symbol.toStringTag or an
+  // own `length` claim.
+  const _typedArrayProto = Object.getPrototypeOf(Uint8Array.prototype);
+  const _typedArrayTag = Object.getOwnPropertyDescriptor(_typedArrayProto, Symbol.toStringTag).get;
+  const _typedArrayLength = Object.getOwnPropertyDescriptor(_typedArrayProto, 'length').get;
+  function typedArrayName(value) {
+    try {
+      return _typedArrayTag.call(value) || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function collectionKind(value) {
+    // A failed brand check throws, and throwing for every plain object made
+    // each logged object cost far more than copying it. The tag is only a
+    // filter: the getters below still decide.
+    const tag = brandTag(value);
+    if (tag !== '[object Map]' && tag !== '[object Set]') return null;
+    try {
+      _mapSize.call(value);
+      return 'Map';
+    } catch (_) {}
+    try {
+      _setSize.call(value);
+      return 'Set';
+    } catch (_) {}
+    return null;
+  }
+
+  // The node type, or null for anything that is not a DOM node. Calling the
+  // Node.prototype getter is a brand check: it works for a node from an
+  // iframe, which fails `instanceof Node`, and throws for an object that
+  // merely has a `nodeType` field.
+  function domNodeType(value) {
+    try {
+      if (typeof Node !== 'function') return null;
+      // Same filter as collectionKind: skip the throwing getter for values
+      // that cannot be nodes.
+      if (!('nodeType' in value)) return null;
+      const desc = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType');
+      if (!desc || typeof desc.get !== 'function') return null;
+      const type = desc.get.call(value);
+      return typeof type === 'number' ? type : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // `<button#save.primary>` for an element, the node name (`#text`,
+  // `#document`) for any other node.
+  function describeNode(node, type) {
+    if (type !== 1) return String(node.nodeName);
+    let text = '<' + String(node.localName || node.nodeName).toLowerCase();
+    if (node.id) text += '#' + node.id;
+    // SVG elements carry an SVGAnimatedString in className.
+    const cls = typeof node.getAttribute === 'function' ? node.getAttribute('class') : node.className;
+    if (typeof cls === 'string') {
+      cls.split(/\s+/).forEach(c => { if (c) text += '.' + c; });
+    }
+    return text + '>';
+  }
+
+  // JSON-safe copy of `value`. Errors, nodes and other values JSON would turn
+  // into {} or drop become short strings, Map and Set become tagged objects,
+  // and the same rules apply at every level. `state.ancestors` holds the
+  // objects on the current path, so a cycle is cut but a shared reference is
+  // copied at each place it appears.
+  // `key` is the property name (or array index) `value` was read from, '' at
+  // the top: JSON.stringify hands it to toJSON, so it is passed on too.
+  function snapshotValue(value, depth, state, key) {
+    if (value === null) return null;
+    if (value === undefined) return 'undefined';
+    const type = typeof value;
+    if (type === 'string') return capString(value);
+    if (type === 'boolean') return value;
+    // JSON has no NaN or Infinity and would write null.
+    if (type === 'number') return Number.isFinite(value) ? value : String(value);
+    if (type === 'bigint') return String(value) + 'n';
+    if (type === 'symbol') return capString(String(value));
+    if (type === 'function') return capString('[Function' + (value.name ? ' ' + value.name : '') + ']');
+    // Same guard as describeReason: an object wearing only the Error tag is
+    // copied as an object.
+    const error = isError(value) && (value.name !== undefined || value.message !== undefined);
+    const label = error ? capString(describeReason(value)) : null;
+    let errorKeys = null;
+    if (error) {
+      errorKeys = Object.keys(value);
+      // `new Error(msg, { cause })` makes cause an own non-enumerable field.
+      if (errorKeys.indexOf('cause') === -1 && Object.prototype.hasOwnProperty.call(value, 'cause')) {
+        errorKeys.push('cause');
+      }
+      // A bare Error stays a plain "Name: message" string.
+      if (errorKeys.length === 0) return label;
+    } else {
+      const nodeType = domNodeType(value);
+      if (nodeType !== null) return capString(describeNode(value, nodeType));
+    }
+    if (state.ancestors.indexOf(value) !== -1) return '[Circular]';
+    const kind = error ? null : collectionKind(value);
+    if (depth >= LOG_MAX_DEPTH || state.objectsLeft <= 0) {
+      if (error) return label;
+      if (kind) return '[' + kind + ']';
+      return Array.isArray(value) ? '[Array]' : '[Object]';
+    }
+    state.objectsLeft--;
+    state.ancestors.push(value);
+    try {
+      if (error) {
+        // An Error's own fields (`code`, `status`, `cause`) are what JSON
+        // used to carry, so they are kept next to the "Name: message" lead.
+        const out = { __type: 'Error', message: label };
+        copyKeys(out, value, errorKeys.filter(k => k !== '__type' && k !== 'message'), depth + 1, state);
+        return out;
+      }
+      return snapshotObject(value, depth + 1, state, kind, key === undefined ? '' : key);
+    } finally {
+      state.ancestors.pop();
+    }
+  }
+
+  // `value` cut after LOG_MAX_STRING characters, with the count it dropped.
+  function capString(value) {
+    if (value.length <= LOG_MAX_STRING) return value;
+    // A V8 slice keeps its whole parent alive, so a 10 MB string cut to
+    // 10,000 characters would still hold 10 MB in the buffer. Joining the
+    // characters builds a flat copy that does not reference the parent.
+    const head = Array.prototype.join.call(value.slice(0, LOG_MAX_STRING), '');
+    return head + '... (' + (value.length - LOG_MAX_STRING) + ' more chars)';
+  }
+
+  // Copies `keys` of `value` (first LOG_MAX_ITEMS) into `out`, with a '...'
+  // marker for the rest.
+  function copyKeys(out, value, keys, depth, state) {
+    for (let i = 0; i < keys.length && i < LOG_MAX_ITEMS; i++) {
+      let v;
+      try {
+        v = snapshotValue(value[keys[i]], depth, state, keys[i]);
+      } catch (_) {
+        v = '[unreadable]';
+      }
+      // A plain assignment of an own `__proto__` key would hit the inherited
+      // setter and drop the field.
+      Object.defineProperty(out, keys[i], { value: v, enumerable: true, configurable: true, writable: true });
+    }
+    if (keys.length > LOG_MAX_ITEMS) out['...'] = (keys.length - LOG_MAX_ITEMS) + ' more keys';
+  }
+
+  function snapshotObject(value, depth, state, kind, key) {
+    const copy = (v, k) => {
+      try {
+        return snapshotValue(v, depth, state, k);
+      } catch (_) {
+        return '[unreadable]';
+      }
+    };
+    if (kind) {
+      const isMapValue = kind === 'Map';
+      const size = (isMapValue ? _mapSize : _setSize).call(value);
+      const iter = (isMapValue ? Map.prototype.entries : Set.prototype.values).call(value);
+      const items = [];
+      // Stop at the cap rather than walking every entry.
+      for (let step = iter.next(); !step.done && items.length < LOG_MAX_ITEMS; step = iter.next()) {
+        items.push(isMapValue ? [copy(step.value[0]), copy(step.value[1])] : copy(step.value));
+      }
+      const out = isMapValue
+        ? { __type: 'Map', size: size, entries: items }
+        : { __type: 'Set', size: size, values: items };
+      if (size > items.length) out.truncated = size - items.length;
+      return out;
+    }
+    if (Array.isArray(value)) {
+      const len = value.length;
+      const out = [];
+      // A hole is null, as JSON.stringify writes it, so it stays distinct
+      // from a real undefined.
+      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) out.push(i in value ? copy(value[i], String(i)) : null);
+      if (len > LOG_MAX_ITEMS) out.push('... ' + (len - LOG_MAX_ITEMS) + ' more items');
+      return out;
+    }
+    // Dates and other objects that define their own JSON form keep it; one
+    // whose toJSON (or toJSON getter) throws is copied key by key instead.
+    let toJSON;
+    try {
+      toJSON = value.toJSON;
+    } catch (_) {}
+    if (typeof toJSON === 'function') {
+      try {
+        return copy(toJSON.call(value, key), key);
+      } catch (_) {}
+    }
+    const tag = brandTag(value);
+    // A typed array is checked before Object.keys, which would list every
+    // index of a large one.
+    const typedName = typedArrayName(value);
+    if (typedName) {
+      const len = _typedArrayLength.call(value);
+      const values = [];
+      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) values.push(copy(value[i], String(i)));
+      const out = { __type: typedName, length: len, values: values };
+      if (len > values.length) out.truncated = len - values.length;
+      return out;
+    }
+    const keys = Object.keys(value);
+    // Built-ins that keep their state in internal slots have no keys and
+    // would be {}: say what they are instead.
+    if (keys.length === 0 && tag !== '[object Object]' && tag !== '') {
+      if (tag === '[object RegExp]') {
+        // The source getter is the brand check: it throws for an object that
+        // only wears the RegExp tag.
+        try {
+          _regExpSource.call(value);
+          return capString(RegExp.prototype.toString.call(value));
+        } catch (_) {}
+      }
+      return capString('[' + tag.slice(8, -1) + ']');
+    }
+    const out = {};
+    copyKeys(out, value, keys, depth, state);
+    return out;
   }
 
   function extractSource() {
