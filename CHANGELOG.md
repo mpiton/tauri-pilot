@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sessionStorage` key with `--session`, and prints `✓ ok`. Deleting a
   missing key succeeds; `--json` reports `{"deleted": true|false}` for
   whether it existed. Also available as the `storage.delete` JSON-RPC
-  method, the MCP `storage_delete` tool and the TOML `storage-delete` step.
-  [#284]
+  method, the MCP `storage_delete` tool and the TOML `storage-delete` step
+  (`session = true` for sessionStorage). A response without a boolean
+  `deleted` fails the CLI command (exit 1), the MCP tool and the step. [#284]
 
 ### Changed
 

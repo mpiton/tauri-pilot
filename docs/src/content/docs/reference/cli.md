@@ -1688,7 +1688,8 @@ other keys depend on the action:
 | `assert-exists`, `assert-visible`, `assert-hidden` | `target` | |
 | `assert-text`, `assert-value` | `target`, `expected` | |
 | `assert-url` | `expected` | |
-| `storage-get`, `storage-delete` | `key` | |
+| `storage-get` | `key` | |
+| `storage-delete` | `key` | `session` |
 
 `assert-hidden` passes when a selector matches nothing, like `assert hidden`.
 

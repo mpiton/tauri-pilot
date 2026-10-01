@@ -222,6 +222,31 @@ fn storage_delete_json_keeps_the_deleted_flag() {
 }
 
 #[test]
+fn storage_delete_without_boolean_deleted_exits_1() {
+    let output = run_storage(
+        &["delete", "some-key"],
+        "storage.delete",
+        serde_json::json!({"ok": true}),
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a response without boolean deleted must exit 1"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "no success line on a malformed response, got {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("deleted"),
+        "error must name the missing deleted field, got: {stderr}"
+    );
+}
+
+#[test]
 fn storage_clear_exits_0() {
     let output = run_storage(
         &["clear"],

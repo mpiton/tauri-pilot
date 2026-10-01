@@ -229,8 +229,8 @@ key = "theme"
 ```
 
 A `storage-delete` step (`action = "storage-delete"`) requires `key` and
-removes it from localStorage, with the same no-`session` limit. It passes
-whether or not the key existed.
+removes it from localStorage, or from sessionStorage with `session = true`.
+It passes whether or not the key existed.
 
 Each step is checked against its action when the scenario loads, before
 `run` or `pilot.run` connects. An unknown action, a missing required key, or a

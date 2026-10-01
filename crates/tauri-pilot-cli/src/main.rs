@@ -993,7 +993,12 @@ async fn run_storage_command(
         ),
         StorageAction::List => ("storage.list", json!({"session": session})),
         StorageAction::Delete { key } => {
-            ("storage.delete", json!({"key": key, "session": session}))
+            let params = json!({"key": key, "session": session});
+            let result = client
+                .call("storage.delete", with_window(Some(params), window))
+                .await?;
+            scenario::check_storage_delete_result(&result)?;
+            return Ok(result);
         }
         StorageAction::Clear => ("storage.clear", json!({"session": session})),
     };

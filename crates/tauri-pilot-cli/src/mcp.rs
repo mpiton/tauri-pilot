@@ -348,15 +348,20 @@ impl PilotMcpServer {
                 .await
             }
             "storage_delete" => {
-                self.call_app_tool(
-                    "storage.delete",
-                    Some(json!({
-                        "key": required_string(&args, "key")?,
-                        "session": optional_bool(&args, "session")?.unwrap_or(false),
-                    })),
-                    window,
-                )
-                .await
+                let params = json!({
+                    "key": required_string(&args, "key")?,
+                    "session": optional_bool(&args, "session")?.unwrap_or(false),
+                });
+                let result = self
+                    .call_app("storage.delete", Some(params), window)
+                    .await
+                    .and_then(|result| {
+                        scenario::check_storage_delete_result(&result).map(|()| result)
+                    });
+                Ok(match result {
+                    Ok(result) => tool_success(result),
+                    Err(err) => tool_error(&err),
+                })
             }
             "storage_clear" => {
                 self.call_app_tool(
@@ -2875,6 +2880,42 @@ path = "/tmp/out.png"
             .await
             .expect("tool call succeeds");
         assert_eq!(result.is_error, Some(false));
+
+        server.await.expect("mock server task");
+        let _ = std::fs::remove_file(&socket);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn storage_delete_without_boolean_deleted_is_a_tool_error() {
+        let socket = std::env::temp_dir().join(format!(
+            "tauri-pilot-mcp-storage-delete-malformed-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).expect("bind mock socket");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut reader = BufReader::new(reader);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.expect("read request");
+            let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+            assert_eq!(request.method, "storage.delete");
+            let response = Response::success(request.id, json!({"ok": true}));
+            let mut bytes = serde_json::to_vec(&response).expect("serialize response");
+            bytes.push(b'\n');
+            writer.write_all(&bytes).await.expect("write response");
+        });
+
+        let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+        let mut args = Map::new();
+        args.insert("key".to_owned(), json!("tab_id"));
+        let result = pilot
+            .call_tool_by_name("storage_delete", args)
+            .await
+            .expect("tool call returns a result");
+        assert_eq!(result.is_error, Some(true));
 
         server.await.expect("mock server task");
         let _ = std::fs::remove_file(&socket);

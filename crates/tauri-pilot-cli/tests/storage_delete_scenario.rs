@@ -27,6 +27,15 @@ fn run_storage_delete_scenario(
     key: &str,
     result: serde_json::Value,
 ) -> (Output, Vec<String>, Vec<serde_json::Value>) {
+    run_storage_delete_scenario_with(key, "", result)
+}
+
+/// Like [`run_storage_delete_scenario`], with `extra` TOML appended to the step.
+fn run_storage_delete_scenario_with(
+    key: &str,
+    extra: &str,
+    result: serde_json::Value,
+) -> (Output, Vec<String>, Vec<serde_json::Value>) {
     let socket = unique_socket_path("storage-delete-scenario");
     let _ = std::fs::remove_file(&socket);
     let listener = UnixListener::bind(&socket).expect("bind mock socket");
@@ -79,6 +88,7 @@ name = "storage-delete"
 name = "drop key"
 action = "storage-delete"
 key = "{key}"
+{extra}
 "#
         ),
     )
@@ -110,14 +120,24 @@ key = "{key}"
 }
 
 fn assert_storage_delete_called(methods: &[String], params: &[serde_json::Value], key: &str) {
+    assert_storage_delete_called_in(methods, params, key, false);
+}
+
+/// Checks the step sent one `storage.delete` for `key` with this `session`.
+fn assert_storage_delete_called_in(
+    methods: &[String],
+    params: &[serde_json::Value],
+    key: &str,
+    session: bool,
+) {
     assert!(
         methods.iter().any(|m| m == "storage.delete"),
         "storage-delete step must call storage.delete, got {methods:?}"
     );
     assert_eq!(
         params,
-        [serde_json::json!({"key": key, "session": false})],
-        "storage-delete sends one localStorage request"
+        [serde_json::json!({"key": key, "session": session})],
+        "storage-delete sends one request to the selected storage"
     );
 }
 
@@ -163,4 +183,20 @@ fn storage_delete_scenario_missing_deleted_fails() {
         stderr.contains("deleted"),
         "failure must name the missing deleted field, got: {stderr}"
     );
+}
+
+#[test]
+fn storage_delete_scenario_session_targets_session_storage() {
+    let (output, methods, params) = run_storage_delete_scenario_with(
+        "tab_id",
+        "session = true",
+        serde_json::json!({"deleted": true}),
+    );
+
+    assert!(
+        output.status.success(),
+        "a sessionStorage delete must pass\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_storage_delete_called_in(&methods, &params, "tab_id", true);
 }
