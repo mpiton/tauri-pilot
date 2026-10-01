@@ -316,7 +316,7 @@ pub(crate) enum AssertKind {
 #[derive(clap::Args, Debug)]
 pub(crate) struct StorageArgs {
     /// Use sessionStorage instead of localStorage.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub session: bool,
     #[command(subcommand)]
     pub action: StorageAction,
@@ -904,6 +904,69 @@ mod tests {
         } else {
             panic!("Expected Storage List command with session flag");
         }
+    }
+
+    /// Parses `tauri-pilot storage <args>` and returns the storage arguments.
+    fn parse_storage(args: &[&str]) -> StorageArgs {
+        let command_line = ["tauri-pilot", "storage"].iter().chain(args);
+        match Cli::try_parse_from(command_line) {
+            Ok(Cli {
+                command: Command::Storage(storage),
+                ..
+            }) => storage,
+            Ok(_) => panic!("Expected Storage command for {args:?}"),
+            Err(e) => panic!("storage {args:?} failed to parse: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_storage_list_session_after_subcommand() {
+        let storage = parse_storage(&["list", "--session"]);
+        assert!(storage.session);
+        assert!(matches!(storage.action, StorageAction::List));
+    }
+
+    #[test]
+    fn test_parse_storage_get_session_after_subcommand() {
+        let storage = parse_storage(&["get", "csrf_token", "--session"]);
+        assert!(storage.session);
+        assert!(matches!(
+            storage.action,
+            StorageAction::Get { ref key } if key == "csrf_token"
+        ));
+    }
+
+    #[test]
+    fn test_parse_storage_set_session_after_subcommand() {
+        let storage = parse_storage(&["set", "tab_id", "tab-42", "--session"]);
+        assert!(storage.session);
+        assert!(matches!(
+            storage.action,
+            StorageAction::Set { ref key, ref value } if key == "tab_id" && value == "tab-42"
+        ));
+    }
+
+    #[test]
+    fn test_parse_storage_clear_session_after_subcommand() {
+        let storage = parse_storage(&["clear", "--session"]);
+        assert!(storage.session);
+        assert!(matches!(storage.action, StorageAction::Clear));
+    }
+
+    #[test]
+    fn test_parse_storage_set_session_between_positionals() {
+        let storage = parse_storage(&["set", "tab_id", "--session", "tab-42"]);
+        assert!(storage.session);
+        assert!(matches!(
+            storage.action,
+            StorageAction::Set { ref key, ref value } if key == "tab_id" && value == "tab-42"
+        ));
+    }
+
+    /// `--session` is scoped to `storage`; other commands must still reject it.
+    #[test]
+    fn test_parse_session_rejected_outside_storage() {
+        assert!(Cli::try_parse_from(["tauri-pilot", "snapshot", "--session"]).is_err());
     }
 
     #[test]
