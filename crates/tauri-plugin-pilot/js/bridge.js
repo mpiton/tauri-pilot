@@ -1528,14 +1528,14 @@
 
   // Top-level `await` detector (#79). The engine decides first: in a plain
   // function body `await expr` is a SyntaxError, while in an async function
-  // body it compiles. Neither check runs the script, and both constructors
-  // parse `src` as a whole body, so a script cannot close the probe early.
+  // body it compiles. No check runs the script, and every constructor parses
+  // `src` as a whole body, so a script cannot close a probe early.
   //
   //   * sync fails, async compiles: the script has top-level `await`.
   //   * sync compiles, async fails: `await` is used as an identifier.
-  //   * both compile: sloppy code reads `await (x)` as a call to a function
-  //     named `await` and `await [x]` as an index into it, so the text scan
-  //     breaks the tie on those two forms.
+  //   * both compile: sloppy code also reads `await` as an identifier in
+  //     `await (x)`, `await [x]`, `await +x`, `` await `x` `` and before a
+  //     line break, so each `await` is probed on its own (#272).
   //   * both fail: a real syntax error. The text scan keeps the old routing,
   //     so a broken script with `await` still gets the auto-wrap hint.
   function hasTopLevelAwait(src) {
@@ -1543,11 +1543,16 @@
     var asyncOk = compiles(AsyncFunction, src);
     if (!syncOk && asyncOk) return true;
     if (syncOk && !asyncOk) return false;
-    var outside = maskNestedFunctions(src);
-    return syncOk ? /\bawait\s*[(\[]/.test(outside) : /\bawait\b/.test(outside);
+    if (syncOk) {
+      var probed = probeEachAwait(src);
+      if (probed !== null) return probed;
+      return /\bawait\b(?=\s*[(\[`+\-!~\w$'"])/.test(maskNestedFunctions(src));
+    }
+    return /\bawait\b/.test(maskNestedFunctions(src));
   }
 
   var AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  var AsyncGeneratorFunction = Object.getPrototypeOf(async function* () {}).constructor;
 
   function compiles(Ctor, body) {
     try {
@@ -1559,12 +1564,48 @@
     }
   }
 
+  // Asks the engine where each `await` token of a script that compiles in
+  // both modes sits. Returns true or false, or null when it cannot tell.
+  //
+  //   * Code or text: the token is code when putting `#` in its place breaks
+  //     the parse. In a string, comment, template text or regex literal `#`
+  //     is just a character.
+  //   * Top level or nested: in a strict async generator body, `yield` is
+  //     reserved in every nested function, arrow, method and class body, so
+  //     `(yield await 0)||` in place of the token compiles only at the top
+  //     level of the script. It also compiles inside a nested async
+  //     generator; that `await` is then taken as top-level, like before.
+  //
+  // Returns null when the script has sloppy-only syntax (`with`, legacy
+  // octals, `yield` as a name) that the strict probe rejects, or when it
+  // holds too many `await` tokens to probe one by one.
+  function probeEachAwait(src) {
+    if (!compiles(AsyncGeneratorFunction, '"use strict";\n' + src)) return null;
+    var re = /(^|[^\w$])await(?![\w$])/g;
+    var m;
+    for (var n = 0; (m = re.exec(src)) !== null; n++) {
+      if (n >= 64) return null;
+      var at = m.index + m[1].length;
+      var before = src.slice(0, at);
+      var after = src.slice(at + 5);
+      re.lastIndex = at + 5;
+      if (compiles(AsyncFunction, before + "#" + after)) continue;
+      if (compiles(AsyncGeneratorFunction, '"use strict";\n' + before + "(yield await 0)||" + after)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Strips comments and single/double quoted strings, masks property
   // accesses (`obj.await`), then removes nested `function`/arrow bodies so
   // an `await` buried in a nested function is hidden.
   //
-  // Known misses, harmless now that it only breaks ties: template literals,
-  // regex literals and class methods are left in place.
+  // Only a fallback: probeEachAwait decides whenever the script compiles.
+  // This scan runs for a script with a syntax error, or one the strict probe
+  // rejects. Known misses there: template text, regex literals, method
+  // shorthand (`async m() { ... }`) and functions whose parameter list holds
+  // parentheses are left in place, so an `await` inside them still counts.
   //
   // For scripts larger than 100 KB the strip pass is skipped to bound
   // worst-case scan time; the raw source is returned instead.
