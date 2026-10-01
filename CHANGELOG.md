@@ -197,6 +197,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy stops at 8 levels, 100 items per container, 1000 objects per argument
   and 10,000 characters per nested string. The value changes `--json`
   consumers see are listed under Changed. [#274]
+- `--json assert` prints a JSON object on stdout when the assertion fails:
+  `{"ok": false, "message": ...}`, plus `expected` and `actual` for `text`,
+  `value`, `count`, `contains` and `url`. It printed nothing on stdout and
+  only the `FAIL:` line on stderr, which is still what plain-text mode does.
+  The exit status stays 1. Scripts that treated any stdout under `--json` as
+  a pass must check `ok` or the exit status. [#282]
 
 ### Security
 
@@ -1394,3 +1400,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#273]: https://github.com/mpiton/tauri-pilot/issues/273
 [#274]: https://github.com/mpiton/tauri-pilot/issues/274
 [#281]: https://github.com/mpiton/tauri-pilot/issues/281
+[#282]: https://github.com/mpiton/tauri-pilot/issues/282
