@@ -92,7 +92,7 @@ On Windows the plugin listens on the Named Pipe `\\.\pipe\tauri-pilot-{identifie
 The plugin reports the path in use through `tracing` events: the info-level `tauri-pilot socket listening` (`tauri-pilot named pipe listening` on Windows). They appear only if the app captures `tauri_plugin_pilot` tracing events, for example with a `tracing-subscriber`; a default Tauri app prints neither line. To check without a subscriber on Linux or macOS, list the sockets in both locations (no output means no socket):
 
 ```bash
-find /tmp ${XDG_RUNTIME_DIR:+"$XDG_RUNTIME_DIR"} -maxdepth 1 -type s -name 'tauri-pilot-*.sock' 2>/dev/null
+find -H /tmp ${XDG_RUNTIME_DIR:+"$XDG_RUNTIME_DIR"} -maxdepth 1 -type s -name 'tauri-pilot-*.sock' 2>/dev/null
 ```
 
 On Windows, list the instance files instead (PowerShell):
