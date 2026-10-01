@@ -6,7 +6,7 @@
 
 # [connect] is optional. When omitted, the socket is auto-detected.
 [connect]
-# socket = "/tmp/tauri-pilot-myapp.sock"  # override auto-detection
+# socket = "/run/user/1000/tauri-pilot-com.myapp.dev.sock"  # override auto-detection (see docs: Socket path)
 timeout_ms = 5000
 
 [scenario]

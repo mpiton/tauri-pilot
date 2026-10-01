@@ -79,7 +79,7 @@ $XDG_RUNTIME_DIR/tauri-pilot-{identifier}.sock
 
 The `{identifier}` value comes from the `identifier` field in your `tauri.conf.json`.
 
-The plugin uses `$XDG_RUNTIME_DIR` only when it is a private directory: owned by you, with no group or other access. When it is unset, empty or not private, the socket goes to `/tmp/tauri-pilot-{identifier}.sock` instead; a non-private directory also logs `XDG_RUNTIME_DIR is not a private directory, falling back to /tmp`. Most Linux desktops set a private `$XDG_RUNTIME_DIR` (`/run/user/<uid>`). macOS usually leaves it unset, so the socket lands in `/tmp`.
+The plugin uses `$XDG_RUNTIME_DIR` only when it is a private directory: owned by you, with no group or other access. When it is unset, empty or not private, the socket goes to `/tmp/tauri-pilot-{identifier}.sock` instead. For a non-private directory the plugin also emits the warn-level event `XDG_RUNTIME_DIR is not a private directory, falling back to /tmp`. Most Linux desktops set a private `$XDG_RUNTIME_DIR` (`/run/user/<uid>`). macOS usually leaves it unset, so the socket lands in `/tmp`.
 
 On Windows the plugin listens on the Named Pipe `\\.\pipe\tauri-pilot-{identifier}` and registers it in `%LOCALAPPDATA%\tauri-pilot\instances\{identifier}.json`.
 
@@ -89,7 +89,13 @@ On Windows the plugin listens on the Named Pipe `\\.\pipe\tauri-pilot-{identifie
 /run/user/1000/tauri-pilot-com.myapp.dev.sock
 ```
 
-The startup log line `tauri-pilot socket listening` (`tauri-pilot named pipe listening` on Windows) shows the path in use. The CLI auto-discovers the socket when you run commands; see [Socket Auto-Detection](/tauri-pilot/reference/cli/#socket-auto-detection) for the order it searches in. To talk to it by hand:
+The plugin reports the path in use through `tracing` events: the info-level `tauri-pilot socket listening` (`tauri-pilot named pipe listening` on Windows). They appear only if the app captures `tauri_plugin_pilot` tracing events, for example with a `tracing-subscriber`; a default Tauri app prints neither line. To check without a subscriber, list both locations:
+
+```bash
+ls "$XDG_RUNTIME_DIR"/tauri-pilot-*.sock /tmp/tauri-pilot-*.sock
+```
+
+The CLI auto-discovers the socket when you run commands; see [Socket Auto-Detection](/tauri-pilot/reference/cli/#socket-auto-detection) for the order it searches in. To talk to it by hand:
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | socat - UNIX-CONNECT:"$XDG_RUNTIME_DIR/tauri-pilot-com.myapp.dev.sock"

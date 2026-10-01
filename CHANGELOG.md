@@ -244,8 +244,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/tmp/tauri-pilot-*.sock` found nothing. The plugin setup and architecture
   guides give the socket path per platform, the CLI reference and `SKILL.md`
   list the full auto-detection order, including `--socket` and the Windows
-  instance files, and the `socat` and MCP `--socket` examples use the default
-  path. Docs only. [#285]
+  instance files, and the `socat`, MCP `--socket` and `login-flow.toml`
+  examples use the default path. The plugin setup guide notes that the
+  socket log lines need a `tracing` subscriber and gives an `ls` check that
+  works without one. Docs only. [#285]
 
 ### Security
 
