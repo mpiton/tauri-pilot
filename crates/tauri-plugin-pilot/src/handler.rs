@@ -975,7 +975,9 @@ async fn await_departure(engine: &EvalEngine, id: u64, rx: ReplyReceiver) -> Res
 /// The wait lasts [`DEFAULT_TIMEOUT`] when `dest`'s origin already said
 /// hello, [`BRIDGE_GRACE`] on a first visit. A redirect can land the window
 /// on another origin whose bridge works, so a hello after `since` from the
-/// origin the window now shows counts too, as in [`wait_same_origin_hello`].
+/// page the window now shows counts too, unless that page is `page` (a
+/// reload of the start page proves nothing about `dest`), as in
+/// [`wait_same_origin_hello`].
 /// `page` is the URL the navigate started from, when known.
 ///
 /// # Errors
@@ -1005,7 +1007,7 @@ async fn wait_dest_bridge(
         let seen = engine.hellos();
         let redirected_hello = target
             .url()
-            .is_some_and(|now| engine.said_hello_since(label, &now, since));
+            .is_some_and(|now| page != Some(&now) && engine.said_hello_since(label, &now, since));
         if engine.said_hello_since(label, dest, since) || redirected_hello {
             return Ok(serde_json::json!({"ok": true}));
         }
@@ -3123,6 +3125,33 @@ mod tests {
             start.elapsed() < BRIDGE_GRACE,
             "must return on the hello, took {:?}",
             start.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_cross_origin_start_page_reload_is_not_ok() {
+        // The start page reloads (dev hot-reload) while the destination
+        // refuses the connection: its hello proves nothing about `dest`.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
+        hello_later(&engine, "main", APP_PAGE, Duration::from_millis(500));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "http://127.0.0.1:1/"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a reload of the start page must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to http://127.0.0.1:1/ did not load in time: the window still shows \
+             tauri://localhost/ after 3s"
         );
     }
 
