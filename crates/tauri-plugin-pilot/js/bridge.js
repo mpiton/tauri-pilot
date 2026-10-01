@@ -73,11 +73,26 @@
     }
   }
 
+  // `[object Tag]` for `value`, or '' when even that throws (a revoked proxy).
+  function brandTag(value) {
+    try {
+      return Object.prototype.toString.call(value);
+    } catch (_) {
+      return '';
+    }
+  }
+
   // 'Map', 'Set' or null. Brand checks through the size getters work across
   // realms and cannot be faked with Symbol.toStringTag.
   const _mapSize = Object.getOwnPropertyDescriptor(Map.prototype, 'size').get;
   const _setSize = Object.getOwnPropertyDescriptor(Set.prototype, 'size').get;
+  const _regExpSource = Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get;
   function collectionKind(value) {
+    // A failed brand check throws, and throwing for every plain object made
+    // each logged object cost far more than copying it. The tag is only a
+    // filter: the getters below still decide.
+    const tag = brandTag(value);
+    if (tag !== '[object Map]' && tag !== '[object Set]') return null;
     try {
       _mapSize.call(value);
       return 'Map';
@@ -96,6 +111,9 @@
   function domNodeType(value) {
     try {
       if (typeof Node !== 'function') return null;
+      // Same filter as collectionKind: skip the throwing getter for values
+      // that cannot be nodes.
+      if (!('nodeType' in value)) return null;
       const desc = Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType');
       if (!desc || typeof desc.get !== 'function') return null;
       const type = desc.get.call(value);
@@ -128,36 +146,78 @@
     if (value === null) return null;
     if (value === undefined) return 'undefined';
     const type = typeof value;
-    if (type === 'string') {
-      if (value.length <= LOG_MAX_STRING) return value;
-      return value.slice(0, LOG_MAX_STRING) + '... (' + (value.length - LOG_MAX_STRING) + ' more chars)';
-    }
+    if (type === 'string') return capString(value);
     if (type === 'boolean') return value;
     // JSON has no NaN or Infinity and would write null.
     if (type === 'number') return Number.isFinite(value) ? value : String(value);
     if (type === 'bigint') return String(value) + 'n';
-    if (type === 'symbol') return String(value);
-    if (type === 'function') return '[Function' + (value.name ? ' ' + value.name : '') + ']';
+    if (type === 'symbol') return capString(String(value));
+    if (type === 'function') return capString('[Function' + (value.name ? ' ' + value.name : '') + ']');
     // Same guard as describeReason: an object wearing only the Error tag is
     // copied as an object.
-    if (isError(value) && (value.name !== undefined || value.message !== undefined)) {
-      return describeReason(value);
+    const error = isError(value) && (value.name !== undefined || value.message !== undefined);
+    const label = error ? capString(describeReason(value)) : null;
+    let errorKeys = null;
+    if (error) {
+      errorKeys = Object.keys(value);
+      // `new Error(msg, { cause })` makes cause an own non-enumerable field.
+      if (errorKeys.indexOf('cause') === -1 && Object.prototype.hasOwnProperty.call(value, 'cause')) {
+        errorKeys.push('cause');
+      }
+      // A bare Error stays a plain "Name: message" string.
+      if (errorKeys.length === 0) return label;
+    } else {
+      const nodeType = domNodeType(value);
+      if (nodeType !== null) return capString(describeNode(value, nodeType));
     }
-    const nodeType = domNodeType(value);
-    if (nodeType !== null) return describeNode(value, nodeType);
     if (state.ancestors.indexOf(value) !== -1) return '[Circular]';
-    const kind = collectionKind(value);
+    const kind = error ? null : collectionKind(value);
     if (depth >= LOG_MAX_DEPTH || state.objectsLeft <= 0) {
+      if (error) return label;
       if (kind) return '[' + kind + ']';
       return Array.isArray(value) ? '[Array]' : '[Object]';
     }
     state.objectsLeft--;
     state.ancestors.push(value);
     try {
+      if (error) {
+        // An Error's own fields (`code`, `status`, `cause`) are what JSON
+        // used to carry, so they are kept next to the "Name: message" lead.
+        const out = { __type: 'Error', message: label };
+        copyKeys(out, value, errorKeys.filter(k => k !== '__type' && k !== 'message'), depth + 1, state);
+        return out;
+      }
       return snapshotObject(value, depth + 1, state, kind);
     } finally {
       state.ancestors.pop();
     }
+  }
+
+  // `value` cut after LOG_MAX_STRING characters, with the count it dropped.
+  function capString(value) {
+    if (value.length <= LOG_MAX_STRING) return value;
+    // A V8 slice keeps its whole parent alive, so a 10 MB string cut to
+    // 10,000 characters would still hold 10 MB in the buffer. Joining the
+    // characters builds a flat copy that does not reference the parent.
+    const head = Array.prototype.join.call(value.slice(0, LOG_MAX_STRING), '');
+    return head + '... (' + (value.length - LOG_MAX_STRING) + ' more chars)';
+  }
+
+  // Copies `keys` of `value` (first LOG_MAX_ITEMS) into `out`, with a '...'
+  // marker for the rest.
+  function copyKeys(out, value, keys, depth, state) {
+    for (let i = 0; i < keys.length && i < LOG_MAX_ITEMS; i++) {
+      let v;
+      try {
+        v = snapshotValue(value[keys[i]], depth, state);
+      } catch (_) {
+        v = '[unreadable]';
+      }
+      // A plain assignment of an own `__proto__` key would hit the inherited
+      // setter and drop the field.
+      Object.defineProperty(out, keys[i], { value: v, enumerable: true, configurable: true, writable: true });
+    }
+    if (keys.length > LOG_MAX_ITEMS) out['...'] = (keys.length - LOG_MAX_ITEMS) + ' more keys';
   }
 
   function snapshotObject(value, depth, state, kind) {
@@ -193,25 +253,43 @@
       return out;
     }
     // Dates and other objects that define their own JSON form keep it; one
-    // whose toJSON throws is copied key by key instead.
-    if (typeof value.toJSON === 'function') {
+    // whose toJSON (or toJSON getter) throws is copied key by key instead.
+    let toJSON;
+    try {
+      toJSON = value.toJSON;
+    } catch (_) {}
+    if (typeof toJSON === 'function') {
       try {
-        return copy(value.toJSON());
+        return copy(toJSON.call(value));
       } catch (_) {}
     }
-    const keys = Object.keys(value);
-    const out = {};
-    for (let i = 0; i < keys.length && i < LOG_MAX_ITEMS; i++) {
-      let v;
-      try {
-        v = value[keys[i]];
-      } catch (_) {
-        out[keys[i]] = '[unreadable]';
-        continue;
-      }
-      out[keys[i]] = copy(v);
+    const tag = brandTag(value);
+    // A typed array is checked before Object.keys, which would list every
+    // index of a large one.
+    if (ArrayBuffer.isView(value) && tag !== '[object DataView]') {
+      const len = value.length;
+      const values = [];
+      for (let i = 0; i < len && i < LOG_MAX_ITEMS; i++) values.push(copy(value[i]));
+      const out = { __type: tag.slice(8, -1), length: len, values: values };
+      if (len > values.length) out.truncated = len - values.length;
+      return out;
     }
-    if (keys.length > LOG_MAX_ITEMS) out['...'] = (keys.length - LOG_MAX_ITEMS) + ' more keys';
+    const keys = Object.keys(value);
+    // Built-ins that keep their state in internal slots have no keys and
+    // would be {}: say what they are instead.
+    if (keys.length === 0 && tag !== '[object Object]' && tag !== '') {
+      if (tag === '[object RegExp]') {
+        // The source getter is the brand check: it throws for an object that
+        // only wears the RegExp tag.
+        try {
+          _regExpSource.call(value);
+          return capString(RegExp.prototype.toString.call(value));
+        } catch (_) {}
+      }
+      return capString('[' + tag.slice(8, -1) + ']');
+    }
+    const out = {};
+    copyKeys(out, value, keys, depth, state);
     return out;
   }
 

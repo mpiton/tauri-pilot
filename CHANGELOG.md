@@ -22,6 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `tauri` 2.12.0 no longer compiles on macOS. Apps consuming the plugin
   must now be on `tauri` 2.12.1 or newer.
 
+- `logs --json` carries different values for console arguments, now copied
+  when they are logged (see Fixed). A logged `undefined`, `NaN` or
+  `Infinity` was `null` and is now the string `"undefined"`, `"NaN"` or
+  `"Infinity"`. An `Error` was `{}` (or only its enumerable fields) and is
+  now `"Name: message"`, or `{"__type":"Error","message":"Name: message",...}`
+  with its own fields and `cause` when it has any; its stack is not kept.
+  `Map`, `Set` and typed arrays are tagged objects, a DOM node a string, a
+  `RegExp` its source and other key-less built-ins (`Promise`, `WeakMap`)
+  `"[Promise]"`-style names. Getters and `toJSON` on a logged object run at
+  call time instead of when `logs` reads the buffer. Consumers that read a
+  logged `undefined` as `null`, or an Error's fields at the top level, must
+  now expect the new shapes. [#274]
+
 - `windows` leaves out `title` for a window with no native title instead of
   reporting `""`. Android and iOS windows never have one; `title` still reads
   the page's `document.title`. The rows of `error.data.available_windows`
@@ -163,15 +176,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bridge kept the live object and serialized it only when `logs` read it, so
   an object changed after the call showed its later state, and an `Error`,
   `Map`, `Set` or DOM node came out as `{}`: `console.error("Request
-  failed", err)` lost the error's name and message. An `Error` is now
-  `"Name: message"`, a DOM element `"<tag#id.class>"`, `Map` and `Set`
-  tagged objects (`{"__type":"Map","size":1,"entries":[["k",1]]}`), and
-  `undefined`, `NaN` and `Infinity` their names instead of `null`. Nested
-  values follow the same rules; cycles become `"[Circular]"`, and a copy
-  stops at 8 levels, 100 items per container, 1000 objects per argument and
-  10,000 characters per nested string. `--json` consumers that read a
-  logged `undefined` as `null` must now expect the string `"undefined"`.
-  [#274]
+  failed", err)` lost the error's name and message. An `Error` now leads
+  with `"Name: message"`, a DOM element is `"<tag#id.class>"`, `Map` and
+  `Set` are tagged objects (`{"__type":"Map","size":1,"entries":[["k",1]]}`),
+  and `undefined`, `NaN` and `Infinity` keep their names instead of `null`.
+  Nested values follow the same rules; cycles become `"[Circular]"`, and a
+  copy stops at 8 levels, 100 items per container, 1000 objects per argument
+  and 10,000 characters per nested string. The value changes `--json`
+  consumers see are listed under Changed. [#274]
 
 ### Security
 
