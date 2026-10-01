@@ -381,6 +381,13 @@ pub(crate) mod fake {
             self.scripts.lock().expect("scripts mutex").clone()
         }
 
+        /// Close the window labeled `label`. A handle already resolved keeps
+        /// its label, so it stands for a dead window.
+        #[cfg(feature = "press")]
+        pub(crate) fn close(&self, label: &str) {
+            self.windows.lock().expect("windows mutex").remove(label);
+        }
+
         /// Report `focused` from [`TargetWindow::is_focused`] for `label`.
         /// Visible to a live [`TargetWindow`] already held across an await.
         /// Clears a previous [`Self::set_focus_query_error`] for `label`.

@@ -547,15 +547,19 @@ async fn handle_press(
     })?;
 
     // With no window to focus, the key would land in whatever app has focus.
-    // Resolved before the lock: without a label this can wait up to
-    // FIRST_WINDOW_BUDGET for the first window (#273), and holding the lock
-    // meanwhile would stall a concurrent `--window` press for that long.
-    let target = target(webviews, window).await?;
+    // Wait for the first window before the lock: without a label this can
+    // take up to FIRST_WINDOW_BUDGET (#273), and holding the lock meanwhile
+    // would stall a concurrent `--window` press for that long.
+    target(webviews, window).await?;
 
     // Hold this lock across the whole focus → confirm → inject sequence so
     // two concurrent `press` calls cannot interleave their focus steps (call
     // A focuses window X, call B focuses window Y, then both keys land on Y).
     let _order_guard = PRESS_ORDER_LOCK.lock().await;
+
+    // Resolve again, without waiting: the window may have closed or been
+    // recreated while this press queued behind another one.
+    let target = target_within(webviews, window, Duration::ZERO).await?;
 
     if let Err(e) = target.focus() {
         if let Some(label) = window {
@@ -1200,7 +1204,23 @@ async fn target<'a>(
     webviews: &'a dyn Webviews,
     window: Option<&str>,
 ) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
-    let deadline = tokio::time::Instant::now() + FIRST_WINDOW_BUDGET;
+    target_within(webviews, window, FIRST_WINDOW_BUDGET).await
+}
+
+/// Resolve the window a request targets, waiting at most `budget` for a first window.
+///
+/// [`target`] with an explicit budget. `Duration::ZERO` resolves without
+/// waiting, for a caller that already waited and must not wait again.
+///
+/// # Errors
+///
+/// Same as [`target`].
+async fn target_within<'a>(
+    webviews: &'a dyn Webviews,
+    window: Option<&str>,
+    budget: Duration,
+) -> Result<Box<dyn TargetWindow + 'a>, RpcError> {
+    let deadline = tokio::time::Instant::now() + budget;
     loop {
         match webviews.target(window) {
             Ok(target) => return Ok(target),
@@ -1593,6 +1613,40 @@ mod tests {
             .expect("press task")
             .expect_err("no window ever appears");
         assert_eq!(err.code, -32603);
+    }
+
+    #[cfg(feature = "press")]
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_press_resolves_the_window_again_after_queueing() {
+        // The first-window wait runs before PRESS_ORDER_LOCK (#273), so a
+        // press can queue behind another one. A window closed meanwhile
+        // must not be focused through the handle resolved before the lock.
+        let webviews = FakeWebviews::window("settings", Some("https://app.test/"));
+        let queued = webviews.clone();
+        let guard = PRESS_ORDER_LOCK.lock().await;
+        let press = tokio::spawn(async move {
+            dispatch(
+                "press",
+                Some(&json!({"key": "Shift", "window": "settings"})),
+                &EvalEngine::new(),
+                &queued,
+                &Recorder::new(),
+            )
+            .await
+        });
+        // Let the press resolve its window and queue on the lock.
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        webviews.close("settings");
+        drop(guard);
+
+        let err = press
+            .await
+            .expect("press task")
+            .expect_err("the window closed while the press queued");
+
+        assert_eq!(err.code, -32602);
+        let data = err.data.expect("the WINDOW_NOT_FOUND envelope");
+        assert_eq!(data["error"], json!("WINDOW_NOT_FOUND"));
     }
 
     #[cfg(feature = "press")]

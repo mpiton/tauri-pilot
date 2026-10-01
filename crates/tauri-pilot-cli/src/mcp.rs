@@ -941,7 +941,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "ping",
-            description: "Check connectivity with the running Tauri app. Succeeds before the app's first window exists; window commands then wait up to 3 s for it.",
+            description: "Check connectivity with the running Tauri app. Succeeds before the app's first window exists. A window command sent without a window label then waits up to 3 s for it; an unknown label fails at once.",
             schema: empty_schema,
             read_only: true,
             destructive: false,
