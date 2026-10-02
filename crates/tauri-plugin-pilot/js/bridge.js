@@ -1556,9 +1556,13 @@
     const el = resolveTarget(params);
     requireEditable(el, "fill");
     // `select` owns the list form (#306); `fill` keeps its one-value contract
-    // on every target, before any setter can stringify the list.
+    // on every target, before any setter can stringify the list. Only a
+    // `<select>` can take the list through `select`, so only it gets the hint.
     if (Array.isArray(params.value)) {
-      throw new Error("fill takes one value; use select for several options");
+      if (elementTag(el) === "select") {
+        throw new Error("fill takes one value; use select for several options");
+      }
+      throw new Error("fill takes one value, not a list");
     }
     el.focus();
     let wroteViaExec = false;

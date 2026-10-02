@@ -212,7 +212,8 @@ test("fill rejects a list on an input before writing it", () => {
 
   assert.throws(
     () => pilot.fill({ selector: "input[name=tags]", value: ["a", "b"] }),
-    /^Error: fill takes one value; use select for several options$/,
+    // `select` cannot target an input, so the error must not suggest it.
+    /^Error: fill takes one value, not a list$/,
   );
   assert.equal(input.value, "old");
   assert.deepEqual(input.events, []);
