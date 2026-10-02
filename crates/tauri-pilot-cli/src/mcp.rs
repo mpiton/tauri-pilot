@@ -475,7 +475,7 @@ impl PilotMcpServer {
         let path = PathBuf::from(required_string(&args, "path")?);
         let export = optional_string(&args, "export")?;
         if let Some(export) = export.as_deref() {
-            return Ok(match export_replay_file(&path, export) {
+            return Ok(match export_replay_file(&path, export, window.as_deref()) {
                 Ok(result) => tool_success(result),
                 Err(err) => tool_error(&err),
             });
@@ -1002,7 +1002,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "replay",
-            description: "Replay or export a recorded tauri-pilot session file. A replay returns `status`, counts, and `steps` (`action`, `status`, and `message` for a failed step, the same key as `pilot.run`). A finished replay including failed steps is a successful tool result with `status` \"failed\"; only read, parse, and connect failures are tool errors.",
+            description: "Replay or export a recorded tauri-pilot session file. A replay returns `status`, counts, and `steps` (`action`, `status`, `message` for a failed step, the same key as `pilot.run`, and `warning` for a step that relies on a snapshot ref). Each step runs in its recorded window unless `window` (or the server default window) is set. A step with a recorded selector fails when it does not match exactly one element with the recorded fingerprint. A finished replay including failed steps is a successful tool result with `status` \"failed\"; only read, parse, and connect failures are tool errors.",
             schema: replay_schema,
             read_only: false,
             destructive: false,
@@ -3096,7 +3096,7 @@ path = "/tmp/out.png"
         let recording = dir.path().join("rec.json");
         std::fs::write(
             &recording,
-            r#"[{"action":"click","timestamp":0,"ref":"e1"},{"action":"click","timestamp":0,"ref":"e2"}]"#,
+            r##"[{"action":"click","timestamp":0,"selector":"#a"},{"action":"click","timestamp":0,"ref":"e2"}]"##,
         )
         .expect("write recording");
         let socket = std::env::temp_dir().join(format!(
@@ -3131,7 +3131,13 @@ path = "/tmp/out.png"
                     "status": "failed",
                     "message": "RPC error (-32000): click failed",
                 },
-                {"action": "click", "status": "passed"},
+                // A ref-only step carries the #276 warning over MCP too.
+                {
+                    "action": "click",
+                    "status": "passed",
+                    "warning": "relies on snapshot ref e2, which only exists in the snapshot \
+                                that numbered it; re-record for a stable replay",
+                },
             ])
         );
     }

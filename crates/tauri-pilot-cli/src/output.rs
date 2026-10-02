@@ -886,10 +886,12 @@ pub(crate) fn format_record(value: &serde_json::Value) -> String {
                     .get("count")
                     .and_then(serde_json::Value::as_u64)
                     .unwrap_or(0);
-                return crate::style::success(&format!(
+                let mut out = crate::style::success(&format!(
                     "Recording saved \u{2014} {count} actions \u{2192} {}",
                     strip_ansi(path)
                 ));
+                out.push_str(&format_unstable_steps(value));
+                return out;
             }
             _ => {}
         }
@@ -917,6 +919,38 @@ pub(crate) fn format_record(value: &serde_json::Value) -> String {
     // caller (which only prints non-empty strings) does not double-print.
     format_text(value);
     String::new()
+}
+
+/// Lines naming the recorded steps that have no stable locator (#276).
+///
+/// Empty when every ref step got a selector. Each line reads
+/// `step N (action): no stable locator for ref eX`.
+fn format_unstable_steps(value: &serde_json::Value) -> String {
+    let steps = value
+        .get("unstable")
+        .and_then(serde_json::Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    if steps.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "\n{}",
+        crate::style::warn(
+            "These steps replay only against the snapshot that numbered their ref; \
+             give the elements an id or data-testid and re-record:"
+        )
+    );
+    for step in steps {
+        let field = |key: &str| strip_ansi(&step[key].to_string().replace('"', ""));
+        let _ = write!(
+            out,
+            "\n  step {} ({}): no stable locator for ref {}",
+            field("step"),
+            field("action"),
+            field("ref")
+        );
+    }
+    out
 }
 
 /// Format a single replay step.

@@ -1099,7 +1099,146 @@
     return el;
   }
 
+  // ─── Recorded locators (#276) ────────────────────────────────────────────
+  // A ref names an element of the last snapshot only. While recording, the
+  // plugin asks `locate` for a selector that finds the same element in any
+  // document, plus a fingerprint to check it is still that element.
+
+  // `CSS.escape`, with a fallback for the test DOM: a leading digit becomes
+  // its code point escape, any other non-identifier character is escaped.
+  function cssEscape(value) {
+    if (typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function") {
+      return CSS.escape(value);
+    }
+    const s = String(value);
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      const leading = i === 0 || (i === 1 && s[0] === "-");
+      if (leading && ch >= "0" && ch <= "9") out += "\\3" + ch + " ";
+      else if (/[a-zA-Z0-9_-]/.test(ch) || ch.charCodeAt(0) >= 0x80) out += ch;
+      else out += "\\" + ch;
+    }
+    return out;
+  }
+
+  function cssString(value) {
+    return '"' + String(value).replace(/["\\]/g, "\\$&").replace(/\n/g, "\\a ") + '"';
+  }
+
+  // Every element `selector` matches, or null for a selector the page rejects.
+  function queryAll(selector) {
+    try {
+      return Array.from(document.querySelectorAll(selector));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function matchesOnly(selector, el) {
+    const found = queryAll(selector);
+    return found !== null && found.length === 1 && found[0] === el;
+  }
+
+  function hasUniqueId(el) {
+    return Boolean(el.id) && matchesOnly("#" + cssEscape(el.id), el);
+  }
+
+  // `tag:nth-of-type(n)` steps up to the nearest ancestor with a unique id,
+  // or to <body>. `:nth-of-type` is added only where a same-tag sibling exists.
+  function cssPath(el) {
+    const steps = [];
+    let node = el;
+    while (node && node.nodeType === Node.ELEMENT_NODE) {
+      if (node !== el && hasUniqueId(node)) {
+        steps.unshift("#" + cssEscape(node.id));
+        break;
+      }
+      const tag = node.tagName.toLowerCase();
+      const parent = node.parentElement;
+      if (!parent || node === document.body) {
+        steps.unshift(tag);
+        break;
+      }
+      const sameTag = Array.from(parent.children).filter(function (c) {
+        return c.tagName === node.tagName;
+      });
+      steps.unshift(sameTag.length > 1 ? tag + ":nth-of-type(" + (sameTag.indexOf(node) + 1) + ")" : tag);
+      node = parent;
+    }
+    return steps.join(" > ");
+  }
+
+  // First candidate that matches `el` and nothing else, or null.
+  function stableSelector(el) {
+    const tag = el.tagName.toLowerCase();
+    const candidates = [];
+    if (el.id) candidates.push("#" + cssEscape(el.id));
+    const testId = el.getAttribute("data-testid");
+    if (testId) candidates.push("[data-testid=" + cssString(testId) + "]");
+    const name = el.getAttribute("name");
+    if (name) candidates.push(tag + "[name=" + cssString(name) + "]");
+    candidates.push(cssPath(el));
+    return candidates.find(function (c) { return matchesOnly(c, el); }) || null;
+  }
+
+  function fingerprint(el) {
+    return { tag: el.tagName.toLowerCase(), role: getRole(el) || null, name: getName(el) || null };
+  }
+
+  function describeFingerprint(fp) {
+    let out = "<" + fp.tag;
+    if (fp.role) out += ' role="' + fp.role + '"';
+    if (fp.name) out += ' name="' + fp.name + '"';
+    return out + ">";
+  }
+
+  // `{refs: {key: ref}}` → `{key: {selector?, expect}}`.
+  function locate(params) {
+    const out = {};
+    const refs = (params && params.refs) || {};
+    for (const key of Object.keys(refs)) {
+      const el = requireEl(refs[key]);
+      const entry = {};
+      const selector = stableSelector(el);
+      if (selector) entry.selector = selector;
+      entry.expect = fingerprint(el);
+      out[key] = entry;
+    }
+    return out;
+  }
+
+  // A recorded step: its selector must match exactly one element (no
+  // fallback to the ref, which may name another element by now), and that
+  // element must still carry the recorded fingerprint.
+  function resolveRecorded(params) {
+    let el, where;
+    if (params.selector) {
+      where = "Recorded selector " + params.selector;
+      const found = queryAll(params.selector);
+      if (found === null) throw new Error("Invalid recorded selector: " + params.selector);
+      if (found.length === 0) throw new Error("No element matches recorded selector " + params.selector);
+      if (found.length > 1) {
+        throw new Error(where + " matches " + found.length + " elements, expected exactly 1");
+      }
+      el = found[0];
+    } else if (params.ref) {
+      where = "Ref " + params.ref;
+      el = requireEl(params.ref);
+    } else {
+      throw new Error("Recorded step has no selector or ref");
+    }
+    const want = params.expect;
+    const got = fingerprint(el);
+    if (got.tag !== want.tag || got.role !== (want.role || null) || got.name !== (want.name || null)) {
+      throw new Error(where + " found " + describeFingerprint(got) +
+        ", recorded " + describeFingerprint(want));
+    }
+    return el;
+  }
+
   function resolveTarget(params) {
+    if (params.expect) return resolveRecorded(params);
     if (params.ref) return requireEl(params.ref);
     if (params.selector) {
       var el = document.querySelector(params.selector);
@@ -2406,6 +2545,7 @@
     storageDelete: storageDelete,
     storageClear: storageClear,
     formDump: formDump,
+    locate: locate,
   };
 
   // Tell the plugin this origin can answer (#153). The ACL denies

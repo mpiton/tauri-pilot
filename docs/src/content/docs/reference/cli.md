@@ -1552,6 +1552,21 @@ Start recording interactions. All subsequent actions (click, fill, type, etc.) w
 tauri-pilot record start
 ```
 
+A snapshot ref (`@e9`) only means something in the snapshot that numbered
+it: the next snapshot renumbers the page, and a fresh page knows no refs. So
+while recording, each step that targets a ref (and the `source`/`target` of
+`drag`) is resolved, before the action runs, to:
+
+- a `selector`: the first of a unique `#id`, `[data-testid="..."]`,
+  `tag[name="..."]`, or a short CSS path with `:nth-of-type`, anchored on the
+  nearest ancestor with a unique id. A candidate counts only when it matches
+  this element and no other one;
+- an `expect` fingerprint: the element's tag, and the role and name a
+  snapshot shows for it.
+
+The `ref` stays in the entry for information. This costs one extra bridge
+call per ref step, only while recording.
+
 #### `record stop`
 
 Stop recording and save captured interactions to a JSON file. Without a
@@ -1561,6 +1576,18 @@ writes no file.
 ```bash
 tauri-pilot record stop --output test.json
 ```
+
+When no selector could single out the element of a ref step, the step is saved
+with its ref and fingerprint only, and `record stop` names it:
+
+```text
+✓ Recording saved — 4 actions → test.json
+These steps replay only against the snapshot that numbered their ref; give the elements an id or data-testid and re-record:
+  step 3 (click): no stable locator for ref e7
+```
+
+With `--json` the same list is under `unstable`
+(`[{"step": 3, "action": "click", "ref": "e7"}]`).
 
 | Option | Description |
 |--------|-------------|
@@ -1593,6 +1620,30 @@ tauri-pilot replay test.json --export sh
 | Option | Description |
 |--------|-------------|
 | `--export` | Export format instead of replaying (supported: `sh`) |
+| `--window` | Run every step in this window instead of the one it was recorded in (`TAURI_PILOT_WINDOW` too) |
+
+Each step runs in the window it was recorded in (its `window` field), or in
+the default window when it has none. A step with a recorded `selector` must
+find exactly one element, with the recorded fingerprint. Otherwise the step
+fails, and `replay` does not fall back to the ref:
+
+```text
+[3/6] check → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Recorded selector fieldset > input:nth-of-type(2) found <input role="radio" name="Team">, recorded <input role="radio" name="Pro">
+```
+
+A step with a ref and no selector, from a recording made before stable
+locators or one `record stop` reported, still replays on the ref, with a
+warning, since the ref only exists in the snapshot that numbered it:
+
+```text
+[1/6] fill relies on snapshot ref e5, which only exists in the snapshot that numbered it; re-record for a stable replay
+```
+
+`--export sh` writes the selector instead of the ref and adds
+`--window <label>` to steps recorded in a window. The CLI has no command that
+checks a fingerprint, so an exported script acts on the first element each
+selector matches; the script says so in a comment at its top. Steps that still
+rely on a ref get a comment above them.
 
 Each step prints `ok`, `SKIP` for an action that is not replayed, or `FAIL`
 with the error that caused it:
@@ -1617,7 +1668,8 @@ result lists every step:
 }
 ```
 
-A failed step carries its error in `message`, the key `run` uses. Over MCP,
+A failed step carries its error in `message`, the key `run` uses. A step that
+relies on a snapshot ref also carries the warning above in `warning`. Over MCP,
 `pilot.replay` returns the same object. A finished replay including
 failed steps is a successful tool result with `status` `"failed"`; only read,
 parse, and connect failures are tool errors.
@@ -1628,10 +1680,23 @@ Recordings are stored as JSON arrays:
 
 ```json
 [
-  {"action": "click", "ref": "e3", "timestamp": 0},
-  {"action": "fill", "ref": "e2", "value": "test", "timestamp": 1200}
+  {
+    "action": "check", "timestamp": 0, "window": "main",
+    "ref": "e9", "selector": "#plan-pro",
+    "expect": {"tag": "input", "role": "radio", "name": "Pro"}
+  },
+  {"action": "click", "selector": "#trigger-deferred", "timestamp": 640},
+  {
+    "action": "drag", "timestamp": 1200,
+    "source": {"ref": "e12", "selector": "[data-testid=\"card-1\"]", "expect": {"tag": "div", "role": "generic", "name": "Card 1"}},
+    "target": {"selector": "#col-done"}
+  }
 ]
 ```
+
+`selector` and `expect` appear on steps recorded on a ref; `window` when the
+step named one. Recordings made before these fields existed hold only `ref`
+and replay with a warning; re-record them for stable replays.
 
 #### JSON-RPC examples
 

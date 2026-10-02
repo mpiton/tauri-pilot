@@ -96,6 +96,11 @@ tauri-pilot replay test.json
 tauri-pilot replay test.json --export sh    # generate shell script
 ```
 
+Steps recorded on a ref (`@e3`) are saved with a stable selector and the
+element's tag, role and name, so the replay finds the same element on a fresh
+page, or fails the step instead of clicking another one. See
+[`record`](/tauri-pilot/reference/cli/#record).
+
 ## Basic Usage Flow
 
 tauri-pilot follows a **ping → snapshot → interact → verify** workflow (optionally wrapped in **record** for replay):

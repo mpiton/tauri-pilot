@@ -22,6 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Recording format: `record` no longer saves only the snapshot ref of a step.
+  Before the action runs, the bridge resolves the ref to a stable `selector`
+  (a unique `#id`, `[data-testid]`, `tag[name]`, or a short CSS path) and an
+  `expect` fingerprint (`tag`, `role`, `name`); `drag` stores both on its
+  `source` and `target`. The `ref` stays for information. Each step also
+  keeps its `window` label instead of dropping it, and `replay --window`
+  overrides it for every step. `replay` resolves a recorded selector to
+  exactly one element with the recorded fingerprint and fails the step
+  otherwise, naming the selector and what differed; it never falls back to
+  the ref, which a later snapshot may have given to another element.
+  `record stop` lists the steps no selector could single out (`unstable` in
+  its result), and `replay --export sh` emits the selector and the window,
+  with a header saying the script does not check fingerprints. Migration:
+  recordings made before this change still replay, with a warning on each
+  step that relies on a snapshot ref; re-record them for stable replays.
+  [#276]
+
 - `assert checked` and `assert unchecked` (and the MCP `assert_checked` and
   `assert_unchecked` tools) now fail with an error when the target is not a
   checkbox or radio input. The bridge's `checked` method used to report
@@ -1451,3 +1468,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#284]: https://github.com/mpiton/tauri-pilot/issues/284
 [#286]: https://github.com/mpiton/tauri-pilot/issues/286
 [#285]: https://github.com/mpiton/tauri-pilot/issues/285
+[#276]: https://github.com/mpiton/tauri-pilot/issues/276

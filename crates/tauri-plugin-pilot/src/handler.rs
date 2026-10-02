@@ -3,7 +3,7 @@ use crate::eval::{EvalEngine, EvalError, HELLO_ID, ReplyReceiver, origin_key};
 #[cfg(feature = "press")]
 use crate::key;
 use crate::protocol::{RPC_INTERNAL_ERROR, RPC_INVALID_PARAMS, RpcError};
-use crate::recorder::{RecordEntry, Recorder};
+use crate::recorder::{RecordEntry, Recorder, unstable_steps};
 use crate::screenshot;
 use crate::webview::{TargetWindow, Webviews};
 
@@ -188,13 +188,31 @@ pub(crate) async fn dispatch(
     webviews: &dyn Webviews,
     recorder: &Recorder,
 ) -> Result<serde_json::Value, RpcError> {
-    // Save original params before window extraction so the recorder can strip
-    // "window" internally.
+    // The recorder keeps "window" on the entry, so it gets the params before
+    // window extraction.
     let original_params = params.cloned();
 
     let (window, owned_params) = extract_window(params);
     let params = owned_params.as_ref().or(params);
     let win = window.as_deref();
+
+    // While recording, resolve the step's refs to stable locators before the
+    // action runs: a click can navigate or remove its element (#276). A failed
+    // lookup leaves the step ref-only, and `record stop` reports it.
+    let locators = match recorder.locate_request(method, params) {
+        Some(request) => {
+            let located = handle_eval_method(
+                "locate",
+                Some(&request),
+                engine,
+                webviews,
+                win,
+                DEFAULT_TIMEOUT,
+            );
+            located.await.ok()
+        }
+        None => None,
+    };
 
     let result = match method {
         "ping" => {
@@ -368,7 +386,8 @@ pub(crate) async fn dispatch(
                 data: None,
             })?;
             let count = entries.len();
-            Ok(serde_json::json!({"entries": entries, "count": count}))
+            let unstable = unstable_steps(&entries);
+            Ok(serde_json::json!({"entries": entries, "count": count, "unstable": unstable}))
         }
         "record.status" => Ok(recorder.status()),
         "record.add" => {
@@ -391,7 +410,7 @@ pub(crate) async fn dispatch(
 
     // Auto-record on successful dispatches
     if result.is_ok() && recorder.is_active() {
-        recorder.record(method, original_params.as_ref());
+        recorder.record(method, original_params.as_ref(), locators.as_ref());
     }
 
     result
@@ -2703,7 +2722,7 @@ mod tests {
         let engine = EvalEngine::new();
         let recorder = Recorder::new();
         recorder.start();
-        recorder.record("click", Some(&json!({"ref": "e1"})));
+        recorder.record("click", Some(&json!({"ref": "e1"})), None);
         let result = dispatch(
             "record.stop",
             None,
@@ -2715,6 +2734,11 @@ mod tests {
         .expect("dispatch succeeds");
         assert_eq!(result["count"], 1);
         assert!(result["entries"].as_array().is_some());
+        // A ref step recorded without a selector is reported (#276).
+        assert_eq!(
+            result["unstable"],
+            json!([{"step": 1, "action": "click", "ref": "e1"}])
+        );
         assert!(!recorder.is_active());
     }
 
@@ -2793,6 +2817,119 @@ mod tests {
         let entries = recorder.stop().expect("recording active");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].action, "navigate");
+    }
+
+    // ─── recorded locators (#276) ────────────────────────────────────────────
+
+    /// A webview whose bridge answers `locate` with `located` and any other
+    /// call with `{"ok": true}`. Callback ids count up from 1 on a fresh engine.
+    fn locating_webviews(
+        engine: &EvalEngine,
+        windows: &[(&str, Option<&str>)],
+        located: serde_json::Value,
+    ) -> FakeWebviews {
+        let webviews = FakeWebviews::windows(windows);
+        let seen = webviews.clone();
+        let engine = engine.clone();
+        let next = std::sync::atomic::AtomicU64::new(1);
+        webviews.on_eval(move || {
+            let id = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let script = seen.scripts().pop().expect("script evaluated");
+            let answer = if script.contains("__PILOT__.locate(") {
+                located.clone()
+            } else {
+                json!({"ok": true})
+            };
+            engine.resolve(id, Ok(answer));
+        })
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_records_a_ref_step_with_its_locator_and_window() {
+        // Case A of #276: the saved step must carry what a fresh document
+        // needs, not only a ref that dies with the snapshot.
+        let engine = EvalEngine::new();
+        let recorder = Recorder::new();
+        recorder.start();
+        let fingerprint = json!({"tag": "input", "role": "radio", "name": "Pro"});
+        let webviews = locating_webviews(
+            &engine,
+            &[("main", None), ("settings", None)],
+            json!({"self": {"selector": "#plan-pro", "expect": fingerprint}}),
+        );
+        let params = json!({"ref": "e9", "window": "settings"});
+        dispatch("check", Some(&params), &engine, &webviews, &recorder)
+            .await
+            .expect("check succeeds");
+
+        let scripts = webviews.scripts();
+        assert_eq!(scripts.len(), 2, "{scripts:?}");
+        // Located before the action runs: a click can remove the element.
+        assert!(scripts[0].contains(r#"__PILOT__.locate({"refs":{"self":"e9"}})"#));
+        assert!(scripts[1].contains("__PILOT__.check("));
+
+        let entries = recorder.stop().expect("recording active");
+        let entry = serde_json::to_value(&entries[0]).expect("entry serializes");
+        assert_eq!(entry["ref"], "e9");
+        assert_eq!(entry["selector"], "#plan-pro");
+        assert_eq!(entry["expect"], fingerprint);
+        assert_eq!(entry["window"], "settings");
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_does_not_locate_when_not_recording() {
+        let engine = EvalEngine::new();
+        let webviews = locating_webviews(&engine, &[("main", None)], json!({}));
+        dispatch(
+            "click",
+            Some(&json!({"ref": "e1"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect("click succeeds");
+        let scripts = webviews.scripts();
+        assert_eq!(scripts.len(), 1, "{scripts:?}");
+        assert!(scripts[0].contains("__PILOT__.click("));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_replays_a_recorded_step_by_selector_and_fingerprint() {
+        // Cases A and B of #276: the recorded selector and fingerprint reach
+        // the bridge, which resolves them strictly instead of the stale ref.
+        let engine = EvalEngine::new();
+        let recorder = Recorder::new();
+        recorder.start();
+        let located = json!({"self": {"selector": "#plan-pro", "expect": {"tag": "input"}}});
+        let webviews = locating_webviews(&engine, &[("main", None)], located);
+        dispatch(
+            "check",
+            Some(&json!({"ref": "e9"})),
+            &engine,
+            &webviews,
+            &recorder,
+        )
+        .await
+        .expect("check succeeds");
+        let entry = recorder.stop().expect("recording active").remove(0);
+
+        dispatch(
+            &entry.action,
+            Some(&serde_json::Value::Object(entry.params)),
+            &engine,
+            &webviews,
+            &recorder,
+        )
+        .await
+        .expect("replayed check succeeds");
+        let replayed = webviews.scripts().pop().expect("script evaluated");
+        assert!(
+            replayed.contains(
+                r##"__PILOT__.check({"expect":{"tag":"input"},"ref":"e9","selector":"#plan-pro"})"##
+            ),
+            "{replayed}"
+        );
     }
 
     // ─── bridge_eval_timeout (issue #91) ─────────────────────────────────────
