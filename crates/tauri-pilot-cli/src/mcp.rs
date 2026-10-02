@@ -1139,7 +1139,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "value",
-            description: "Get an input, textarea, or select value.",
+            description: "Get an input, textarea, or select value, or a contenteditable or textbox host's text with whitespace collapsed.",
             schema: target_schema,
             read_only: true,
             destructive: false,
@@ -1227,7 +1227,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "assert_value",
-            description: "Assert an input, textarea, or select value.",
+            description: "Assert an input, textarea, or select value, or a contenteditable or textbox host's text with whitespace collapsed.",
             schema: expected_target_schema,
             read_only: true,
             destructive: false,

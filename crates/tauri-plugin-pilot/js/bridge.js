@@ -1939,12 +1939,18 @@
   // so the string matches the `forms` CLI (`skills = "rust, js"`). An `<li>`
   // reports its `value` attribute as written: `HTMLLIElement.value` reflects
   // it as a `long` and reads `0` when it is absent, empty, or not an integer,
-  // even in an `<ol>` (#162). Other elements keep their IDL `.value`.
+  // even in an `<ol>` (#162). A textbox with no IDL `.value` (a
+  // contenteditable host, a `role=textbox` or `role=searchbox` widget) reports
+  // its text, whitespace collapsed, as its value (#326). A form control keeps
+  // its IDL `.value` whatever its role or contenteditable state.
   function elementValue(el) {
     if (!el) return undefined;
     const tag = String(el.tagName || "").toLowerCase();
     if (tag === "select" && el.multiple) return selectedOptionValues(el).join(", ");
     if (tag === "li") return el.getAttribute("value") || undefined;
+    if (el.value === undefined && isTextboxHost(el)) {
+      return String(el.textContent || "").replace(/\s+/g, " ").trim();
+    }
     return el.value;
   }
 
