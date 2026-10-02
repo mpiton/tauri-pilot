@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and recordings and `replay --export sh` keep the whole list. A value
   starting with `-` goes after `--` (`select "#size" -- -1`), which the
   exported script always writes. [#306]
+- `select <target> --clear` deselects every option of a `<select multiple>`
+  and fires `input` then `change` once, even when nothing was selected, as
+  Playwright's `selectOption([])` does. It conflicts with values, which stay
+  required otherwise. The `select` JSON-RPC method and MCP tool take
+  `value: []`, the TOML `select` step takes `value = []`, recordings keep
+  the empty list and `replay --export sh` writes it back as `--clear`. A
+  single select rejects an empty list with `select: no value given; only a
+  <select multiple> can be cleared`. [#327]
 
 ### Changed
 
@@ -1624,6 +1632,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#302]: https://github.com/mpiton/tauri-pilot/issues/302
 [#304]: https://github.com/mpiton/tauri-pilot/issues/304
 [#308]: https://github.com/mpiton/tauri-pilot/issues/308
+[#327]: https://github.com/mpiton/tauri-pilot/issues/327
 [#310]: https://github.com/mpiton/tauri-pilot/issues/310
 [#312]: https://github.com/mpiton/tauri-pilot/issues/312
 [#306]: https://github.com/mpiton/tauri-pilot/issues/306

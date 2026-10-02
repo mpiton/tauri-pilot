@@ -97,9 +97,13 @@ pub(crate) enum Command {
     Select {
         target: String,
         /// Option values or visible labels. A multi-select ends up with
-        /// exactly these selected; a single select takes one.
-        #[arg(num_args = 1.., required = true)]
+        /// exactly these selected; a single select takes one. Required
+        /// unless `--clear` is given.
+        #[arg(num_args = 1.., required_unless_present = "clear")]
         values: Vec<String>,
+        /// Deselect every option of a <select multiple>.
+        #[arg(long, conflicts_with = "values")]
+        clear: bool,
     },
     /// Toggle a checkbox, or select a radio input.
     Check { target: String },
@@ -894,6 +898,23 @@ mod tests {
 
         // Without `--`, a dash-prefixed value is rejected, never read as a value.
         assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s", "-1"]).is_err());
+    }
+
+    /// `--clear` empties a `<select multiple>`; it takes no value, and a
+    /// missing value without it stays an error, not a silent clear (#327).
+    #[test]
+    fn test_parse_select_clear() {
+        let cli = Cli::parse_from(["tauri-pilot", "select", "select[name=skills]", "--clear"]);
+        let Command::Select { values, clear, .. } = cli.command else {
+            panic!("expected Select command");
+        };
+        assert!(clear);
+        assert!(values.is_empty());
+
+        assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s"]).is_err());
+        assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s", "--"]).is_err());
+        assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s", "--clear", "a"]).is_err());
+        assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s", "a", "--clear"]).is_err());
     }
 
     #[test]

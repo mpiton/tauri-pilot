@@ -706,7 +706,9 @@ async fn run_dom_command(
                 .call("press", with_window(Some(json!({"key": key})), window))
                 .await
         }
-        Command::Select { target, values } => {
+        // `--clear` conflicts with values, so it arrives here as an empty
+        // list, which the bridge reads as "deselect every option" (#327).
+        Command::Select { target, values, .. } => {
             let mut p = target_params(&target);
             p["value"] = select_value_param(&values);
             client.call("select", with_window(Some(p), window)).await
@@ -1583,6 +1585,10 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 }
                 other => vec![other.and_then(Value::as_str).unwrap_or("")],
             };
+            // An empty list cleared a `<select multiple>` (#327).
+            if values.is_empty() {
+                return format!("tauri-pilot select {target} --clear");
+            }
             let quoted: Vec<String> = values.into_iter().map(shell_escape).collect();
             // `--` keeps a value like `-1` from being read as a flag.
             format!("tauri-pilot select {target} -- {}", quoted.join(" "))
@@ -2730,6 +2736,18 @@ mod tests {
         };
         assert_eq!(source, "-10,20");
         assert_eq!(offset.as_deref(), Some("0.5,-3"));
+    }
+
+    /// #327: a recorded empty list exports as `--clear`, which the CLI parses
+    /// back into the same empty list.
+    #[test]
+    fn test_entry_to_cli_command_select_exports_clear() {
+        let line = entry_to_cli_command(
+            "select",
+            &json!({"selector": "select[name=skills]", "value": []}),
+        );
+        assert_eq!(line, "tauri-pilot select 'select[name=skills]' --clear");
+        assert_eq!(select_value_param(&[]), json!([]));
     }
 
     /// #276: the export acts on the recorded selector, not the ephemeral

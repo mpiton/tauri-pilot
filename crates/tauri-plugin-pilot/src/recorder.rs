@@ -298,6 +298,21 @@ mod tests {
         assert_eq!(entries[0].params["value"], json!(["rust", "go"]));
     }
 
+    /// #327: a cleared multi-select records its empty list, which the
+    /// shell export turns back into `--clear`.
+    #[test]
+    fn test_record_keeps_an_empty_select_list() {
+        let rec = Recorder::new();
+        rec.start();
+        rec.record(
+            "select",
+            Some(&json!({"selector": "select[name=skills]", "value": []})),
+            None,
+        );
+        let entries = rec.stop().expect("recording active");
+        assert_eq!(entries[0].params["value"], json!([]));
+    }
+
     /// #276: the locator the bridge computed is stored next to the ref.
     #[test]
     fn test_record_stores_locator_next_to_the_ref() {

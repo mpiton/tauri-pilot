@@ -299,13 +299,42 @@ test("select names every unknown value and leaves the selection alone", () => {
   assert.deepEqual(el.events, []);
 });
 
-test("select rejects an empty list", () => {
+// #327: an empty list clears a <select multiple>, and fires `input` then
+// `change` once, as Playwright's `selectOption([])` does.
+test("select with an empty list deselects every option of a multi-select", () => {
   const el = makeSkills();
   const pilot = loadBridge({ queryResult: el });
 
+  const result = pilot.select({ selector: "select[name=skills]", value: [] });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(selectedValues(el), []);
+  assert.deepEqual(el.events, ["input", "change"], "input and change fire once each");
+});
+
+test("select with an empty list fires its events even when nothing was selected", () => {
+  const el = makeSkills();
+  for (const o of el._options) o.selected = false;
+  const pilot = loadBridge({ queryResult: el });
+
+  pilot.select({ selector: "select[name=skills]", value: [] });
+
+  assert.deepEqual(selectedValues(el), []);
+  assert.deepEqual(el.events, ["input", "change"]);
+});
+
+test("select rejects an empty list on a single select", () => {
+  const el = makeSelect([
+    { value: "user", text: "User" },
+    { value: "admin", text: "Admin" },
+  ]);
+  el._options[1].selected = true;
+  const pilot = loadBridge({ queryResult: el });
+
   assert.throws(
-    () => pilot.select({ selector: "select[name=skills]", value: [] }),
-    /^Error: select: no value given$/,
+    () => pilot.select({ selector: "select[name=role]", value: [] }),
+    /^Error: select: no value given; only a <select multiple> can be cleared$/,
   );
-  assert.deepEqual(selectedValues(el), ["rust", "js"]);
+  assert.equal(el.value, "admin");
+  assert.deepEqual(el.events, []);
 });
