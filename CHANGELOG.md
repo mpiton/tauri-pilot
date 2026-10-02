@@ -80,8 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatched. A plain `<div>` drop zone counts as disabled only inside a
   disabled control, or with a widget role and `aria-disabled="true"`. With
   `--offset`, the node under the drop point also fails inside such an
-  `aria-disabled` widget, and the node `drag` presses inside its source is
-  checked like the source. Migration: a script that drags from or
+  `aria-disabled` widget. In either mode, the node `drag` presses inside its
+  source is checked like the source. Migration: a script that drags from or
   drops onto a disabled element on purpose must enable it first, for
   example with `eval`. [#332]
 

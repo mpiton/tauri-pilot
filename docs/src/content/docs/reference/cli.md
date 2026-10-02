@@ -765,8 +765,8 @@ drag event is dispatched (`--offset` may still scroll the source into view
 first). A plain `<div>` drop zone counts as disabled only inside a disabled
 control, or with a widget role and `aria-disabled="true"`. With `--offset`,
 the node under the drop point is refused inside such an `aria-disabled`
-widget too, and the node pressed inside the source (a disabled button in a
-card) fails as the source.
+widget too. In either mode, the node `drag` presses inside the source (a
+disabled button in a card) fails as the source.
 
 **Examples:**
 
