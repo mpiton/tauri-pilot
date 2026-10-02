@@ -137,10 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `listbox` role instead of `combobox`, as HTML-AAM does. A single-choice
   `<select>` stays `combobox`, and an explicit `role` attribute still wins.
   Migration: scripts that find such a select by `role == "combobox"` must
-  match `listbox`; a `diff --ref` against a snapshot saved before this
-  change reports the select as removed and re-added; and a recording that
-  targets one fails its `expect` fingerprint on replay (`role` differs), so
-  re-record those steps. [#307]
+  match `listbox`, and a `diff --ref` against a snapshot saved before this
+  change reports the select as removed and re-added. [#307]
 
 ### Fixed
 
