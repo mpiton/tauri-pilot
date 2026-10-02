@@ -1563,11 +1563,13 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
         "click" => format!("tauri-pilot click {target}"),
         "fill" => {
             let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            format!("tauri-pilot fill {target} {}", shell_escape(value))
+            // `--` keeps a value like `-5` from being read as a flag (#325).
+            format!("tauri-pilot fill {target} -- {}", shell_escape(value))
         }
         "type" => {
             let text = entry.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            format!("tauri-pilot type {target} {}", shell_escape(text))
+            // Same as `fill`: `--` keeps text like `-x` from being a flag.
+            format!("tauri-pilot type {target} -- {}", shell_escape(text))
         }
         "press" => {
             let key = entry.get("key").and_then(|k| k.as_str()).unwrap_or("");
@@ -2600,6 +2602,24 @@ mod tests {
                 &json!({"selector": "#size", "value": ["-1", "--none--"]})
             ),
             "tauri-pilot select '#size' -- '-1' '--none--'"
+        );
+    }
+
+    /// #325: `fill` and `type` exports put `--` before the value, so a value
+    /// starting with `-` is not read as a flag.
+    #[test]
+    fn test_entry_to_cli_command_fill_and_type_end_options_before_value() {
+        assert_eq!(
+            entry_to_cli_command("fill", &json!({"selector": "#qty", "value": "-5"})),
+            "tauri-pilot fill '#qty' -- '-5'"
+        );
+        assert_eq!(
+            entry_to_cli_command("type", &json!({"ref": "e2", "text": "-x"})),
+            "tauri-pilot type '@e2' -- '-x'"
+        );
+        assert_eq!(
+            entry_to_cli_command("fill", &json!({"selector": "#name", "value": "ok"})),
+            "tauri-pilot fill '#name' -- 'ok'"
         );
     }
 
