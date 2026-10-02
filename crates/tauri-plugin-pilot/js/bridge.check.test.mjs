@@ -142,7 +142,7 @@ test("check throws on a non-input target", () => {
   const pilot = loadBridge(el);
   assert.throws(
     () => pilot.check({ selector: "#qa-div" }),
-    /checkbox|radio/i,
+    /^Error: check requires an <input type="checkbox"> or <input type="radio">, got: div$/,
   );
   assert.equal(el.checked, false);
 });
