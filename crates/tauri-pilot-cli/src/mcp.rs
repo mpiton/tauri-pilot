@@ -3340,6 +3340,30 @@ path = "/tmp/out.png"
         );
     }
 
+    /// The `select` tool and its `value` property both say that an empty
+    /// list clears a `<select multiple>` (#327).
+    #[test]
+    fn select_tool_descriptions_document_the_empty_list() {
+        let spec = tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "select")
+            .expect("select tool");
+        assert_eq!(
+            spec.description,
+            "Select options in a select element: one value, or a list for a <select multiple>, \
+             which ends up with exactly those options selected. Matches option values, then \
+             visible labels. An empty list deselects every option of a <select multiple>. \
+             Errors on an unknown value, or on a list (empty or of several values) for a single \
+             select."
+        );
+        let schema = (spec.schema)();
+        assert_eq!(
+            schema["properties"]["value"]["description"],
+            "Option value or visible label, or a list of them for a <select multiple>. An empty \
+             list deselects every option of a <select multiple>."
+        );
+    }
+
     /// `assert_unchecked` passes on `checked: false` and fails with
     /// `element is checked` on `checked: true` (#286).
     #[tokio::test]

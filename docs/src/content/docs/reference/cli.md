@@ -1855,7 +1855,7 @@ other keys depend on the action:
 |--------|----------|----------|
 | `click`, `check` | `target` | |
 | `fill` | `target` | `value` |
-| `select` | `target` | `value` (a string, or a list such as `["rust", "go"]` for a `<select multiple>`; `[]` clears one) |
+| `select` | `target` | `value` (a string, or a list such as `["rust", "go"]` for a `<select multiple>`; `[]` clears the `<select multiple>`) |
 | `type` | `target` | `text` |
 | `press` | `key` | |
 | `scroll` | | `target`, `direction`, `amount` |

@@ -1625,7 +1625,8 @@
     // silently yields `value=""` / `selectedIndex=-1` per the DOM spec, so
     // "set then trust" reports success on a no-op (#113). Match the option
     // first — by `value`, then by visible label — and error if none matches so
-    // a reported `ok` always means an option was actually selected.
+    // a reported `ok` always means the selection was set to exactly the
+    // requested options, or cleared when the list is empty (#327).
     // `wantedRaw` is one value or a list (#306). `fill` delegates here too, so
     // error prefixes name the command the user actually ran.
     const wanted = (Array.isArray(wantedRaw) ? wantedRaw : [wantedRaw]).map(String);

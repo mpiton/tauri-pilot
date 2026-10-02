@@ -2738,8 +2738,7 @@ mod tests {
         assert_eq!(offset.as_deref(), Some("0.5,-3"));
     }
 
-    /// #327: a recorded empty list exports as `--clear`, which the CLI parses
-    /// back into the same empty list.
+    /// #327: a recorded empty list exports as `--clear`.
     #[test]
     fn test_entry_to_cli_command_select_exports_clear() {
         let line = entry_to_cli_command(
@@ -2747,7 +2746,6 @@ mod tests {
             &json!({"selector": "select[name=skills]", "value": []}),
         );
         assert_eq!(line, "tauri-pilot select 'select[name=skills]' --clear");
-        assert_eq!(select_value_param(&[]), json!([]));
     }
 
     /// #276: the export acts on the recorded selector, not the ephemeral

@@ -48,6 +48,50 @@ fn select_with_one_value_sends_a_string() {
     );
 }
 
+/// `--clear` sends an empty list, which clears a `<select multiple>` (#327).
+#[test]
+fn select_clear_sends_an_empty_list() {
+    let (output, requests) = run_against_mock(&["select", "select[name=skills]", "--clear"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "--- stderr ---\n{stderr}");
+    assert_eq!(requests.len(), 1, "requests: {requests:?}");
+    assert_eq!(requests[0]["method"], "select");
+    assert_eq!(
+        requests[0]["params"],
+        json!({"selector": "select[name=skills]", "value": []})
+    );
+}
+
+/// A scenario step with `value = []` sends the empty list as-is (#327).
+#[test]
+fn scenario_select_step_sends_an_empty_list() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("scenario.toml");
+    std::fs::write(
+        &path,
+        r#"
+[[step]]
+action = "select"
+target = "select[name=skills]"
+value = []
+"#,
+    )
+    .expect("write scenario");
+    let (output, requests) = run_against_mock(&["run", path.to_str().expect("UTF-8 path")]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "--- stderr ---\n{stderr}");
+
+    let select: Vec<&Value> = requests
+        .iter()
+        .filter(|r| r["method"] == "select")
+        .collect();
+    assert_eq!(select.len(), 1, "requests: {requests:?}");
+    assert_eq!(
+        select[0]["params"],
+        json!({"selector": "select[name=skills]", "value": []})
+    );
+}
+
 #[test]
 fn scenario_select_step_sends_a_list_value() {
     let dir = tempfile::tempdir().expect("tempdir");
