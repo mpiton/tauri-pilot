@@ -759,6 +759,11 @@ the expected effect afterwards. The one signal the bridge can observe is
 `html5DropHandled`, which is true when a handler called `preventDefault()` on the
 `drop` event. The result also echoes the `from`/`to` points and `steps` used.
 
+A disabled source fails with `drag: source is disabled` and a disabled drop
+target with `drag: target is disabled` (same rules as `click`), before any
+event fires. A plain `<div>` drop zone counts as disabled only inside a
+disabled control, or with a widget role and `aria-disabled="true"`.
+
 **Examples:**
 
 ```bash
@@ -814,6 +819,9 @@ tauri-pilot drop <target> --file <path> [--file <path>...]
 
 **Limits:** one request is at most 1 MiB and files are sent base64-encoded, so
 the files in one drop can total a little under 768 KiB.
+
+A disabled target (same rules as `click`), such as a disabled
+`<input type="file">`, fails with `drop: target is disabled` and fires no event.
 
 **Examples:**
 

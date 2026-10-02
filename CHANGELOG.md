@@ -73,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first, for example with `eval`, or set the value through `eval`. Rust
   code that builds `tauri_plugin_pilot::diff::SnapshotElement` by hand adds
   `readonly: None`. [#324]
+- `drag` and `drop` follow the same rule: a disabled drag source fails with
+  `drag: source is disabled`, and a disabled drop target (of `drag` or
+  `drop`, such as a disabled `<input type="file">`) with
+  `<action>: target is disabled`, before any event fires. A plain `<div>`
+  drop zone counts as disabled only inside a disabled control, or with a
+  widget role and `aria-disabled="true"`. Migration: a script that drags from or
+  drops onto a disabled element on purpose must enable it first, for
+  example with `eval`. [#332]
 
 - `select` now fires `input` then `change`, once each, like a user's pick;
   it fired only `change` before. Migration: an app that listens to `input`
@@ -1639,3 +1647,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#325]: https://github.com/mpiton/tauri-pilot/issues/325
 [#326]: https://github.com/mpiton/tauri-pilot/issues/326
 [#324]: https://github.com/mpiton/tauri-pilot/issues/324
+[#332]: https://github.com/mpiton/tauri-pilot/issues/332

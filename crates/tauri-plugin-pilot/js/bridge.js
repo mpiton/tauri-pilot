@@ -1528,10 +1528,11 @@
   // A user cannot act on a disabled control, so the action fails before
   // touching the element or firing any event (#324). Synthetic events bypass
   // the browser's own block: a disabled button's onclick runs on
-  // `dispatchEvent`.
-  function requireEnabled(el, action) {
+  // `dispatchEvent`. `subject` names the element in the error: `drag` checks
+  // its source as well as its target (#332).
+  function requireEnabled(el, action, subject) {
     if (matchesDisabled(el) || insideDisabledControl(el) || isAriaDisabled(el)) {
-      throw new Error(action + ": target is disabled");
+      throw new Error(action + ": " + (subject || "target") + " is disabled");
     }
   }
 
@@ -1892,6 +1893,10 @@
 
   async function drag(params) {
     var source = resolveTarget(params.source || params);
+    // A disabled source or drop target fails before any event, like `click`
+    // (#332). The pressed node sits inside the source, which the source check
+    // already covers through `insideDisabledControl`.
+    requireEnabled(source, "drag", "source");
     var sourceRect = source.getBoundingClientRect();
     var startX = sourceRect.left + sourceRect.width / 2;
     var startY = sourceRect.top + sourceRect.height / 2;
@@ -1935,6 +1940,7 @@
     } else {
       throw new Error("drag requires target or offset");
     }
+    requireEnabled(dropTarget, "drag");
 
     // Two families of drag implementation exist and they listen for different
     // things, so a gesture that only satisfies one silently does nothing in the
@@ -2017,6 +2023,7 @@
 
   function drop(params) {
     var el = resolveTarget(params);
+    requireEnabled(el, "drop");
     var rect = el.getBoundingClientRect();
     var x = rect.left + rect.width / 2;
     var y = rect.top + rect.height / 2;
