@@ -1631,6 +1631,10 @@ fails, and `replay` does not fall back to the ref:
 [3/6] check → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Recorded selector fieldset > input:nth-of-type(2) found <input role="radio" name="Team">, recorded <input role="radio" name="Pro">
 ```
 
+The name is the one a snapshot shows: the label, or the first 50 characters
+of the element's text. An element whose text changes between runs (a counter,
+a timestamp) therefore fails the fingerprint check; give it an `aria-label`.
+
 A step with a ref and no selector, from a recording made before stable
 locators or one `record stop` reported, still replays on the ref, with a
 warning, since the ref only exists in the snapshot that numbered it:

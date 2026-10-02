@@ -19,8 +19,10 @@ use std::thread;
 use common::{SERVER_DONE_TIMEOUT, unique_socket_path};
 use serde_json::{Value, json};
 
-/// Runs the binary with `args` against a mock that answers every request
-/// with `result`, and returns its output and the requests it received.
+/// Runs the binary with `args` against an always-answering mock.
+///
+/// The mock answers every request with `result`. Returns the binary's output
+/// and the requests the mock received.
 ///
 /// # Panics
 ///

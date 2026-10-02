@@ -1122,8 +1122,12 @@
     return out;
   }
 
+  // A quoted CSS string: quotes and backslashes escaped, control characters
+  // as hex escapes (a raw line break is a parse error).
   function cssString(value) {
-    return '"' + String(value).replace(/["\\]/g, "\\$&").replace(/\n/g, "\\a ") + '"';
+    return '"' + String(value).replace(/["\\]|[\x00-\x1f\x7f]/g, function (ch) {
+      return ch === '"' || ch === "\\" ? "\\" + ch : "\\" + ch.charCodeAt(0).toString(16) + " ";
+    }) + '"';
   }
 
   // Every element `selector` matches, or null for a selector the page rejects.
@@ -1188,17 +1192,19 @@
 
   function describeFingerprint(fp) {
     let out = "<" + fp.tag;
-    if (fp.role) out += ' role="' + fp.role + '"';
-    if (fp.name) out += ' name="' + fp.name + '"';
+    if (fp.role) out += " role=" + JSON.stringify(fp.role);
+    if (fp.name) out += " name=" + JSON.stringify(fp.name);
     return out + ">";
   }
 
-  // `{refs: {key: ref}}` → `{key: {selector?, expect}}`.
+  // `{refs: {key: ref}}` → `{key: {selector?, expect}}`. A ref this page no
+  // longer knows is left out, so the other refs of a drag keep their locator.
   function locate(params) {
     const out = {};
     const refs = (params && params.refs) || {};
     for (const key of Object.keys(refs)) {
-      const el = requireEl(refs[key]);
+      const el = resolve(refs[key]);
+      if (!el) continue;
       const entry = {};
       const selector = stableSelector(el);
       if (selector) entry.selector = selector;
@@ -1212,6 +1218,10 @@
   // fallback to the ref, which may name another element by now), and that
   // element must still carry the recorded fingerprint.
   function resolveRecorded(params) {
+    const want = params.expect;
+    if (typeof want !== "object" || want === null || typeof want.tag !== "string") {
+      throw new Error('Invalid recorded fingerprint: expected an object with a string "tag"');
+    }
     let el, where;
     if (params.selector) {
       where = "Recorded selector " + params.selector;
@@ -1228,7 +1238,6 @@
     } else {
       throw new Error("Recorded step has no selector or ref");
     }
-    const want = params.expect;
     const got = fingerprint(el);
     if (got.tag !== want.tag || got.role !== (want.role || null) || got.name !== (want.name || null)) {
       throw new Error(where + " found " + describeFingerprint(got) +
@@ -1238,7 +1247,7 @@
   }
 
   function resolveTarget(params) {
-    if (params.expect) return resolveRecorded(params);
+    if (params.expect !== undefined) return resolveRecorded(params);
     if (params.ref) return requireEl(params.ref);
     if (params.selector) {
       var el = document.querySelector(params.selector);

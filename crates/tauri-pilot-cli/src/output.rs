@@ -941,13 +941,13 @@ fn format_unstable_steps(value: &serde_json::Value) -> String {
         )
     );
     for step in steps {
-        let field = |key: &str| strip_ansi(&step[key].to_string().replace('"', ""));
+        let text = |key: &str| strip_ansi(step[key].as_str().unwrap_or("?"));
+        let number = step["step"].as_u64().unwrap_or(0);
         let _ = write!(
             out,
-            "\n  step {} ({}): no stable locator for ref {}",
-            field("step"),
-            field("action"),
-            field("ref")
+            "\n  step {number} ({}): no stable locator for ref {}",
+            text("action"),
+            text("ref")
         );
     }
     out

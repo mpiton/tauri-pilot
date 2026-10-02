@@ -2505,6 +2505,7 @@ mod tests {
             "tauri-pilot scroll 'down' --target=-10,20"
         );
     }
+
     /// #276: the export acts on the recorded selector, not the ephemeral
     /// ref, in the recorded window, and says what it cannot check.
     #[test]

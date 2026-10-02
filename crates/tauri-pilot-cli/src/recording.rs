@@ -9,8 +9,9 @@
 // Rust guideline compliant 2026-02-21
 use serde_json::Value;
 
-/// The objects of a step that may hold a target: the step itself, then the
-/// `source` and `target` of a `drag`.
+/// The objects of a step that may hold a target.
+///
+/// The step itself, then the `source` and `target` of a `drag`.
 fn targets(entry: &Value) -> impl Iterator<Item = &Value> {
     [Some(entry), entry.get("source"), entry.get("target")]
         .into_iter()
@@ -25,20 +26,17 @@ pub(crate) fn ephemeral_refs(entry: &Value) -> Vec<&str> {
         .collect()
 }
 
-/// Replay warning for a step that relies on `refs`, or `None` when it
-/// relies on none.
+/// Replay warning for a step that relies on `refs`.
+///
+/// `None` when the step relies on no ref.
 pub(crate) fn ephemeral_ref_warning(refs: &[&str]) -> Option<String> {
-    let (first, rest) = refs.split_first()?;
+    let (_, rest) = refs.split_first()?;
     let (noun, exist, it) = if rest.is_empty() {
         ("ref", "exists", "it")
     } else {
         ("refs", "exist", "them")
     };
-    let mut list = (*first).to_owned();
-    for r in rest {
-        list.push_str(", ");
-        list.push_str(r);
-    }
+    let list = refs.join(", ");
     Some(format!(
         "relies on snapshot {noun} {list}, which only {exist} in the snapshot \
          that numbered {it}; re-record for a stable replay"

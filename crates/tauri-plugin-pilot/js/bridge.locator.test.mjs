@@ -95,7 +95,10 @@ class El {
   }
 }
 
-const unescapeCss = (s) => s.replace(/\\(.)/g, "$1");
+const unescapeCss = (s) =>
+  s.replace(/\\([0-9a-f]{1,6}) ?|\\(.)/gi, (_, hex, ch) =>
+    hex ? String.fromCodePoint(parseInt(hex, 16)) : ch,
+  );
 
 // One compound selector of the subset the locator emits.
 const COMPOUND =
@@ -248,6 +251,16 @@ test("ids and attribute values are CSS-escaped", () => {
   assert.equal(located(pilot, refOf(pilot, "Save")).selector, '[data-testid="say \\"hi\\""]');
 });
 
+test("attribute values with line breaks still give a valid selector", () => {
+  // `\r` or `\f` left raw in a CSS string is a parse error, which would
+  // drop a unique test id and leave the step without a locator.
+  const p = page();
+  p.save.setAttribute("data-testid", "a\r\nb\fc");
+  const pilot = loadBridge(p.html);
+  const { selector } = located(pilot, refOf(pilot, "Save"));
+  assert.equal(selector, '[data-testid="a\\d \\a b\\c c"]');
+});
+
 test("locate returns the fingerprint without a selector when nothing is unique", () => {
   // A node the page detached after the snapshot (a re-render) is still the
   // ref's element, but no selector can match it, so no candidate counts.
@@ -268,6 +281,15 @@ test("locate covers drag source and target refs", () => {
   const out = pilot.locate({ refs: { source, target } });
   assert.equal(out.source.selector, '[data-testid="save"]');
   assert.equal(out.target.selector, "#email");
+});
+
+test("a stale drag ref does not cost the other ref its locator", () => {
+  const p = page();
+  const pilot = loadBridge(p.html);
+  const source = refOf(pilot, "Save", { interactive: true });
+  const out = pilot.locate({ refs: { source, target: "e999" } });
+  assert.equal(out.source.selector, '[data-testid="save"]');
+  assert.equal(out.target, undefined);
 });
 
 test("case A: a recorded step replays on a fresh document with no snapshot", () => {
@@ -425,6 +447,17 @@ test("drag resolves a recorded source and target strictly", async () => {
     pilot.drag({ source: out.source, target: out.target }),
     /#email.*recorded <input role="textbox" name="Email">/,
   );
+});
+
+test("a malformed fingerprint fails the step instead of a vague mismatch", () => {
+  const p = page();
+  const pilot = loadBridge(p.html);
+  for (const expect of [true, false, {}, { tag: 3 }]) {
+    assert.throws(
+      () => pilot.click({ selector: "#email", expect }),
+      /Invalid recorded fingerprint: expected an object with a string "tag"/,
+    );
+  }
 });
 
 test("a plain selector without a fingerprint keeps the first-match behaviour", () => {

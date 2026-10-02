@@ -196,23 +196,7 @@ pub(crate) async fn dispatch(
     let params = owned_params.as_ref().or(params);
     let win = window.as_deref();
 
-    // While recording, resolve the step's refs to stable locators before the
-    // action runs: a click can navigate or remove its element (#276). A failed
-    // lookup leaves the step ref-only, and `record stop` reports it.
-    let locators = match recorder.locate_request(method, params) {
-        Some(request) => {
-            let located = handle_eval_method(
-                "locate",
-                Some(&request),
-                engine,
-                webviews,
-                win,
-                DEFAULT_TIMEOUT,
-            );
-            located.await.ok()
-        }
-        None => None,
-    };
+    let locators = locate_for_recording(method, params, engine, webviews, win, recorder).await;
 
     let result = match method {
         "ping" => {
@@ -414,6 +398,31 @@ pub(crate) async fn dispatch(
     }
 
     result
+}
+
+/// Resolves the refs of a step being recorded to stable locators (#276).
+///
+/// Runs before the action, since a click can navigate or remove its element,
+/// and only while recording. `None` when there is nothing to locate or the
+/// lookup failed: the step stays ref-only and `record stop` reports it.
+async fn locate_for_recording(
+    method: &str,
+    params: Option<&serde_json::Value>,
+    engine: &EvalEngine,
+    webviews: &dyn Webviews,
+    window: Option<&str>,
+    recorder: &Recorder,
+) -> Option<serde_json::Value> {
+    let request = recorder.locate_request(method, params)?;
+    let located = handle_eval_method(
+        "locate",
+        Some(&request),
+        engine,
+        webviews,
+        window,
+        DEFAULT_TIMEOUT,
+    );
+    located.await.ok()
 }
 
 /// Handle the "diff" method: take a new snapshot, compare with the reference, and return `DiffResult`.

@@ -123,6 +123,7 @@ impl Recorder {
             .collect();
         (!refs.is_empty()).then(|| serde_json::json!({ "refs": refs }))
     }
+
     /// Explicitly add an entry (used by CLI-side `record.add`).
     /// Only adds if recording is active.
     pub fn add_entry(&self, entry: RecordEntry) {
