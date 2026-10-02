@@ -9,8 +9,7 @@ use serde_json::{Value, json};
 use crate::cli::AssertKind;
 use crate::client::Client;
 use crate::{
-    build_scroll_params, build_wait_params, hidden_target_params, run_assert_command,
-    target_params, with_window,
+    build_scroll_params, build_wait_params, run_assert_command, target_params, with_window,
 };
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
@@ -586,19 +585,9 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
             Ok(result)
         }
         "assert-text" => {
-            let t = require_target(step)?;
-            let expected = step
-                .expected_text()
-                .ok_or_else(|| anyhow::anyhow!("assert-text requires 'expected'"))?;
-            let result = client
-                .call("text", with_window(Some(target_params(t)), window))
-                .await?;
-            let actual = result.as_str().unwrap_or_default();
-            anyhow::ensure!(
-                actual == expected,
-                "expected text {expected:?}, got {actual:?}"
-            );
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            let expected = require_expected_text(step)?;
+            assert_step(client, AssertKind::Text { target, expected }, window).await
         }
         "assert-exists" => {
             let t = require_target(step)?;
@@ -609,58 +598,21 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
             Ok(json!({"ok": true}))
         }
         "assert-visible" => {
-            let t = require_target(step)?;
-            let result = client
-                .call("visible", with_window(Some(target_params(t)), window))
-                .await?;
-            let visible = result
-                .get("visible")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            anyhow::ensure!(visible, "element is not visible");
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            assert_step(client, AssertKind::Visible { target }, window).await
         }
         "assert-hidden" => {
-            let t = require_target(step)?;
-            let result = client
-                .call(
-                    "visible",
-                    with_window(Some(hidden_target_params(t)), window),
-                )
-                .await?;
-            let visible = result
-                .get("visible")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            anyhow::ensure!(!visible, "element is visible");
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            assert_step(client, AssertKind::Hidden { target }, window).await
         }
         "assert-value" => {
-            let t = require_target(step)?;
-            let expected = step
-                .expected_text()
-                .ok_or_else(|| anyhow::anyhow!("assert-value requires 'expected'"))?;
-            let result = client
-                .call("value", with_window(Some(target_params(t)), window))
-                .await?;
-            let actual = result.as_str().unwrap_or_default();
-            anyhow::ensure!(
-                actual == expected,
-                "expected value {expected:?}, got {actual:?}"
-            );
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            let expected = require_expected_text(step)?;
+            assert_step(client, AssertKind::Value { target, expected }, window).await
         }
         "assert-url" => {
-            let expected = step
-                .expected_text()
-                .ok_or_else(|| anyhow::anyhow!("assert-url requires 'expected'"))?;
-            let result = client.call("url", with_window(None, window)).await?;
-            let actual = result.as_str().unwrap_or_default();
-            anyhow::ensure!(
-                actual.contains(expected),
-                "URL does not contain {expected:?}, got {actual:?}"
-            );
-            Ok(json!({"ok": true}))
+            let expected = require_expected_text(step)?;
+            assert_step(client, AssertKind::Url { expected }, window).await
         }
         "assert-checked" => {
             let target = require_target(step)?.to_owned();
@@ -682,10 +634,7 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
         }
         "assert-contains" => {
             let target = require_target(step)?.to_owned();
-            let expected = step
-                .expected_text()
-                .ok_or_else(|| anyhow::anyhow!("assert-contains requires 'expected'"))?
-                .to_owned();
+            let expected = require_expected_text(step)?;
             assert_step(client, AssertKind::Contains { target, expected }, window).await
         }
         "storage-get" => storage_get_step(client, step, window).await,
@@ -720,6 +669,17 @@ fn require_target(step: &Step) -> Result<&str> {
     step.target
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("step '{}' requires 'target'", step.action))
+}
+
+/// The step's string `expected`, owned for an [`AssertKind`].
+///
+/// # Errors
+///
+/// Returns an error when `expected` is unset or not a string.
+fn require_expected_text(step: &Step) -> Result<String> {
+    step.expected_text()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("{} requires 'expected'", step.action))
 }
 
 /// Read a storage key and fail the step when the plugin reports `found: false`.
@@ -768,7 +728,9 @@ async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>
 
 /// Write a storage key, like `tauri-pilot storage set`.
 ///
-/// localStorage by default, sessionStorage with `session = true`.
+/// localStorage by default, sessionStorage with `session = true`. The bridge
+/// answers `{"ok": true}`; any other result fails the step, for the same
+/// reason [`storage_get_step`] checks `found`.
 async fn storage_set_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
     let key = step
         .key
@@ -779,9 +741,14 @@ async fn storage_set_step(client: &mut Client, step: &Step, window: Option<&str>
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("storage-set step requires 'value'"))?;
     let params = json!({"key": key, "value": value, "session": step.session.unwrap_or(false)});
-    client
+    let result = client
         .call("storage.set", with_window(Some(params), window))
-        .await
+        .await?;
+    anyhow::ensure!(
+        result.get("ok").and_then(Value::as_bool) == Some(true),
+        "storage.set returned invalid response: expected {{\"ok\": true}}, got {result}"
+    );
+    Ok(result)
 }
 
 /// Remove a storage key; the step passes whether or not it existed.
@@ -1624,6 +1591,15 @@ expected = "x"
                     "[[step]]\naction = \"assert-count\"\nselector = \"li\"\nexpected = {bad}\n"
                 ),
                 &["step 1: step 'assert-count' needs an integer 'expected'"],
+            );
+            // `storage-get` would skip the comparison and pass on any value.
+            assert_invalid(
+                &format!("[[step]]\naction = \"storage-get\"\nkey = \"k\"\nexpected = {bad}\n"),
+                &["step 1: step 'storage-get' needs a string 'expected'"],
+            );
+            assert_invalid(
+                &format!("[[step]]\naction = \"assert-text\"\ntarget = \"h1\"\nexpected = {bad}\n"),
+                &["step 1: step 'assert-text' needs a string 'expected'"],
             );
         }
     }

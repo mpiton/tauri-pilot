@@ -14,12 +14,11 @@ mod common;
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
-use std::process::Output;
+use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-use assert_cmd::Command;
-use common::{SERVER_DONE_TIMEOUT, unique_socket_path};
+use common::{SERVER_DONE_TIMEOUT, unique_socket_path, wait_bounded};
 use serde_json::{Value, json};
 
 /// What the binary did with one scenario step.
@@ -115,17 +114,18 @@ fn run_step_replying(step: &str, method: &'static str, reply: Value) -> Run {
     std::fs::write(&scenario_path, format!("[[step]]\nname = \"s\"\n{step}\n"))
         .expect("write scenario");
 
-    let output = Command::cargo_bin("tauri-pilot")
-        .expect("cargo_bin")
+    // Bounded: a CLI regression that hangs fails this test, not the suite.
+    let child = Command::new(env!("CARGO_BIN_EXE_tauri-pilot"))
         .current_dir(tmpdir.path())
-        .args([
-            "--socket",
-            socket.to_str().expect("socket path is UTF-8"),
-            "run",
-            scenario_path.to_str().expect("scenario path is UTF-8"),
-        ])
-        .output()
-        .expect("run tauri-pilot");
+        .arg("--socket")
+        .arg(&socket)
+        .arg("run")
+        .arg(&scenario_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn tauri-pilot");
+    let output = wait_bounded(child);
 
     let done = done_rx.recv_timeout(SERVER_DONE_TIMEOUT);
     let _ = std::fs::remove_file(&socket);
@@ -229,6 +229,16 @@ fn storage_set_session_writes_session_storage() {
 }
 
 #[test]
+fn storage_set_without_ok_result_fails() {
+    let run = run_step(
+        "action = \"storage-set\"\nkey = \"theme\"\nvalue = \"dark\"",
+        "storage.set",
+        &Value::Null,
+    );
+    run.assert_failed_with(&["storage.set returned invalid response"]);
+}
+
+#[test]
 fn storage_set_rpc_error_fails() {
     let run = run_step_replying(
         "action = \"storage-set\"\nkey = \"theme\"\nvalue = \"dark\"",
@@ -326,4 +336,69 @@ fn assert_contains_fails_with_expected_and_actual() {
         &json!("Saving failed"),
     );
     run.assert_failed_with(&["text does not contain \"saved\"", "got \"Saving failed\""]);
+}
+
+// ── assert-text / assert-value / assert-url / assert-visible / assert-hidden ─
+//
+// These steps run the `assert` command's checks, so a response without the
+// field the check reads fails the step instead of passing on a default.
+
+#[test]
+fn assert_text_non_string_response_fails() {
+    let run = run_step(
+        "action = \"assert-text\"\ntarget = \"#title\"\nexpected = \"\"",
+        "text",
+        &Value::Null,
+    );
+    run.assert_failed_with(&["expected string response from server"]);
+}
+
+#[test]
+fn assert_text_fails_with_the_assert_command_message() {
+    let run = run_step(
+        "action = \"assert-text\"\ntarget = \"#title\"\nexpected = 'say \"hi\"'",
+        "text",
+        &json!("say hello"),
+    );
+    run.assert_failed_with(&["expected text \"say \"hi\"\", got \"say hello\""]);
+}
+
+#[test]
+fn assert_value_non_string_response_fails() {
+    let run = run_step(
+        "action = \"assert-value\"\ntarget = \"#email\"\nexpected = \"\"",
+        "value",
+        &Value::Null,
+    );
+    run.assert_failed_with(&["expected string response from server"]);
+}
+
+#[test]
+fn assert_url_non_string_response_fails() {
+    let run = run_step(
+        "action = \"assert-url\"\nexpected = \"\"",
+        "url",
+        &Value::Null,
+    );
+    run.assert_failed_with(&["expected string response from server"]);
+}
+
+#[test]
+fn assert_visible_without_visible_field_fails_naming_it() {
+    let run = run_step(
+        "action = \"assert-visible\"\ntarget = \"#panel\"",
+        "visible",
+        &json!({}),
+    );
+    run.assert_failed_with(&["missing 'visible' field"]);
+}
+
+#[test]
+fn assert_hidden_without_visible_field_fails_naming_it() {
+    let run = run_step(
+        "action = \"assert-hidden\"\ntarget = \"#panel\"",
+        "visible",
+        &json!({}),
+    );
+    run.assert_failed_with(&["missing 'visible' field"]);
 }

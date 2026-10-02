@@ -25,8 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `expected`) and `assert-contains` (`target`, `expected`). `storage-get`
   now takes `session = true` to read sessionStorage, and an optional
   `expected` that fails the step with the expected and actual values when
-  the stored value differs. The assert steps share the `assert` command's
-  checks and failure messages. [#305]
+  the stored value differs. `storage-set` fails unless the app answers
+  `{"ok": true}`. Every assert step but `assert-exists` now shares the
+  `assert` command's checks and failure messages, so `assert-text`,
+  `assert-value`, `assert-url`, `assert-visible` and `assert-hidden` fail on
+  a response without the field they read instead of defaulting it. [#305]
 
 ### Changed
 

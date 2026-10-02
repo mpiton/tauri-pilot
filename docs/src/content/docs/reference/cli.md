@@ -1796,15 +1796,17 @@ other keys depend on the action:
 | `storage-delete` | `key` | `session` |
 
 `assert-hidden` passes when a selector matches nothing, like `assert hidden`.
-`assert-checked`, `assert-unchecked`, `assert-count` and `assert-contains`
-run the same checks as `assert checked`, `assert unchecked`, `assert count`
-and `assert contains`, and fail the step with the same message.
+Every assert step but `assert-exists` runs the same check as the matching
+`assert` command (`assert-text` as `assert text`, `assert-count` as
+`assert count`, and so on) and fails the step with the same message. A
+response without the field the check reads fails the step too.
 `assert-count` takes an integer: `expected = 3`, not `expected = "3"`; every
 other `expected` is a string.
 
 The storage steps read and write localStorage, or sessionStorage with
 `session = true`. `storage-get` fails when the key is missing; with
 `expected`, it also fails when the value differs, naming both.
+`storage-set` fails unless the app answers `{"ok": true}`.
 
 `run` checks every step against this table before it connects. An unknown
 action, a missing required key, or a key the action does not read fails the

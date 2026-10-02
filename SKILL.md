@@ -236,18 +236,19 @@ and actual values.
 ```toml
 [[step]]
 action = "storage-get"
-key = "csrf_token"
+key = "theme"
 session = true
-expected = "abc123"
+expected = "dark"
 ```
 
 A `storage-set` step requires `key` and `value` and writes localStorage, or
-sessionStorage with `session = true`.
+sessionStorage with `session = true`. It fails unless the app answers
+`{"ok": true}`.
 
 `assert-checked` and `assert-unchecked` take `target`, `assert-contains`
 takes `target` and `expected`, and `assert-count` takes `selector` and an
-integer `expected` (`expected = 3`). They fail the step with the same
-message as the matching `assert` command.
+integer `expected` (`expected = 3`). Every assert step but `assert-exists`
+fails with the same message as the matching `assert` command.
 
 A `storage-delete` step (`action = "storage-delete"`) requires `key` and
 removes it from localStorage, or from sessionStorage with `session = true`.
