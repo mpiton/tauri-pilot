@@ -658,6 +658,19 @@ test("eval awaits a bare await (expr) script instead of calling a function named
   }
 });
 
+test("eval runs a bare await (expr) script once", async () => {
+  // The side effect happens before `await (1)`: retrying the async stages
+  // after stage 1's ReferenceError would run it twice (#302).
+  const pilot = loadBridge();
+  globalThis.__runs = 0;
+  try {
+    assert.equal(await pilot.eval({ script: "__runs++, await (1)" }), 1);
+    assert.equal(globalThis.__runs, 1);
+  } finally {
+    delete globalThis.__runs;
+  }
+});
+
 test("eval does not let a script close the await probe's wrapper", () => {
   // Pasted into an arrow body, this script closes it and compiles, so it was
   // taken for top-level await and returned nothing instead of failing.

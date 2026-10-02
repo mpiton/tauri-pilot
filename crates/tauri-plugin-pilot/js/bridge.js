@@ -2061,6 +2061,9 @@
   //   * both fail: a real syntax error. The text scan keeps the old routing,
   //     so a broken script with `await` still gets the auto-wrap hint.
   function hasTopLevelAwait(src) {
+    // Every branch below needs an `await` token, and the detector runs on
+    // each eval: skip its compile probes for a script without one.
+    if (!/\bawait\b/.test(src)) return false;
     var syncOk = compiles(Function, src);
     var asyncOk = compiles(AsyncFunction, src);
     if (!syncOk && asyncOk) return true;

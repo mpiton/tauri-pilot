@@ -301,7 +301,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reading and failed with `Can't find variable: await`, although the #272
   entry lists `await (expr)` as handled. The bridge now checks for top-level
   `await` before it tries the script as a plain expression. A script that
-  declares `await` itself (`var await = f; await (1)`) still calls it. [#302]
+  declares `await` in its own text (`var await = f; await (1)`) still calls
+  it; a page-level global named `await` is now awaited, not called. [#302]
 
 ### Security
 
