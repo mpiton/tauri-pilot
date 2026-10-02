@@ -1614,10 +1614,15 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 let y = o.get("y").and_then(serde_json::Value::as_f64)?;
                 Some(format!("{x},{y}"))
             });
+            // A coordinate target (`-10,20`) or offset (`-50,0`) starting with
+            // `-` reads as a flag (#325): the offset takes the equals form and
+            // `--` comes before the positionals.
             match (src, dst, offset) {
-                (Some(s), Some(d), _) => format!("tauri-pilot drag {s} {d}"),
-                (Some(s), None, Some(off)) => format!("tauri-pilot drag {s} --offset {off}"),
-                (Some(s), None, None) => format!("tauri-pilot drag {s}"),
+                (Some(s), Some(d), _) => format!("tauri-pilot drag -- {s} {d}"),
+                (Some(s), None, Some(off)) => {
+                    format!("tauri-pilot drag --offset={off} -- {s}")
+                }
+                (Some(s), None, None) => format!("tauri-pilot drag -- {s}"),
                 _ => "# drag: missing source ref/selector".to_string(),
             }
         }
@@ -2623,6 +2628,110 @@ mod tests {
         );
     }
 
+    /// Split an exported line into argv, undoing `shell_escape` quoting.
+    fn split_exported_line(line: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut current = String::new();
+        let mut in_word = false;
+        let mut in_quotes = false;
+        let mut chars = line.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\'' => {
+                    in_quotes = !in_quotes;
+                    in_word = true;
+                }
+                '\\' if !in_quotes => {
+                    current.extend(chars.next());
+                    in_word = true;
+                }
+                ' ' if !in_quotes => {
+                    if in_word {
+                        args.push(std::mem::take(&mut current));
+                        in_word = false;
+                    }
+                }
+                _ => {
+                    current.push(c);
+                    in_word = true;
+                }
+            }
+        }
+        if in_word {
+            args.push(current);
+        }
+        args
+    }
+
+    /// Parse one exported step with the real CLI parser.
+    fn parse_exported(action: &str, entry: &Value) -> Command {
+        let line = entry_to_cli_command(action, entry);
+        match Cli::try_parse_from(split_exported_line(&line)) {
+            Ok(cli) => cli.command,
+            Err(e) => panic!("exported line does not parse: {line}\n{e}"),
+        }
+    }
+
+    /// #325: every exported step with a value starting with `-` parses back
+    /// to the recorded value instead of failing on an unknown flag.
+    #[test]
+    fn test_exported_dash_values_parse_back() {
+        for value in ["-5", "-x", "--", "it's"] {
+            let Command::Fill { target, value: v } =
+                parse_exported("fill", &json!({"selector": "#qty", "value": value}))
+            else {
+                panic!("expected Fill command");
+            };
+            assert_eq!((target.as_str(), v.as_str()), ("#qty", value));
+
+            let Command::Type { target, text } =
+                parse_exported("type", &json!({"ref": "e2", "text": value}))
+            else {
+                panic!("expected Type command");
+            };
+            assert_eq!((target.as_str(), text.as_str()), ("@e2", value));
+        }
+
+        let Command::Drag {
+            source,
+            target,
+            offset,
+        } = parse_exported(
+            "drag",
+            &json!({"source": {"selector": "#card"}, "offset": {"x": -50.0, "y": 0.0}}),
+        )
+        else {
+            panic!("expected Drag command");
+        };
+        assert_eq!(source, "#card");
+        assert_eq!(target, None);
+        assert_eq!(offset.as_deref(), Some("-50,0"));
+
+        let Command::Drag {
+            source,
+            target,
+            offset,
+        } = parse_exported(
+            "drag",
+            &json!({"source": {"x": -10, "y": 20}, "target": {"selector": "#col"}}),
+        )
+        else {
+            panic!("expected Drag command");
+        };
+        assert_eq!(source, "-10,20");
+        assert_eq!(target.as_deref(), Some("#col"));
+        assert_eq!(offset, None);
+
+        let Command::Drag { source, offset, .. } = parse_exported(
+            "drag",
+            &json!({"source": {"x": -10, "y": 20}, "offset": {"x": 0.5, "y": -3.0}}),
+        ) else {
+            panic!("expected Drag command");
+        };
+        assert_eq!(source, "-10,20");
+        assert_eq!(offset.as_deref(), Some("0.5,-3"));
+    }
+
     /// #276: the export acts on the recorded selector, not the ephemeral
     /// ref, in the recorded window, and says what it cannot check.
     #[test]
@@ -2645,7 +2754,7 @@ mod tests {
             "{script}"
         );
         assert!(
-            script.contains("tauri-pilot drag '#card-1' '#col-done'\n"),
+            script.contains("tauri-pilot drag -- '#card-1' '#col-done'\n"),
             "{script}"
         );
         assert!(!script.contains("@e9"), "{script}");

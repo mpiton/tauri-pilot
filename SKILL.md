@@ -103,6 +103,10 @@ Three target formats, auto-detected:
 | `drag <source> [target] [--offset X,Y]` | `drag @e5 @e8` |
 | `drop <target> --file <path>` | `drop @e3 --file ./img.png` |
 
+A value starting with `-` reads as a flag: put `--` before it, as in
+`fill @e2 -- -5` (also `type`, `select`, and a `drag` coordinate such as
+`drag -- -10,20 @e8`); write a negative offset as `--offset=-50,0`.
+
 `fill` accepts `<input>`, `<textarea>`, `<select>`, and contenteditable
 elements. `type` accepts the same except `<select>` (use `fill` or `select`).
 Both error on anything else. `check` accepts only checkbox and radio inputs:

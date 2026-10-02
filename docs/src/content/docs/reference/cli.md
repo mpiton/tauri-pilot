@@ -731,6 +731,11 @@ tauri-pilot drag "#slider-thumb" --offset "150,0"
 tauri-pilot drag @e5 "400,200"
 ```
 
+A coordinate or offset that starts with `-` reads as a flag: write the offset
+as `--offset=-50,0` and put `--` before coordinate arguments, as in
+`tauri-pilot drag -- -10,20 "#col"`. Scripts written by `replay --export sh`
+always do this.
+
 **JSON-RPC example:**
 
 ```json
