@@ -325,6 +325,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `about:`, `data:` or `blob:` URL that leaves the window on its page says
   the navigation was cancelled or blocked, not that it did not load in time
   (`file:` keeps the timeout wording: it can sit on a network share). Other commands run on such a page drop the hint the same way. [#310]
+- `replay <file> --export sh` prints the script with no app running. The CLI
+  looked for a socket before reading the command and failed with `No
+  tauri-pilot socket found`, although the export only reads the file; the MCP
+  `pilot.replay` tool with `export` already worked offline. [#312]
 
 ### Security
 
@@ -1537,3 +1541,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#304]: https://github.com/mpiton/tauri-pilot/issues/304
 [#308]: https://github.com/mpiton/tauri-pilot/issues/308
 [#310]: https://github.com/mpiton/tauri-pilot/issues/310
+[#312]: https://github.com/mpiton/tauri-pilot/issues/312
