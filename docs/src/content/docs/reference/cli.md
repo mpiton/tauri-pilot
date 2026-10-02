@@ -1124,6 +1124,11 @@ origins that work. A start page that only changed its URL during the wait
 page that loads without a bridge fails with a "no pilot bridge answered
 there" error that names it. The "did not load" verdict is what the window
 showed when the wait ended: a slow destination may still load after it. A
+`data:` or `about:` destination does not load over the network, so a window
+still on its page fails with "did not happen" (the navigation was cancelled
+or blocked) instead. On a local page (`about:blank`, `data:`, `blob:`,
+`file:`), the "no pilot bridge" error only says to navigate
+back to an app origin: `remote.urls` cannot allow those pages. A
 slow page allowed by `remote.urls` can miss that window on its first visit;
 later commands succeed once the hello arrives. On an origin that cannot
 call back,
