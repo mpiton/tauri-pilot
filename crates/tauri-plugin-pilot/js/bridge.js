@@ -943,7 +943,7 @@
 
     // A <select>'s text is every option's text (#277), and a textbox's text is
     // its value, which the user edits (#303): a <textarea>'s default value, a
-    // contenteditable host's content, a role="textbox" widget's content.
+    // contenteditable host's content, a textbox or searchbox widget's content.
     // None of these is a name. An <input> has no text.
     if (el.tagName !== "SELECT" && !isTextboxHost(el)) {
       const text = el.textContent || "";
@@ -957,13 +957,11 @@
   }
 
   // Whether the element's text content is an editable value, not a name.
+  // ARIA defines `searchbox` as a kind of `textbox`.
   function isTextboxHost(el) {
-    return (
-      el.tagName === "TEXTAREA" ||
-      el.tagName === "INPUT" ||
-      carriesContentEditable(el) ||
-      String(el.getAttribute("role") || "").toLowerCase() === "textbox"
-    );
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || carriesContentEditable(el)) return true;
+    const role = String(el.getAttribute("role") || "").trim().toLowerCase();
+    return role === "textbox" || role === "searchbox";
   }
 
   // Text of the <label>s associated with a form control: `el.labels` covers

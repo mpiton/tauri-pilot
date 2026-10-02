@@ -255,7 +255,7 @@ e3  button    "Refresh"
 
 `options` records the capture options so `diff` can refuse a reference taken with different ones.
 
-An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt` on images, its `<label>` (wrapping or `for=`, without the text of any nested `<select>` or `<textarea>` or of hidden parts: `hidden`, `aria-hidden="true"`, `display: none`, `visibility: hidden`; a labelled button adds its own text after the label's), `title` then `placeholder` on text inputs and textareas, `placeholder` on `<select>`, its text content (never for `<select>`, whose text is its options, or for a textbox, whose text is its value: `<textarea>`, a `contenteditable` host, `role="textbox"`), then `title`. A label that is only a visual sibling, with no `for`, does not name the control.
+An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt` on images, its `<label>` (wrapping or `for=`, without the text of any nested `<select>` or `<textarea>` or of hidden parts: `hidden`, `aria-hidden="true"`, `display: none`, `visibility: hidden`; a labelled button adds its own text after the label's), `title` then `placeholder` on text inputs and textareas, `placeholder` on `<select>`, its text content (never for `<select>`, whose text is its options, or for a textbox, whose text is its value: `<textarea>`, a `contenteditable` host, `role="textbox"` or `role="searchbox"`), then `title`. A label that is only a visual sibling, with no `for`, does not name the control.
 
 Password inputs display `value=[redacted]` in human-readable output, like `forms`. The raw value stays in `--json` mode, in `--save` files and in MCP results, where the element carries `"sensitive": true`. `value @ref` still reads it.
 

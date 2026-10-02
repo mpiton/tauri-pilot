@@ -670,7 +670,7 @@ test("snapshot names a labelled textarea from its label, and an unlabelled one f
   assert.equal(titledEl.name, "Notes");
 });
 
-test("snapshot leaves an unlabelled contenteditable or role=textbox host unnamed, and keeps aria-label (#303)", () => {
+test("snapshot leaves an unlabelled contenteditable or role=textbox/searchbox host unnamed, and keeps aria-label (#303)", () => {
   // A contenteditable host's text is what the user edits, like a textarea's.
   const draft = makeEl("div", { text: "Draft text", contentEditable: "true" });
   const attrDraft = makeEl("div", { text: "Attr draft", attrs: { contenteditable: "" } });
@@ -680,10 +680,14 @@ test("snapshot leaves an unlabelled contenteditable or role=textbox host unnamed
     attrs: { "aria-label": "Message" },
   });
   const ariaBox = makeEl("div", { text: "Typed text", attrs: { role: "textbox", tabindex: "0" } });
-  const body = makeEl("body", { children: [draft, attrDraft, labelled, ariaBox] });
+  const paddedBox = makeEl("div", { text: "Padded text", attrs: { role: " textbox ", tabindex: "0" } });
+  const searchBox = makeEl("div", { text: "Search query", attrs: { role: "searchbox", tabindex: "0" } });
+  const body = makeEl("body", { children: [draft, attrDraft, labelled, ariaBox, paddedBox, searchBox] });
   const pilot = loadBridge(body);
 
-  const [draftEl, attrDraftEl, labelledEl, ariaBoxEl] = pilot.snapshot({ interactive: true }).elements;
+  const [draftEl, attrDraftEl, labelledEl, ariaBoxEl, paddedBoxEl, searchBoxEl] = pilot.snapshot({
+    interactive: true,
+  }).elements;
 
   assert.equal(draftEl.role, "textbox");
   assert.equal("name" in draftEl, false, "a contenteditable host must not be named after its text");
@@ -693,4 +697,8 @@ test("snapshot leaves an unlabelled contenteditable or role=textbox host unnamed
   assert.equal(labelledEl.name, "Message");
   assert.equal(ariaBoxEl.role, "textbox");
   assert.equal("name" in ariaBoxEl, false, "a role=textbox widget must not be named after its text");
+  assert.equal(pilot.resolve(paddedBoxEl.ref), paddedBox);
+  assert.equal("name" in paddedBoxEl, false, "a whitespace-padded role token is still textbox");
+  assert.equal(pilot.resolve(searchBoxEl.ref), searchBox);
+  assert.equal("name" in searchBoxEl, false, "a searchbox is a textbox: its text is its value");
 });
