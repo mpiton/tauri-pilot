@@ -118,6 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `assert checked`, `assert unchecked` and the MCP `assert_checked` /
+  `assert_unchecked` tools no longer blame the `checked` method when the
+  target is not a checkbox or radio. The error now reads `expected an
+  <input type="checkbox"> or <input type="radio">, got: h1`; `check` keeps
+  its `check requires ...` message. [#311]
 - `snapshot` names form controls after their `<label>`, wrapping or `for=`,
   without the text of the controls inside it. Labelled inputs and checkboxes
   came out unnamed, and a `<select>` was named after the text of all its
@@ -1475,3 +1480,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#285]: https://github.com/mpiton/tauri-pilot/issues/285
 [#276]: https://github.com/mpiton/tauri-pilot/issues/276
 [#309]: https://github.com/mpiton/tauri-pilot/issues/309
+[#311]: https://github.com/mpiton/tauri-pilot/issues/311

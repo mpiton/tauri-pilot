@@ -700,8 +700,8 @@ mod tests {
             "check must reject non-checkbox/radio targets before toggling (#154)"
         );
         assert!(
-            checked_body.contains("requireCheckable(el, \"checked\")"),
-            "checked must reject non-checkbox/radio targets so assert unchecked cannot pass on them (#286)"
+            checked_body.contains("requireCheckable(el)"),
+            "checked must reject non-checkbox/radio targets with a neutral error so assert unchecked cannot pass on them (#286, #311)"
         );
         assert!(
             editable_body
@@ -709,10 +709,10 @@ mod tests {
             "fill/type error must name the accepted elements (#154)"
         );
         assert!(
-            checkable_body.contains(
-                "action + ' requires an <input type=\"checkbox\"> or <input type=\"radio\">"
-            ),
-            "check/checked error must name the action, checkbox and radio (#154, #286)"
+            checkable_body.contains("action ? action + \" requires\" : \"expected\"")
+                && checkable_body
+                    .contains("' an <input type=\"checkbox\"> or <input type=\"radio\">"),
+            "check error must name the action, checked must stay neutral, both name checkbox and radio (#154, #286, #311)"
         );
         assert!(
             !editable_body.contains("instanceof") && !checkable_body.contains("instanceof"),
