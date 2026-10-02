@@ -47,6 +47,7 @@ function loadBridge() {
     });
   }
   let observerCb;
+  let observeOptions;
   globalThis.Node = { ELEMENT_NODE, TEXT_NODE };
   globalThis.window = { fetch() {} };
   globalThis.document = { querySelector() { return null; }, body: {} };
@@ -54,7 +55,9 @@ function loadBridge() {
     constructor(cb) {
       observerCb = cb;
     }
-    observe() {}
+    observe(_root, options) {
+      observeOptions = options;
+    }
     disconnect() {}
   };
   function XMLHttpRequestStub() {}
@@ -66,6 +69,9 @@ function loadBridge() {
     pilot: globalThis.window.__PILOT__,
     fire(mutations) {
       observerCb(mutations);
+    },
+    observeOptions() {
+      return observeOptions;
     },
   };
 }
@@ -190,6 +196,38 @@ test("watch without --require-mutation restarts the stable window on unreported 
   assert.equal(await settleWithin(pending, 70), "timeout");
   assert.deepEqual(await pending, { added: [], removed: [], modified: [], truncated: false });
 });
+
+// What `node.data = data` delivers when the observer records old values.
+function editText(node, data) {
+  const oldValue = node.textContent;
+  node.textContent = data;
+  return { type: "characterData", target: node, oldValue };
+}
+
+test("watch --require-mutation ignores a whitespace-only text edit (#304)", async () => {
+  const { pilot, fire, observeOptions } = loadBridge();
+  const node = textNode("\n  ");
+  element("DIV", [node]);
+  const pending = pilot.watch({ timeout: 30, stable: 0, requireMutation: true });
+  // The browser only fills `oldValue` when the observer asks for it.
+  assert.equal(observeOptions().characterDataOldValue, true);
+  fire([editText(node, " ")]);
+  await assert.rejects(pending, /watch timeout: no DOM changes within 30ms/);
+});
+
+for (const [kind, before, after, text] of [
+  ["text cleared to whitespace", "abc", " ", ""],
+  ["text set over whitespace", " ", "abc", "abc"],
+]) {
+  test(`watch reports an in-place edit when ${kind} (#304)`, async () => {
+    const { pilot, fire } = loadBridge();
+    const node = textNode(before);
+    element("SPAN", [node]);
+    const pending = pilot.watch({ timeout: 1000, stable: 0, requireMutation: true });
+    fire([editText(node, after)]);
+    assert.deepEqual((await pending).modified, [{ tag: "span", text }]);
+  });
+}
 
 test("watch reports only the target's own text when it mixes text and element children (#304)", async () => {
   const { pilot, fire } = loadBridge();

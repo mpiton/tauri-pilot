@@ -2366,10 +2366,12 @@
             pushCapped(changes.modified, entry);
           } else if (mutation.type === 'characterData') {
             var parent = mutation.target.parentElement;
-            if (parent) {
+            var data = mutation.target.textContent || '';
+            // Whitespace to whitespace is formatting, not a text change.
+            if (parent && (/\S/.test(data) || /\S/.test(mutation.oldValue || ''))) {
               pushCapped(changes.modified, {
                 tag: parent.tagName.toLowerCase(),
-                text: (mutation.target.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80),
+                text: data.replace(/\s+/g, ' ').trim().substring(0, 80),
               });
             }
           }
@@ -2393,6 +2395,7 @@
         subtree: true,
         attributes: true,
         characterData: true,
+        characterDataOldValue: true,
       });
     });
   }
