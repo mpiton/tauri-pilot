@@ -1290,7 +1290,7 @@ pub(crate) async fn run_replay_command(
         if let Some(warning) = &warning {
             eprintln!(
                 "{}",
-                crate::style::warn(format!("[{}/{total}] {action} {warning}", i + 1))
+                crate::output::format_replay_warning(i + 1, total, action, warning)
             );
         }
 
@@ -1402,6 +1402,12 @@ fn export_shell_script(entries: &[Value], window: Option<&str>) -> String {
 
         let refs = recording::ephemeral_refs(entry);
         if !refs.is_empty() {
+            // Refs come from the recording file: a line break would end the
+            // comment and run the rest as a command.
+            let refs: Vec<String> = refs
+                .iter()
+                .map(|r| r.replace(char::is_control, " "))
+                .collect();
             let _ = writeln!(
                 script,
                 "# step {} relies on snapshot ref {}; take the same snapshot first or re-record",
@@ -2555,5 +2561,32 @@ mod tests {
         );
         // No fingerprint in the file, so no fingerprint caveat.
         assert!(!script.contains("fingerprints"), "{script}");
+    }
+
+    /// A recording is a shared file: a line break in a ref must not end the
+    /// comment that names it and run the rest as a command.
+    #[test]
+    fn test_export_shell_script_comment_cannot_inject_a_command() {
+        let entries = [json!({
+            "action": "click", "timestamp": 0,
+            "ref": "e1\ntouch /tmp/pwned-301\r\n#",
+        })];
+        let script = export_shell_script(&entries, None);
+        let lines: Vec<&str> = script.lines().collect();
+        let comment = lines
+            .iter()
+            .position(|line| line.starts_with("# step 1 "))
+            .expect("step comment");
+        assert_eq!(
+            lines[comment],
+            "# step 1 relies on snapshot ref e1 touch /tmp/pwned-301  #; \
+             take the same snapshot first or re-record"
+        );
+        // The ref inside the single-quoted argument may span lines; what
+        // follows the comment must be that command, not the injected one.
+        assert!(
+            lines[comment + 1].starts_with("tauri-pilot click '@e1"),
+            "{script}"
+        );
     }
 }

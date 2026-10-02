@@ -105,8 +105,13 @@ fn replay_sends_each_step_to_its_recorded_window_with_its_locator() {
             "expect": {"tag": "input", "role": "radio", "name": "Pro"},
         })
     );
-    // An entry without a window goes to the default window.
-    assert!(requests[1]["params"].get("window").is_none());
+    // An entry without a window goes to the default window, with its ref and
+    // value forwarded as recorded.
+    assert_eq!(requests[1]["method"], "fill");
+    assert_eq!(
+        requests[1]["params"],
+        json!({"ref": "e5", "value": "recorded"})
+    );
 }
 
 #[test]

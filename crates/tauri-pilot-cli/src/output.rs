@@ -941,7 +941,7 @@ fn format_unstable_steps(value: &serde_json::Value) -> String {
         )
     );
     for step in steps {
-        let text = |key: &str| strip_ansi(step[key].as_str().unwrap_or("?"));
+        let text = |key: &str| one_line(step[key].as_str().unwrap_or("?"));
         let number = step["step"].as_u64().unwrap_or(0);
         let _ = write!(
             out,
@@ -951,6 +951,27 @@ fn format_unstable_steps(value: &serde_json::Value) -> String {
         );
     }
     out
+}
+
+/// Format the warning of a replay step that relies on snapshot refs (#276).
+///
+/// `action` and `warning` come from the recording file.
+/// Both are stripped of escape sequences and their line breaks become spaces,
+/// so a crafted recording cannot forge or overwrite step lines.
+pub(crate) fn format_replay_warning(
+    step: usize,
+    total: usize,
+    action: &str,
+    warning: &str,
+) -> String {
+    let action = one_line(action);
+    let warning = one_line(warning);
+    crate::style::warn(format!("[{step}/{total}] {action} {warning}"))
+}
+
+/// `input` without escape sequences, its line breaks turned into spaces.
+fn one_line(input: &str) -> String {
+    strip_ansi(input).replace(['\r', '\n'], " ")
 }
 
 /// Format a single replay step.
@@ -1252,6 +1273,39 @@ mod tests {
     fn test_format_network_non_array() {
         let output = format_network(&json!({"unexpected": true}));
         assert!(output.contains("Unexpected"));
+    }
+
+    #[test]
+    fn test_format_replay_warning_strips_escapes_and_line_breaks() {
+        // `action` and the refs in the warning come from the recording file.
+        let line = format_replay_warning(
+            1,
+            2,
+            "click\r[1/2] click \u{2192} ok",
+            "relies on snapshot ref e1\x1b]0;pwned\x07\n[2/2] fill \u{2192} ok",
+        );
+        for injected in ["pwned", "\x07", "\r", "\n"] {
+            assert!(
+                !line.contains(injected),
+                "the warning line must not carry {injected:?}: {line:?}"
+            );
+        }
+        assert!(line.contains(
+            "click [1/2] click \u{2192} ok relies on snapshot ref e1 [2/2] fill \u{2192} ok"
+        ));
+    }
+
+    #[test]
+    fn test_format_unstable_steps_replaces_line_breaks() {
+        let out = format_unstable_steps(&json!({
+            "unstable": [{"step": 1, "action": "click\rforged", "ref": "e1\n  step 9 (x): ok"}],
+        }));
+        assert!(
+            out.contains("step 1 (click forged): no stable locator for ref e1   step 9 (x): ok"),
+            "{out:?}"
+        );
+        assert!(!out.contains('\r'), "{out:?}");
+        assert_eq!(out.matches('\n').count(), 2, "{out:?}");
     }
 
     #[test]

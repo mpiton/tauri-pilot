@@ -314,6 +314,8 @@ pub(crate) mod fake {
     pub(crate) struct FakeWebviews {
         windows: Arc<Mutex<BTreeMap<String, Option<Url>>>>,
         scripts: Arc<Mutex<Vec<String>>>,
+        /// Label of the window each script in `scripts` went to.
+        script_windows: Arc<Mutex<Vec<String>>>,
         responder: Arc<Mutex<Option<FakeResponder>>>,
         /// Per-window OS focus. Missing labels report unfocused, so a `press`
         /// test cannot inject keys unless it opts in with [`Self::set_focused`].
@@ -330,6 +332,7 @@ pub(crate) mod fake {
             Self {
                 windows: Arc::clone(&self.windows),
                 scripts: Arc::clone(&self.scripts),
+                script_windows: Arc::clone(&self.script_windows),
                 responder: Arc::new(Mutex::new(None)),
                 #[cfg(feature = "press")]
                 focused: Arc::clone(&self.focused),
@@ -379,6 +382,14 @@ pub(crate) mod fake {
         /// Scripts evaluated so far, oldest first.
         pub(crate) fn scripts(&self) -> Vec<String> {
             self.scripts.lock().expect("scripts mutex").clone()
+        }
+
+        /// Label of the window each script of [`Self::scripts`] went to.
+        pub(crate) fn script_windows(&self) -> Vec<String> {
+            self.script_windows
+                .lock()
+                .expect("script windows mutex")
+                .clone()
         }
 
         /// Close the window labeled `label`. A handle already resolved keeps
@@ -477,6 +488,11 @@ pub(crate) mod fake {
                 .lock()
                 .expect("scripts mutex")
                 .push(script.to_owned());
+            self.webviews
+                .script_windows
+                .lock()
+                .expect("script windows mutex")
+                .push(self.label.clone());
             let respond = self
                 .webviews
                 .responder

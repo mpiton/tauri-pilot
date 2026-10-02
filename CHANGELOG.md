@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Recording format: `record` no longer saves only the snapshot ref of a step.
   Before the action runs, the bridge resolves the ref to a stable `selector`
-  (a unique `#id`, `[data-testid]`, `tag[name]`, or a short CSS path) and an
+  (a unique `#id`, `[data-testid]`, `tag[name]`, or a short CSS path, the
+  last only when no other element shares the tag, role and name) and an
   `expect` fingerprint (`tag`, `role`, `name`); `drag` stores both on its
   `source` and `target`. The `ref` stays for information. Each step also
   keeps its `window` label instead of dropping it, and `replay --window`

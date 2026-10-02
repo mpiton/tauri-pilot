@@ -1560,12 +1560,18 @@ while recording, each step that targets a ref (and the `source`/`target` of
 - a `selector`: the first of a unique `#id`, `[data-testid="..."]`,
   `tag[name="..."]`, or a short CSS path with `:nth-of-type`, anchored on the
   nearest ancestor with a unique id. A candidate counts only when it matches
-  this element and no other one;
+  this element and no other one. The CSS path is positional, so it is used
+  only when no other element of the page has the same tag, role and name:
+  for repeated rows with identical buttons ("Delete" on every row), a shift
+  would land on another row and still pass the fingerprint check, so such a
+  step gets no selector and `record stop` reports it;
 - an `expect` fingerprint: the element's tag, and the role and name a
   snapshot shows for it.
 
 The `ref` stays in the entry for information. This costs one extra bridge
-call per ref step, only while recording.
+call per ref step, only while recording. That call waits at most 2 seconds;
+when it gets no answer the step is saved with its ref only, and `record stop`
+reports it.
 
 #### `record stop`
 
@@ -1628,7 +1634,7 @@ find exactly one element, with the recorded fingerprint. Otherwise the step
 fails, and `replay` does not fall back to the ref:
 
 ```text
-[3/6] check → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Recorded selector fieldset > input:nth-of-type(2) found <input role="radio" name="Team">, recorded <input role="radio" name="Pro">
+[3/6] check → ✗ FAIL: RPC error (-32603): Eval error: JavaScript error: Recorded selector body > fieldset > input:nth-of-type(2) found <input role="radio" name="Team">, recorded <input role="radio" name="Pro">
 ```
 
 The name is the one a snapshot shows: the label, or the first 50 characters

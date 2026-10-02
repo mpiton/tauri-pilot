@@ -34,6 +34,13 @@ const FOCUS_POLL_MS: u64 = 5;
 static PRESS_ORDER_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Budget of the `locate` call made before each recorded ref step (#276).
+///
+/// The lookup is best effort: when it times out the step is saved ref-only
+/// and `record stop` reports it. Kept short so a slow or absent bridge
+/// cannot add [`DEFAULT_TIMEOUT`] to every recorded action; a healthy
+/// bridge answers in milliseconds.
+const LOCATE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longest fixed bound. The CLI's `DEFAULT_RPC_TIMEOUT` in
 /// `crates/tauri-pilot-cli/src/client/mod.rs` sits above it so the CLI never
 /// gives up first. The crates ship separately, so change both together.
@@ -420,7 +427,7 @@ async fn locate_for_recording(
         engine,
         webviews,
         window,
-        DEFAULT_TIMEOUT,
+        LOCATE_TIMEOUT,
     );
     located.await.ok()
 }
@@ -2876,6 +2883,8 @@ mod tests {
         // Located before the action runs: a click can remove the element.
         assert!(scripts[0].contains(r#"__PILOT__.locate({"refs":{"self":"e9"}})"#));
         assert!(scripts[1].contains("__PILOT__.check("));
+        // Refs are per window: locating in another one would read its map.
+        assert_eq!(webviews.script_windows(), ["settings", "settings"]);
 
         let entries = recorder.stop().expect("recording active");
         let entry = serde_json::to_value(&entries[0]).expect("entry serializes");
@@ -2883,6 +2892,45 @@ mod tests {
         assert_eq!(entry["selector"], "#plan-pro");
         assert_eq!(entry["expect"], fingerprint);
         assert_eq!(entry["window"], "settings");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_bounds_a_locate_the_bridge_never_answers() {
+        // `locate` is best effort: a silent bridge must not hold every
+        // recorded step for the full DEFAULT_TIMEOUT before it runs.
+        let engine = EvalEngine::new();
+        let recorder = Recorder::new();
+        recorder.start();
+        let webviews = FakeWebviews::window("main", None);
+        let seen = webviews.clone();
+        let answering = engine.clone();
+        let next = std::sync::atomic::AtomicU64::new(1);
+        let webviews = webviews.on_eval(move || {
+            let id = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let script = seen.scripts().pop().expect("script evaluated");
+            if !script.contains("__PILOT__.locate(") {
+                answering.resolve(id, Ok(json!({"ok": true})));
+            }
+        });
+        let start = tokio::time::Instant::now();
+        dispatch(
+            "click",
+            Some(&json!({"ref": "e1"})),
+            &engine,
+            &webviews,
+            &recorder,
+        )
+        .await
+        .expect("click succeeds");
+        assert!(
+            start.elapsed() <= Duration::from_secs(2),
+            "took {:?}",
+            start.elapsed()
+        );
+        // The step is still recorded, ref-only.
+        let entries = recorder.stop().expect("recording active");
+        assert_eq!(entries[0].params.get("selector"), None);
+        assert_eq!(entries[0].params["ref"], "e1");
     }
 
     #[tokio::test]

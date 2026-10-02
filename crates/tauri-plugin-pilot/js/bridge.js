@@ -1173,7 +1173,10 @@
     return steps.join(" > ");
   }
 
-  // First candidate that matches `el` and nothing else, or null.
+  // First candidate that matches `el` and nothing else, or null. The CSS
+  // path is positional, so it only identifies `el` when its fingerprint is
+  // distinctive: with a twin (identical "Delete" buttons in a list), a shift
+  // would land on the twin and still pass the check at replay.
   function stableSelector(el) {
     const tag = el.tagName.toLowerCase();
     const candidates = [];
@@ -1182,12 +1185,28 @@
     if (testId) candidates.push("[data-testid=" + cssString(testId) + "]");
     const name = el.getAttribute("name");
     if (name) candidates.push(tag + "[name=" + cssString(name) + "]");
-    candidates.push(cssPath(el));
-    return candidates.find(function (c) { return matchesOnly(c, el); }) || null;
+    const found = candidates.find(function (c) { return matchesOnly(c, el); });
+    if (found) return found;
+    if (hasFingerprintTwin(el)) return null;
+    const path = cssPath(el);
+    return matchesOnly(path, el) ? path : null;
   }
 
   function fingerprint(el) {
     return { tag: el.tagName.toLowerCase(), role: getRole(el) || null, name: getName(el) || null };
+  }
+
+  function sameFingerprint(a, b) {
+    return a.tag === b.tag && a.role === b.role && a.name === b.name;
+  }
+
+  // Whether another element of the document carries `el`'s fingerprint.
+  function hasFingerprintTwin(el) {
+    const own = fingerprint(el);
+    const sameTag = queryAll(own.tag) || [];
+    return sameTag.some(function (other) {
+      return other !== el && sameFingerprint(fingerprint(other), own);
+    });
   }
 
   function describeFingerprint(fp) {

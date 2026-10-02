@@ -102,7 +102,7 @@ const unescapeCss = (s) =>
 
 // One compound selector of the subset the locator emits.
 const COMPOUND =
-  /^(?:#((?:\\.|[^\s>[:\\])+)|([a-z][a-z0-9]*)?(?:\[([a-z-]+)="((?:\\.|[^"\\])*)"\])?(?::nth-of-type\((\d+)\))?)$/i;
+  /^(?:#((?:\\[0-9a-f]{1,6} ?|\\.|[^\s>[:\\])+)|([a-z][a-z0-9]*)?(?:\[([a-z-]+)="((?:\\.|[^"\\])*)"\])?(?::nth-of-type\((\d+)\))?)$/i;
 
 function matchesCompound(el, compound) {
   const m = COMPOUND.exec(compound);
@@ -234,6 +234,20 @@ test("locate falls back to a CSS path when the name is shared", () => {
   });
 });
 
+test("a CSS path is not recorded when another element shares the fingerprint", () => {
+  // Repeated rows carry identical buttons. A positional path to Beta's
+  // "Delete" would pass the fingerprint check on Alpha's once a row is
+  // inserted first, so the step must be reported as having no locator.
+  const row = (label) => new El("li", {}, [new El("button", {}, [], "Delete")], label);
+  const list = new El("ul", {}, [row("Alpha"), row("Beta")]);
+  const html = new El("html", {}, [new El("body", {}, [list])]);
+  const pilot = loadBridge(html);
+  const ref = pilot.snapshot({ interactive: true }).elements.filter((e) => e.name === "Delete")[1].ref;
+  assert.deepEqual(located(pilot, ref), {
+    expect: { tag: "button", role: "button", name: "Delete" },
+  });
+});
+
 test("the CSS path is anchored on the nearest ancestor with a unique id", () => {
   const p = page();
   p.fieldset.setAttribute("id", "plans");
@@ -249,6 +263,13 @@ test("ids and attribute values are CSS-escaped", () => {
   const pilot = loadBridge(p.html);
   assert.equal(located(pilot, refOf(pilot, "Email")).selector, "#user\\.email");
   assert.equal(located(pilot, refOf(pilot, "Save")).selector, '[data-testid="say \\"hi\\""]');
+});
+
+test("an id with a leading digit is escaped as a code point", () => {
+  const p = page();
+  p.email.setAttribute("id", "1st");
+  const pilot = loadBridge(p.html);
+  assert.equal(located(pilot, refOf(pilot, "Email")).selector, "#\\31 st");
 });
 
 test("attribute values with line breaks still give a valid selector", () => {
@@ -446,6 +467,16 @@ test("drag resolves a recorded source and target strictly", async () => {
   await assert.rejects(
     pilot.drag({ source: out.source, target: out.target }),
     /#email.*recorded <input role="textbox" name="Email">/,
+  );
+});
+
+test("a recorded selector the page rejects fails the step and names it", () => {
+  // A hand-edited recording: the selector does not parse.
+  const p = page();
+  const pilot = loadBridge(p.html);
+  assert.throws(
+    () => pilot.click({ selector: "[", expect: { tag: "input", role: "textbox", name: "Email" } }),
+    /Invalid recorded selector: \[/,
   );
 });
 
