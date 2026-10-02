@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   <input type="radio">, got: h1`; `check` keeps its `check requires ...`
   message. [#286] [#311]
 
+- `snapshot` no longer names a `<textarea>` after its text content, which is
+  its default value: the name no longer changes when the page sets
+  `defaultValue`, and `diff` reports a changed default as a value change on
+  the same textbox. A textarea with no `aria-label`, `aria-labelledby`,
+  `<label>`, `title` or `placeholder` is now unnamed, so `diff` against a
+  reference saved before this change reports it as removed and added. The
+  name is part of the `record` fingerprint (`expect.name`). Migration:
+  re-record steps that target such a textarea; replay fails them with a name
+  mismatch. [#303]
+
 - `tauri` floor raised from 2.11.3 to 2.12.0. `tauri-runtime` 2.12.0 changed
   its monitor and window traits, and `tauri` 2.11.3 accepts it through a caret
   requirement, so a fresh resolve of 2.11.3 no longer compiles. `tauri` 2.12.0
@@ -1478,3 +1488,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#276]: https://github.com/mpiton/tauri-pilot/issues/276
 [#309]: https://github.com/mpiton/tauri-pilot/issues/309
 [#311]: https://github.com/mpiton/tauri-pilot/issues/311
+[#303]: https://github.com/mpiton/tauri-pilot/issues/303

@@ -623,3 +623,45 @@ test("snapshot leaves an input with only a sibling label unnamed (#277)", () => 
   assert.equal(entry.role, "textbox");
   assert.equal("name" in entry, false);
 });
+
+// #303: a textarea's `textContent` is its default value, so the textContent
+// fallback named it after its initial text, which then leaked into `diff`
+// pairing and the recorder fingerprint.
+
+test("snapshot leaves a textarea with default text and no label unnamed (#303)", () => {
+  // <label>Bio</label><br><textarea>Hello world</textarea>: sibling label only.
+  const label = makeLabel(["Bio"]);
+  const bio = makeEl("textarea", {
+    attrs: { name: "bio" },
+    text: "Hello world",
+    value: "Changed bio",
+  });
+  bio.labels = [];
+  const body = makeEl("body", { children: [label, makeEl("br"), bio] });
+  const pilot = loadBridge(body);
+
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(entry.role, "textbox");
+  assert.equal("name" in entry, false, "a textarea must not be named after its default text");
+  assert.equal(entry.value, "Changed bio");
+  assert.equal(pilot.resolve(entry.ref), bio);
+});
+
+test("snapshot names a labelled textarea from its label, and an unlabelled one from title (#303)", () => {
+  const labelled = makeEl("textarea", { text: "Hello world" });
+  const label = makeLabel(["Bio ", labelled]);
+  labelled.labels = [label];
+  const titled = makeEl("textarea", {
+    attrs: { title: "Notes" },
+    text: "Draft restored from storage",
+  });
+  titled.labels = [];
+  const body = makeEl("body", { children: [label, titled] });
+  const pilot = loadBridge(body);
+
+  const [labelledEl, titledEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(labelledEl.name, "Bio");
+  assert.equal(titledEl.name, "Notes");
+});

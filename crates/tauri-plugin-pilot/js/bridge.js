@@ -941,8 +941,9 @@
       if (placeholder) return placeholder.trim().slice(0, 50);
     }
 
-    // A <select>'s text is every option's text, which is not its name (#277).
-    if (el.tagName !== "SELECT") {
+    // A <select>'s text is every option's text (#277) and a <textarea>'s text
+    // is its default value (#303): neither is a name. An <input> has no text.
+    if (el.tagName !== "SELECT" && el.tagName !== "TEXTAREA" && el.tagName !== "INPUT") {
       const text = el.textContent || "";
       const trimmed = text.replace(/\s+/g, " ").trim();
       if (trimmed) return trimmed.slice(0, 50);
