@@ -609,6 +609,7 @@ then its visible label.
 
 ```bash
 tauri-pilot select <target> <value>...
+tauri-pilot select <target> --clear
 ```
 
 On a `<select multiple>`, exactly the listed options end up selected and
@@ -623,6 +624,14 @@ A disabled `<select>` (same rules as `click`) fails with
 `<optgroup>`, fails with `select: option "<value>" is disabled` (several:
 `select: options "b", "c" are disabled`), and the selection stays as it was.
 
+`--clear` deselects every option of a `<select multiple>` and fires `input`
+then `change` once, even when nothing was selected. It takes no value, and a
+single select rejects it, since a user cannot leave one empty. Without
+`--clear`, at least one value is required, so a forgotten value fails instead
+of clearing the selection. The JSON-RPC method, the MCP tool and the TOML
+step take an empty list (`value = []`) for the same thing; recordings keep
+it, and `replay --export sh` writes it back as `--clear`.
+
 A value that starts with `-` (such as `-1`) reads as a flag; put `--` before
 the values to pass it: `tauri-pilot select "#size" -- -1`. Scripts written by
 `replay --export sh` always do this.
@@ -633,6 +642,7 @@ the values to pass it: `tauri-pilot select "#size" -- -1`. Scripts written by
 tauri-pilot select "#status-filter" "open"
 tauri-pilot select @e5 "closed"
 tauri-pilot select 'select[name=skills]' rust go
+tauri-pilot select 'select[name=skills]' --clear
 ```
 
 ---
@@ -1845,7 +1855,7 @@ other keys depend on the action:
 |--------|----------|----------|
 | `click`, `check` | `target` | |
 | `fill` | `target` | `value` |
-| `select` | `target` | `value` (a string, or a list such as `["rust", "go"]` for a `<select multiple>`) |
+| `select` | `target` | `value` (a string, or a list such as `["rust", "go"]` for a `<select multiple>`; `[]` clears the `<select multiple>`) |
 | `type` | `target` | `text` |
 | `press` | `key` | |
 | `scroll` | | `target`, `direction`, `amount` |

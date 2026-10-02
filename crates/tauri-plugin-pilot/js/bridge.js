@@ -1625,12 +1625,15 @@
     // silently yields `value=""` / `selectedIndex=-1` per the DOM spec, so
     // "set then trust" reports success on a no-op (#113). Match the option
     // first — by `value`, then by visible label — and error if none matches so
-    // a reported `ok` always means an option was actually selected.
+    // a reported `ok` always means the selection was set to exactly the
+    // requested options, or cleared when the list is empty (#327).
     // `wantedRaw` is one value or a list (#306). `fill` delegates here too, so
     // error prefixes name the command the user actually ran.
     const wanted = (Array.isArray(wantedRaw) ? wantedRaw : [wantedRaw]).map(String);
-    if (wanted.length === 0) {
-      throw new Error(command + ": no value given");
+    // An empty list clears a <select multiple> (#327): the loop below then
+    // deselects every option. A single select cannot be left empty by a user.
+    if (wanted.length === 0 && !el.multiple) {
+      throw new Error(command + ": no value given; only a <select multiple> can be cleared");
     }
     if (wanted.length > 1 && !el.multiple) {
       throw new Error(

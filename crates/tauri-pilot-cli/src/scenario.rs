@@ -212,11 +212,9 @@ impl Step {
             return Err(format!("step '{action}' does not accept '{key}'{hint}"));
         }
         match (&self.value, action) {
+            // An empty list is a `select` that clears a `<select multiple>` (#327).
             (Some(StepValue::Many(_)), _) if action != "select" => {
                 return Err(format!("step '{action}' takes one 'value', not a list"));
-            }
-            (Some(StepValue::Many(values)), _) if values.is_empty() => {
-                return Err(format!("step '{action}' requires at least one 'value'"));
             }
             _ => {}
         }
@@ -1301,11 +1299,14 @@ target = "#btn"
         );
     }
 
-    /// A list `value` is for `select` only, and never empty (#306).
+    /// A list `value` is for `select` only (#306); an empty one clears a
+    /// `<select multiple>` (#327).
     #[test]
     fn parse_scenario_checks_list_values() {
         let select = "[[step]]\naction = \"select\"\ntarget = \"#s\"\nvalue = [\"a\", \"b\"]\n";
         assert!(parse_scenario(select).is_ok());
+        let clear = "[[step]]\naction = \"select\"\ntarget = \"#s\"\nvalue = []\n";
+        assert!(parse_scenario(clear).is_ok());
         for (toml_str, want) in [
             (
                 "[[step]]\naction = \"fill\"\ntarget = \"#s\"\nvalue = [\"a\", \"b\"]\n",
@@ -1314,10 +1315,6 @@ target = "#btn"
             (
                 "[[step]]\naction = \"storage-set\"\nkey = \"k\"\nvalue = [\"a\"]\n",
                 "step 1: step 'storage-set' takes one 'value', not a list",
-            ),
-            (
-                "[[step]]\naction = \"select\"\ntarget = \"#s\"\nvalue = []\n",
-                "step 1: step 'select' requires at least one 'value'",
             ),
         ] {
             let err = parse_scenario(toml_str).expect_err("invalid value");

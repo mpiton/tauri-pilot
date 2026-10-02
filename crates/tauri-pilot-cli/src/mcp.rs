@@ -1043,7 +1043,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "select",
-            description: "Select options in a select element: one value, or a list for a <select multiple>, which ends up with exactly those options selected. Matches option values, then visible labels. Errors on an unknown value, or on a list for a single select.",
+            description: "Select options in a select element: one value, or a list for a <select multiple>, which ends up with exactly those options selected. Matches option values, then visible labels. An empty list deselects every option of a <select multiple>. Errors on an unknown value, or on a list (empty or of several values) for a single select.",
             schema: select_schema,
             read_only: false,
             destructive: false,
@@ -1493,15 +1493,16 @@ fn required_string_array(args: &JsonObject, name: &str) -> Result<Vec<String>, M
         .collect()
 }
 
-/// Read the `select` tool's `value`: a string, or a non-empty list of strings.
+/// Read the `select` tool's `value`: a string, or a list of strings.
 ///
 /// One value goes out as a string and a list as a list, as `select` on the
-/// CLI sends them (#306).
+/// CLI sends them (#306). An empty list clears a `<select multiple>`; the
+/// bridge rejects it on a single select (#327).
 fn required_select_value(args: &JsonObject) -> Result<Value, McpError> {
-    const SHAPE: &str = "'value' is required and must be a string or a non-empty array of strings";
+    const SHAPE: &str = "'value' is required and must be a string or an array of strings";
     match args.get("value") {
         Some(Value::String(value)) => Ok(json!(value)),
-        Some(Value::Array(items)) if !items.is_empty() && items.iter().all(Value::is_string) => {
+        Some(Value::Array(items)) if items.iter().all(Value::is_string) => {
             Ok(Value::Array(items.clone()))
         }
         _ => Err(invalid_params(SHAPE)),
@@ -1638,10 +1639,10 @@ fn select_schema() -> Arc<JsonObject> {
             (
                 "value",
                 json!({
-                    "description": "Option value or visible label, or a list of them for a <select multiple>.",
+                    "description": "Option value or visible label, or a list of them for a <select multiple>. An empty list deselects every option of a <select multiple>.",
                     "anyOf": [
                         {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                        {"type": "array", "items": {"type": "string"}},
                     ],
                 }),
             ),
@@ -3255,13 +3256,17 @@ path = "/tmp/out.png"
     #[tokio::test]
     #[cfg(unix)]
     async fn select_tool_forwards_a_string_or_a_list_value() {
-        for (value, sent) in [
+        for (case, (value, sent)) in [
             (json!("admin"), json!("admin")),
             (json!(["rust", "go"]), json!(["rust", "go"])),
-        ] {
+            // An empty list clears a <select multiple> (#327).
+            (json!([]), json!([])),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let socket = std::env::temp_dir().join(format!(
-                "tauri-pilot-mcp-select-{}-{}.sock",
-                sent.is_array(),
+                "tauri-pilot-mcp-select-{case}-{}.sock",
                 std::process::id()
             ));
             let _ = std::fs::remove_file(&socket);
@@ -3297,12 +3302,12 @@ path = "/tmp/out.png"
         }
     }
 
-    /// A list that is empty or holds a non-string is rejected before any
-    /// request (#306).
+    /// A list that holds a non-string, or a value that is neither a string
+    /// nor a list, is rejected before any request (#306).
     #[tokio::test]
-    async fn select_tool_rejects_an_empty_or_non_string_list() {
+    async fn select_tool_rejects_a_non_string_value() {
         let pilot = PilotMcpServer::new(Some(PathBuf::from("/nonexistent.sock")), None);
-        for value in [json!([]), json!(["rust", 3]), json!(3)] {
+        for value in [json!(["rust", 3]), json!(3)] {
             let mut args = Map::new();
             args.insert("target".to_owned(), json!("#skills"));
             args.insert("value".to_owned(), value.clone());
@@ -3315,7 +3320,8 @@ path = "/tmp/out.png"
         }
     }
 
-    /// The advertised schema lets `value` be a string or a list of strings.
+    /// The advertised schema lets `value` be a string or a list of strings,
+    /// the empty list included (#327).
     #[test]
     fn select_tool_schema_accepts_a_string_or_a_list() {
         let schema = (tool_specs()
@@ -3328,9 +3334,33 @@ path = "/tmp/out.png"
             value["anyOf"],
             json!([
                 {"type": "string"},
-                {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                {"type": "array", "items": {"type": "string"}},
             ]),
             "{value}"
+        );
+    }
+
+    /// The `select` tool and its `value` property both say that an empty
+    /// list clears a `<select multiple>` (#327).
+    #[test]
+    fn select_tool_descriptions_document_the_empty_list() {
+        let spec = tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "select")
+            .expect("select tool");
+        assert_eq!(
+            spec.description,
+            "Select options in a select element: one value, or a list for a <select multiple>, \
+             which ends up with exactly those options selected. Matches option values, then \
+             visible labels. An empty list deselects every option of a <select multiple>. \
+             Errors on an unknown value, or on a list (empty or of several values) for a single \
+             select."
+        );
+        let schema = (spec.schema)();
+        assert_eq!(
+            schema["properties"]["value"]["description"],
+            "Option value or visible label, or a list of them for a <select multiple>. An empty \
+             list deselects every option of a <select multiple>."
         );
     }
 
