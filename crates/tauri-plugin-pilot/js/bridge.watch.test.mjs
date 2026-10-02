@@ -215,6 +215,16 @@ test("watch --require-mutation ignores a whitespace-only text edit (#304)", asyn
   await assert.rejects(pending, /watch timeout: no DOM changes within 30ms/);
 });
 
+test("watch --require-mutation ignores an edit to a comment node (#304)", async () => {
+  const { pilot, fire } = loadBridge();
+  const comment = { nodeType: 8, textContent: "x", parentElement: null };
+  element("DIV", [comment]);
+  const pending = pilot.watch({ timeout: 30, stable: 0, requireMutation: true });
+  // `<!-- x -->` -> `<!-- y -->`: a characterData record on a Comment.
+  fire([editText(comment, "y")]);
+  await assert.rejects(pending, /watch timeout: no DOM changes within 30ms/);
+});
+
 for (const [kind, before, after, text] of [
   ["text cleared to whitespace", "abc", " ", ""],
   ["text set over whitespace", " ", "abc", "abc"],

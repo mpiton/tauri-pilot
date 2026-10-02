@@ -2367,8 +2367,12 @@
           } else if (mutation.type === 'characterData') {
             var parent = mutation.target.parentElement;
             var data = mutation.target.textContent || '';
-            // Whitespace to whitespace is formatting, not a text change.
-            if (parent && (/\S/.test(data) || /\S/.test(mutation.oldValue || ''))) {
+            // Comment data and whitespace-to-whitespace edits are not text
+            // changes.
+            if (
+              parent && mutation.target.nodeType === Node.TEXT_NODE &&
+              (/\S/.test(data) || /\S/.test(mutation.oldValue || ''))
+            ) {
               pushCapped(changes.modified, {
                 tag: parent.tagName.toLowerCase(),
                 text: data.replace(/\s+/g, ' ').trim().substring(0, 80),
