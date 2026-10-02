@@ -508,3 +508,19 @@ test("a plain selector without a fingerprint keeps the first-match behaviour", (
   assert.deepEqual(pilot.check({ selector: 'input[name="plan"]' }), { ok: true });
   assert.equal(p.free.checked, true);
 });
+
+test("the fingerprint of an unlabelled textarea carries no name, a titled one keeps its title (#303)", () => {
+  const bio = new El("textarea", { id: "bio" }, [], "Hello world");
+  const notes = new El("textarea", { id: "notes", title: "Notes" }, [], "Draft restored from storage");
+  const html = new El("html", {}, [new El("body", {}, [bio, notes])]);
+  const pilot = loadBridge(html);
+  const [bioEntry, notesEntry] = pilot.snapshot({ interactive: true }).elements;
+  assert.deepEqual(located(pilot, bioEntry.ref), {
+    selector: "#bio",
+    expect: { tag: "textarea", role: "textbox", name: null },
+  });
+  assert.deepEqual(located(pilot, notesEntry.ref), {
+    selector: "#notes",
+    expect: { tag: "textarea", role: "textbox", name: "Notes" },
+  });
+});

@@ -279,8 +279,10 @@ test("snapshot -i includes contenteditable, onclick attribute, and onclick prope
   const pilot = loadBridge(body);
   const interactive = pilot.snapshot({ interactive: true }).elements;
 
-  const editorEl = named(interactive, "Rich text");
-  const plainEl = named(interactive, "Plain host");
+  // Contenteditable hosts are unnamed (#303): find them by the node they resolve to.
+  const byNode = (node) => interactive.find((e) => pilot.resolve(e.ref) === node);
+  const editorEl = byNode(editor);
+  const plainEl = byNode(plaintext);
   const attrEl = named(interactive, "Attr click");
   const propEl = named(interactive, "Prop click");
   const tabEl = named(interactive, "Tab target");
@@ -288,7 +290,7 @@ test("snapshot -i includes contenteditable, onclick attribute, and onclick prope
   assert.equal(editorEl.role, "textbox");
   assert.ok(plainEl, "plaintext-only contenteditable must appear in snapshot -i");
   assert.equal(plainEl.role, "textbox");
-  const attrEditorEl = named(interactive, "Attr editor");
+  const attrEditorEl = byNode(attrEditor);
   assert.ok(attrEditorEl, "contenteditable attribute alone must appear in snapshot -i");
   assert.equal(attrEditorEl.role, "textbox");
   assert.equal(pilot.resolve(attrEditorEl.ref), attrEditor);
@@ -340,7 +342,10 @@ test("snapshot -i lists the contenteditable host, not inherited descendants (#15
   const pilot = loadBridge(body);
   const interactive = pilot.snapshot({ interactive: true }).elements;
 
-  assert.ok(named(interactive, "Editor"), "the editable host must appear");
+  // The host is unnamed (#303): find it by the node it resolves to.
+  const hostEl = interactive.find((e) => pilot.resolve(e.ref) === editor);
+  assert.ok(hostEl, "the editable host must appear");
+  assert.equal(hostEl.role, "textbox");
   assert.equal(
     named(interactive, "Inner paragraph"),
     undefined,
@@ -351,7 +356,6 @@ test("snapshot -i lists the contenteditable host, not inherited descendants (#15
     undefined,
     "contenteditable=false islands must stay out of snapshot -i",
   );
-  assert.equal(pilot.resolve(named(interactive, "Editor").ref), editor);
 });
 
 test("snapshot -i keeps an explicit-role host with tabindex=-1 and drops an unmapped -1 wrapper (#155)", () => {
@@ -664,4 +668,29 @@ test("snapshot names a labelled textarea from its label, and an unlabelled one f
 
   assert.equal(labelledEl.name, "Bio");
   assert.equal(titledEl.name, "Notes");
+});
+
+test("snapshot leaves an unlabelled contenteditable or role=textbox host unnamed, and keeps aria-label (#303)", () => {
+  // A contenteditable host's text is what the user edits, like a textarea's.
+  const draft = makeEl("div", { text: "Draft text", contentEditable: "true" });
+  const attrDraft = makeEl("div", { text: "Attr draft", attrs: { contenteditable: "" } });
+  const labelled = makeEl("div", {
+    text: "Body text",
+    contentEditable: "true",
+    attrs: { "aria-label": "Message" },
+  });
+  const ariaBox = makeEl("div", { text: "Typed text", attrs: { role: "textbox", tabindex: "0" } });
+  const body = makeEl("body", { children: [draft, attrDraft, labelled, ariaBox] });
+  const pilot = loadBridge(body);
+
+  const [draftEl, attrDraftEl, labelledEl, ariaBoxEl] = pilot.snapshot({ interactive: true }).elements;
+
+  assert.equal(draftEl.role, "textbox");
+  assert.equal("name" in draftEl, false, "a contenteditable host must not be named after its text");
+  assert.equal(pilot.resolve(draftEl.ref), draft);
+  assert.equal(attrDraftEl.role, "textbox");
+  assert.equal("name" in attrDraftEl, false, "the contenteditable attribute alone must not name the host either");
+  assert.equal(labelledEl.name, "Message");
+  assert.equal(ariaBoxEl.role, "textbox");
+  assert.equal("name" in ariaBoxEl, false, "a role=textbox widget must not be named after its text");
 });

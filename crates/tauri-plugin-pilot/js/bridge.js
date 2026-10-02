@@ -941,9 +941,11 @@
       if (placeholder) return placeholder.trim().slice(0, 50);
     }
 
-    // A <select>'s text is every option's text (#277) and a <textarea>'s text
-    // is its default value (#303): neither is a name. An <input> has no text.
-    if (el.tagName !== "SELECT" && el.tagName !== "TEXTAREA" && el.tagName !== "INPUT") {
+    // A <select>'s text is every option's text (#277), and a textbox's text is
+    // its value, which the user edits (#303): a <textarea>'s default value, a
+    // contenteditable host's content, a role="textbox" widget's content.
+    // None of these is a name. An <input> has no text.
+    if (el.tagName !== "SELECT" && !isTextboxHost(el)) {
       const text = el.textContent || "";
       const trimmed = text.replace(/\s+/g, " ").trim();
       if (trimmed) return trimmed.slice(0, 50);
@@ -952,6 +954,16 @@
     const title = el.getAttribute("title");
     if (title && title.trim()) return title.trim().slice(0, 50);
     return null;
+  }
+
+  // Whether the element's text content is an editable value, not a name.
+  function isTextboxHost(el) {
+    return (
+      el.tagName === "TEXTAREA" ||
+      el.tagName === "INPUT" ||
+      carriesContentEditable(el) ||
+      String(el.getAttribute("role") || "").toLowerCase() === "textbox"
+    );
   }
 
   // Text of the <label>s associated with a form control: `el.labels` covers

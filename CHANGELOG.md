@@ -49,15 +49,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   <input type="radio">, got: h1`; `check` keeps its `check requires ...`
   message. [#286] [#311]
 
-- `snapshot` no longer names a `<textarea>` after its text content, which is
-  its default value: the name no longer changes when the page sets
-  `defaultValue`, and `diff` reports a changed default as a value change on
-  the same textbox. A textarea with no `aria-label`, `aria-labelledby`,
-  `<label>`, `title` or `placeholder` is now unnamed, so `diff` against a
+- `snapshot` no longer names a textbox after its text content, which is its
+  value: the default value of a `<textarea>`, the content of a
+  `contenteditable` host or of a `role="textbox"` widget. The name no longer
+  changes when the page sets `defaultValue` or the user edits the text, and
+  `diff` reports the change as a value change on the same textbox. Such a
+  textbox with no `aria-label`, `aria-labelledby`, `<label>` or (for a
+  `<textarea>`) `title` or `placeholder` is now unnamed, so `diff` against a
   reference saved before this change reports it as removed and added. The
   name is part of the `record` fingerprint (`expect.name`). Migration:
-  re-record steps that target such a textarea; replay fails them with a name
-  mismatch. [#303]
+  re-record steps that target such a textbox; replay fails them with a name
+  mismatch. New recordings of two or more such textboxes of the same tag with
+  no `id`, `data-testid` or `name` attribute in the same scope now get no
+  selector, since nothing tells them apart, and `record stop` lists them as
+  having no stable locator; give them a label, an `id` or a `data-testid`.
+  [#303]
 
 - `tauri` floor raised from 2.11.3 to 2.12.0. `tauri-runtime` 2.12.0 changed
   its monitor and window traits, and `tauri` 2.11.3 accepts it through a caret
