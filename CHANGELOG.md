@@ -166,8 +166,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Migration: scripts that find such a select by `role == "combobox"` must
   match `listbox`, and a `diff --ref` against a snapshot saved before this
   change reports the select as removed and re-added. [#307]
+- The human-readable `snapshot` tree cuts any value longer than 50
+  characters, like a name, and ends it with `…`. This covers every element,
+  not only the contenteditable and textbox hosts that now report their text
+  as a value: a long `<input>` or `<textarea>` value (a URL, a token) was
+  printed whole before. `--json`, `--save` files, MCP results, `diff`,
+  `value`, `assert value` and `forms` keep the full value. Migration: read a
+  full value with `snapshot --json`, `value <target>` or `forms`. [#326]
 
 ### Fixed
+
+- `snapshot`, `diff`, `value` and `assert value` report the text of a
+  `contenteditable` host or a `role="textbox"` / `role="searchbox"` widget,
+  with whitespace collapsed, as its value. Paragraphs and `<br>` breaks read
+  as one space (`<p>Hello</p><p>World</p>` is `Hello World`), and `value` on
+  an element inside a contenteditable host, which `fill` accepts, reads its
+  text too. Since #303 these elements were printed as
+  `- textbox [ref=e1]` with neither name nor value, `diff` missed any change
+  to their content, and `value` returned `""` right after a `fill` that
+  worked. The text is still not their name, so the `record` fingerprint is
+  unchanged and older recordings replay as before. `diff --ref` against a
+  snapshot saved before this change reports each such element whose text is
+  not empty as changed (`value: "" → "..."`). Migration: re-save the
+  reference with the current version. [#326]
 
 - `watch` reports text replaced with `textContent` or `innerText` as a text
   change on the element (`{"tag": "div", "text": "..."}`, the shape an
@@ -1579,3 +1600,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#312]: https://github.com/mpiton/tauri-pilot/issues/312
 [#306]: https://github.com/mpiton/tauri-pilot/issues/306
 [#325]: https://github.com/mpiton/tauri-pilot/issues/325
+[#326]: https://github.com/mpiton/tauri-pilot/issues/326

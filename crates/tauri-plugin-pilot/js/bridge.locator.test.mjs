@@ -619,3 +619,17 @@ test("the fingerprint of an unlabelled textarea carries no name, a titled one ke
     expect: { tag: "textarea", role: "textbox", name: "Notes" },
   });
 });
+
+test("the fingerprint of a contenteditable host carries neither its text nor its value (#326)", () => {
+  // The value is what a recorded `fill` changes: a fingerprint holding it
+  // would stop matching the element once the step had run.
+  const editor = new El("div", { id: "editor", contenteditable: "true" }, [], "Draft text");
+  const html = new El("html", {}, [new El("body", {}, [editor])]);
+  const pilot = loadBridge(html);
+  const [entry] = pilot.snapshot({ interactive: true }).elements;
+  assert.equal(entry.value, "Draft text");
+  assert.deepEqual(located(pilot, entry.ref), {
+    selector: "#editor",
+    expect: { tag: "div", role: "textbox", name: null },
+  });
+});

@@ -257,6 +257,8 @@ e3  button    "Refresh"
 
 An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt` on images, its `<label>` (wrapping or `for=`, without the text of any nested `<select>` or `<textarea>` or of hidden parts: `hidden`, `aria-hidden="true"`, `display: none`, `visibility: hidden`; a labelled button adds its own text after the label's), `title` then `placeholder` on text inputs and textareas, `placeholder` on `<select>`, its text content (never for `<select>`, whose text is its options, or for a textbox, whose text is its value: `<textarea>`, a `contenteditable` host, `role="textbox"` or `role="searchbox"`), then `title`. A label that is only a visual sibling, with no `for`, does not name the control.
 
+A textbox that is not a form control (a `contenteditable` host, `role="textbox"` or `role="searchbox"`) reports its text, whitespace collapsed, as its `value`, so a rich-text editor's content shows up in the snapshot and in `diff`. The human-readable tree cuts a value after 50 characters, like a name, and ends it with `…`; `--json`, `--save` files, MCP results, `diff`, `value` and `assert value` keep the full value.
+
 Password inputs display `value=[redacted]` in human-readable output, like `forms`. The raw value stays in `--json` mode, in `--save` files and in MCP results, where the element carries `"sensitive": true`. `value @ref` still reads it.
 
 The `sensitive` flag is set by the app's bridge, so masking needs both the CLI and the app's `tauri-plugin-pilot` at this version or later; they need not match each other. Against an app built with an older plugin, `snapshot` prints the password in clear.
@@ -366,7 +368,7 @@ tauri-pilot assert <subcommand> [args...]
 | `text` | `<target> <expected>` | Assert exact text content match |
 | `visible` | `<target>` | Assert element is visible |
 | `hidden` | `<target>` | Assert element is hidden; a selector that matches nothing passes |
-| `value` | `<target> <expected>` | Assert input/textarea/select value |
+| `value` | `<target> <expected>` | Assert input/textarea/select value, or a contenteditable / textbox host's text with whitespace collapsed |
 | `count` | `<selector> <expected>` | Assert number of elements matching CSS selector |
 | `checked` | `<target>` | Assert checkbox/radio is checked |
 | `unchecked` | `<target>` | Assert checkbox/radio is not checked |
@@ -472,7 +474,8 @@ Contenteditable hosts (Tiptap, ProseMirror, and the like) are filled by
 selecting the target's contents and calling `insertText` so the editor
 document updates. If `insertText` is unavailable, fill assigns `textContent`
 instead, which does not update those editors. Read the result with `text` /
-`assert text`, not `value`.
+`assert text`, or with `value` / `assert value`, which read the host's text
+with whitespace collapsed.
 
 Throws if the target cannot take a value (for example a plain `<div>`). A
 reported `ok` means the value was written.
@@ -501,7 +504,8 @@ Type text into an `<input>`, `<textarea>`, or contenteditable element without
 clearing existing content first. Same target rules as `fill`, except
 `<select>` is rejected — use `fill` or `select`. Contenteditable typing also
 tries `insertText` first and falls back to `textContent`; read the result
-with `text` / `assert text`.
+with `text` / `assert text`, or `value` / `assert value` (text with whitespace
+collapsed).
 
 ```bash
 tauri-pilot type <target> <text>
@@ -875,6 +879,13 @@ tauri-pilot html
 ### `value`
 
 Get the current value of an input, textarea, or select element.
+
+A `contenteditable` host or a `role="textbox"` / `role="searchbox"` widget
+reports its text with whitespace collapsed (`text` returns the raw
+`textContent`). Its paragraphs and `<br>` line breaks become one space, so
+`<p>Hello</p><p>World</p>` reads `Hello World`. An element inside a
+contenteditable host (a paragraph `fill` accepts) reads its own text the same
+way. The full value is returned, never cut.
 
 For a `<select multiple>`, every selected option is joined with `", "`
 (the same display `forms` uses). A single-select is unchanged.

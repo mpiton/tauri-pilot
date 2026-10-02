@@ -185,7 +185,7 @@ fn write_snapshot(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::
         let _ = write!(line, " {}", crate::style::dim(format!("[ref={ref}]")));
 
         if let Some(val) = el.get("value").and_then(serde_json::Value::as_str) {
-            let shown = display_value(val, is_sensitive(el));
+            let shown = display_value(&cut_value(val), is_sensitive(el));
             let _ = write!(line, " {}", crate::style::dim(format!("value={shown}")));
         }
         if el.get("checked").and_then(serde_json::Value::as_bool) == Some(true) {
@@ -198,6 +198,24 @@ fn write_snapshot(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::
         writeln!(out, "{line}")?;
     }
     Ok(())
+}
+
+/// Characters of a value the snapshot tree shows.
+///
+/// The same length as the 50 the bridge keeps of a name, so a rich-text
+/// editor, whose whole document is its value (#326), stays one readable line.
+/// Counted in Unicode scalar values (the bridge counts UTF-16 code units), so
+/// the cut never splits a code point but may split a multi-code-point
+/// grapheme such as a ZWJ emoji; the shown line is a preview only.
+/// `--json`, `--save`, `diff`, `value` and `assert value` keep the full value.
+const SNAPSHOT_VALUE_CHARS: usize = 50;
+
+/// First [`SNAPSHOT_VALUE_CHARS`] characters of `value`, plus `…` when cut.
+fn cut_value(value: &str) -> std::borrow::Cow<'_, str> {
+    match value.char_indices().nth(SNAPSHOT_VALUE_CHARS) {
+        Some((end, _)) => format!("{}…", &value[..end]).into(),
+        None => value.into(),
+    }
 }
 
 /// Placeholder printed instead of a password value in text output.
@@ -1138,6 +1156,49 @@ mod tests {
             text.contains("value=\"user@example.com\""),
             "plain value lost: {text}"
         );
+    }
+
+    #[test]
+    fn test_snapshot_text_cuts_long_value_at_name_length() {
+        // #326: a rich-text editor's whole document is its value; the text
+        // tree shows its first 50 characters, like a name. A cut value ends
+        // in `…`, so it does not pass for the full value.
+        let long = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do";
+        let fifty = "Lorem ipsum dolor sit amet, consectetur adipiscing";
+        let exact = "ééééééééééééééééééééééééééééééééééééééééééééééééé!";
+        let snapshot = json!({
+            "elements": [
+                {"ref": "e1", "role": "textbox", "depth": 0, "value": long},
+                {"ref": "e2", "role": "textbox", "depth": 0, "value": exact},
+                {"ref": "e3", "role": "textbox", "depth": 0, "value": long, "sensitive": true},
+            ]
+        });
+        let text = strip_ansi(&snapshot_text(&snapshot));
+        assert!(
+            text.contains(&format!("[ref=e1] value=\"{fifty}…\"\n")),
+            "long value not cut: {text}"
+        );
+        assert!(
+            text.contains(&format!("[ref=e2] value=\"{exact}\"\n")),
+            "a 50-character value must stay whole: {text}"
+        );
+        assert!(
+            text.contains("[ref=e3] value=[redacted]\n"),
+            "a long password must stay masked: {text}"
+        );
+    }
+
+    #[test]
+    fn test_diff_text_keeps_long_value_whole() {
+        // #326: only the snapshot tree cuts values; diff shows what changed.
+        let long = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do";
+        let diff = json!({
+            "added": [{"ref": "e1", "role": "textbox", "depth": 0, "value": long}],
+            "removed": [],
+            "changed": [],
+        });
+        let text = strip_ansi(&diff_text(&diff));
+        assert!(text.contains(long), "diff cut the value: {text}");
     }
 
     /// Collects writes and fails once `limit` lines have been accepted.

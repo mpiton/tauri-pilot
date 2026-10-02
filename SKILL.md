@@ -86,7 +86,7 @@ Three target formats, auto-detected:
 | `diff --ref file.snap` | Diff against a saved snapshot. Pass the same `-i`/`-s`/`-d` as the snapshot, or `diff` refuses (a file saved by 0.7.3 or earlier records no options: diffed with a warning) |
 | `text <target>` | Get text content |
 | `html [target]` | Get innerHTML (page if no target) |
-| `value <target>` | Get input/select value (multi-select: all selected, joined with `, `) |
+| `value <target>` | Get input/select value (multi-select: all selected, joined with `, `; contenteditable / textbox host or a child of a contenteditable host: its text, whitespace collapsed) |
 | `attrs <target>` | Get all attributes |
 
 ### Interaction
@@ -116,7 +116,8 @@ with `assert checked` or `assert unchecked`.
 
 On contenteditable, fill/type try `insertText` first so Tiptap/ProseMirror
 see the write, then fall back to `textContent`. Read the result with `text`
-/ `assert text`, not `value`.
+/ `assert text`, or `value` / `assert value` (the text, whitespace collapsed).
+The text `snapshot` tree cuts values after 50 characters; `--json` keeps them whole.
 
 `drag` emits an HTML5 drag sequence *and* a real press → interpolated
 `pointermove`/`mousemove` stream → release, so it drives both native

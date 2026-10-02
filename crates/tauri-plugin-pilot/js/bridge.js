@@ -1939,17 +1939,36 @@
   // so the string matches the `forms` CLI (`skills = "rust, js"`). An `<li>`
   // reports its `value` attribute as written: `HTMLLIElement.value` reflects
   // it as a `long` and reads `0` when it is absent, empty, or not an integer,
-  // even in an `<ol>` (#162). Other elements keep their IDL `.value`.
+  // even in an `<ol>` (#162). A textbox with no IDL `.value` (a
+  // contenteditable host, a `role=textbox` or `role=searchbox` widget) reports
+  // its text, whitespace collapsed, as its value (#326). A form control keeps
+  // its IDL `.value` whatever its role or contenteditable state.
   function elementValue(el) {
     if (!el) return undefined;
     const tag = String(el.tagName || "").toLowerCase();
     if (tag === "select" && el.multiple) return selectedOptionValues(el).join(", ");
     if (tag === "li") return el.getAttribute("value") || undefined;
+    if (el.value === undefined && isTextboxHost(el)) return editableText(el);
     return el.value;
   }
 
+  // Text of an editable element, whitespace collapsed. `innerText` is
+  // layout-aware: it puts a newline between block children (each paragraph
+  // of ProseMirror / Tiptap / Lexical) and for a `<br>`, where `textContent`
+  // glues the words together. `textContent` stays the fallback when
+  // `innerText` is not a string.
+  function editableText(el) {
+    const raw = typeof el.innerText === "string" ? el.innerText : el.textContent;
+    return String(raw || "").replace(/\s+/g, " ").trim();
+  }
+
+  // `fill` / `type` accept a child of a contenteditable host (inherited
+  // editability), so `value` on that child reads its text too. The snapshot
+  // keeps using `elementValue`, so child paragraphs never get a value there.
   function value(params) {
-    return elementValue(resolveTarget(params)) || "";
+    const el = resolveTarget(params);
+    if (el && el.value === undefined && isContentEditable(el)) return editableText(el);
+    return elementValue(el) || "";
   }
 
   function attrs(params) {
