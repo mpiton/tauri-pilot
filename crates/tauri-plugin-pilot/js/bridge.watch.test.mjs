@@ -129,6 +129,84 @@ test("watch records one text change per target per batch (#304)", async () => {
   assert.deepEqual((await pending).modified, [{ tag: "div", text: "c" }]);
 });
 
+test("watch --require-mutation keeps waiting past mutations it does not report (#304)", async () => {
+  const { pilot, fire } = loadBridge();
+  const div = element("DIV");
+  const pending = pilot.watch({ timeout: 1000, stable: 0, requireMutation: true });
+  // Blank text on an empty element, then a comment node (e.g. Vue's
+  // `<!--v-if-->`): neither yields a summary entry.
+  fire([replaceText(div, "   ")]);
+  fire([{ type: "childList", target: div, addedNodes: [{ nodeType: 8, textContent: "v-if" }], removedNodes: [] }]);
+  const early = await Promise.race([
+    pending.then((changes) => JSON.stringify(changes)),
+    new Promise((resolve) => setTimeout(() => resolve("pending"), 20)),
+  ]);
+  assert.equal(early, "pending", "watch settled on mutations it does not report");
+  fire([replaceText(div, "ready")]);
+  assert.deepEqual(await pending, {
+    added: [],
+    removed: [],
+    modified: [{ tag: "div", text: "ready" }],
+    truncated: false,
+  });
+});
+
+test("watch --require-mutation times out when only unreported mutations happen (#304)", async () => {
+  const { pilot, fire } = loadBridge();
+  const div = element("DIV");
+  const pending = pilot.watch({ timeout: 30, stable: 0, requireMutation: true });
+  fire([replaceText(div, "   ")]);
+  await assert.rejects(pending, /watch timeout: no DOM changes within 30ms/);
+});
+
+// Resolves to the summary, or to "timeout" when `ms` passes first. The watch
+// timeout resolves too once anything was recorded, so these tests use a long
+// watch timeout and a short race to prove the stable timer armed.
+function settleWithin(pending, ms) {
+  return Promise.race([pending, new Promise((resolve) => setTimeout(() => resolve("timeout"), ms))]);
+}
+
+for (const [kind, record] of [
+  ["an added element", (div) => ({ type: "childList", target: div, addedNodes: [element("SPAN")], removedNodes: [] })],
+  ["a removed element", (div) => ({ type: "childList", target: div, addedNodes: [], removedNodes: [element("SPAN")] })],
+  ["a text change", (div) => replaceText(div, "x")],
+]) {
+  test(`watch --require-mutation settles on the stable window after ${kind} (#304)`, async () => {
+    const { pilot, fire } = loadBridge();
+    const div = element("DIV");
+    const pending = pilot.watch({ timeout: 5000, stable: 0, requireMutation: true });
+    fire([record(div)]);
+    assert.notEqual(await settleWithin(pending, 200), "timeout");
+  });
+}
+
+test("watch without --require-mutation restarts the stable window on unreported mutations", async () => {
+  const { pilot, fire } = loadBridge();
+  const div = element("DIV");
+  const pending = pilot.watch({ timeout: 5000, stable: 100 });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  fire([replaceText(div, "   ")]);
+  // Without the restart the window would close at 100ms.
+  assert.equal(await settleWithin(pending, 70), "timeout");
+  assert.deepEqual(await pending, { added: [], removed: [], modified: [], truncated: false });
+});
+
+test("watch reports only the target's own text when it mixes text and element children (#304)", async () => {
+  const { pilot, fire } = loadBridge();
+  const oldChildren = [textNode("Count: "), element("B", [textNode("3")]), textNode(" items")];
+  const newChildren = [textNode("Count: "), element("B", [textNode("4")]), textNode(" items")];
+  const p = element("P", newChildren);
+  const pending = pilot.watch({ timeout: 1000, stable: 0, requireMutation: true });
+  // `p.innerHTML = "Count: <b>4</b> items"` over "Count: <b>3</b> items".
+  fire([{ type: "childList", target: p, addedNodes: newChildren, removedNodes: oldChildren }]);
+  assert.deepEqual(await pending, {
+    added: [{ tag: "b", text: "4" }],
+    removed: [{ tag: "b", text: "3" }],
+    modified: [{ tag: "p", text: "Count: items" }],
+    truncated: false,
+  });
+});
+
 test("watch still reports added and removed elements, not their parent's text", async () => {
   const { pilot, fire } = loadBridge();
   const span = element("SPAN", [textNode("x")], "added-span");

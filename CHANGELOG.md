@@ -148,7 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Whitespace-only text nodes around added or removed elements do not count.
   It kept only elements from added and removed nodes, so
   `watch --require-mutation` ended on the change and then printed
-  "No DOM changes detected." [#304]
+  "No DOM changes detected." `--require-mutation` now also keeps waiting
+  through mutations that add nothing to the summary (whitespace-only text,
+  comment nodes), until a reported change or the timeout. [#304]
 
 - `snapshot` names form controls after their `<label>`, wrapping or `for=`,
   without the text of the controls inside it. Labelled inputs and checkboxes

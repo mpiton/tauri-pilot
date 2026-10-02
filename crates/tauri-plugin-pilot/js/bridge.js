@@ -2289,6 +2289,11 @@
         res(changes);
       }
 
+      function hasChanges() {
+        return changes.added.length > 0 || changes.removed.length > 0 ||
+          changes.modified.length > 0;
+      }
+
       function resetStableTimer() {
         clearTimeout(stableTimer);
         stableTimer = setTimeout(finish, stable);
@@ -2376,6 +2381,10 @@
             text: directText(textTarget),
           });
         }
+        // With requireMutation, mutations that add no entry (blank text,
+        // comments, detached characterData) must not end the wait: the
+        // summary would be empty (#304).
+        if (requireMutation && !hasChanges()) return;
         resetStableTimer();
       });
 
