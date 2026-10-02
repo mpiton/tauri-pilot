@@ -322,9 +322,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tell the user to allow the origin in a capability's `remote.urls`, which
   only takes remote URL patterns: they only point back to the origins whose
   bridge said hello. The hint stays for other pages. A `navigate` to an
-  `about:`, `data:`, `blob:` or `file:` URL that leaves the window on its page
-  says the navigation was cancelled or blocked, not that it did not load in
-  time. Other commands run on such a page drop the hint the same way. [#310]
+  `about:`, `data:` or `blob:` URL that leaves the window on its page says
+  the navigation was cancelled or blocked, not that it did not load in time
+  (`file:` keeps the timeout wording: it can sit on a network share). Other commands run on such a page drop the hint the same way. [#310]
 
 ### Security
 

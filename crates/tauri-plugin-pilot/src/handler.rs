@@ -1039,7 +1039,7 @@ async fn await_departure(engine: &EvalEngine, id: u64, rx: ReplyReceiver) -> Res
 /// Fails when no hello arrives in time. If the window never left its
 /// document (see [`never_left`]), the error says the navigation did not
 /// load in time (a refused connection keeps the old document, #278) or,
-/// for a local destination (see [`is_local_scheme`]), that it was
+/// for an in-memory destination (see [`is_in_memory_scheme`]), that it was
 /// cancelled or blocked (#310).
 /// Otherwise it says no bridge answered on the page the window shows,
 /// naming it when it is not `dest`.
@@ -1103,10 +1103,10 @@ fn never_left(engine: &EvalEngine, page: Option<&tauri::Url>, now: &tauri::Url) 
 /// Error for a cross-origin navigate whose window never left `page`.
 ///
 /// The destination did not load in time (#278), so the "allow this origin
-/// in `remote.urls`" hint of [`no_bridge_error`] does not apply. A local
-/// destination (see [`is_local_scheme`]) does not load over the network,
-/// so a timeout cannot explain it: the error says the navigation was
-/// cancelled or blocked (#310). When `page` has no bridge, the error still
+/// in `remote.urls`" hint of [`no_bridge_error`] does not apply. An
+/// in-memory destination (see [`is_in_memory_scheme`]) cannot be slow, so a
+/// timeout cannot explain it: the error says the navigation was cancelled
+/// or blocked (#310). When `page` has no bridge, the error still
 /// names the origins that work.
 fn dest_not_loaded_error(
     engine: &EvalEngine,
@@ -1120,7 +1120,7 @@ fn dest_not_loaded_error(
         let origins = engine.bridge_origins().join(", ");
         format!(". Bridge commands only work on {origins}: navigate back there")
     };
-    let message = if is_local_scheme(dest) {
+    let message = if is_in_memory_scheme(dest) {
         format!(
             "navigate to {dest} did not happen: the window still shows {page} after \
              {limit:?}, so the navigation was cancelled or blocked{way_back}"
@@ -1405,13 +1405,21 @@ fn no_bridge_error(engine: &EvalEngine, page: &tauri::Url, what: &str) -> RpcErr
     }
 }
 
-/// Whether `url` is a local page that does not load over the network.
+/// Whether `url` is a local page that `remote.urls` cannot allow.
 ///
-/// `about:`, `data:`, `blob:` and `file:` pages are built or read by the
-/// webview itself: `remote.urls` cannot allow them, and a navigation to one
-/// that never happened was cancelled or blocked rather than slow (#310).
+/// `remote.urls` only takes remote URL patterns, so it cannot give a bridge
+/// to an in-memory page (see [`is_in_memory_scheme`]) or a `file:` page.
 fn is_local_scheme(url: &tauri::Url) -> bool {
-    matches!(url.scheme(), "about" | "data" | "blob" | "file")
+    is_in_memory_scheme(url) || url.scheme() == "file"
+}
+
+/// Whether `url` is built by the webview from memory, with no I/O.
+///
+/// An `about:`, `data:` or `blob:` navigation cannot be slow, so one that
+/// never happened was cancelled or blocked (#310). `file:` is left out: it
+/// can point at a network share and load slowly.
+fn is_in_memory_scheme(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "about" | "data" | "blob")
 }
 
 /// Build a `window.__PILOT__.<method>(params)` JS call string.
@@ -3702,33 +3710,55 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_dispatch_navigate_file_and_blob_urls_never_left_report_blocked() {
-        // #310: `file:` and `blob:` do not load over the network either, so
-        // a window still on the page was refused, not slow.
-        for dest in ["file:///tmp/a.html", "blob:tauri://localhost/0"] {
-            let engine = engine_with_app_bridge();
-            let engine_clone = engine.clone();
-            let webviews = FakeWebviews::window("main", Some(APP_PAGE))
-                .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
+    async fn test_dispatch_navigate_blob_url_never_left_reports_blocked() {
+        // #310: a `blob:` URL is served from memory, so a window still on
+        // the page was refused, not slow.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
 
-            let err = dispatch(
-                "navigate",
-                Some(&json!({ "url": dest })),
-                &engine,
-                &webviews,
-                &Recorder::new(),
-            )
-            .await
-            .expect_err("a blocked local navigation must not report ok");
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "blob:tauri://localhost/0"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a blocked blob: navigation must not report ok");
 
-            assert_eq!(
-                err.message,
-                format!(
-                    "navigate to {dest} did not happen: the window still shows \
-                     tauri://localhost/ after 3s, so the navigation was cancelled or blocked"
-                )
-            );
-        }
+        assert_eq!(
+            err.message,
+            "navigate to blob:tauri://localhost/0 did not happen: the window still shows \
+             tauri://localhost/ after 3s, so the navigation was cancelled or blocked"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_file_url_never_left_reports_not_loaded() {
+        // #310 review: a `file:` URL can sit on a network share and load
+        // slowly, so a window still on the page keeps the timeout verdict.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+            .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "file:///tmp/a.html"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a file: navigation that never left the page must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to file:///tmp/a.html did not load in time: the window still shows \
+             tauri://localhost/ after 3s"
+        );
     }
 
     #[tokio::test(start_paused = true)]
