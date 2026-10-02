@@ -202,8 +202,11 @@ fn write_snapshot(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::
 
 /// Characters of a value the snapshot tree shows.
 ///
-/// Matches the 50 characters the bridge keeps of a name, so a rich-text
+/// The same length as the 50 the bridge keeps of a name, so a rich-text
 /// editor, whose whole document is its value (#326), stays one readable line.
+/// Counted in Unicode scalar values (the bridge counts UTF-16 code units), so
+/// the cut never splits a code point but may split a multi-code-point
+/// grapheme such as a ZWJ emoji; the shown line is a preview only.
 /// `--json`, `--save`, `diff`, `value` and `assert value` keep the full value.
 const SNAPSHOT_VALUE_CHARS: usize = 50;
 

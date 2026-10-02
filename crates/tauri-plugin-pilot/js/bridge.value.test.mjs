@@ -230,6 +230,48 @@ test("value of a plain div stays empty (#326)", () => {
   assert.equal(loadBridge({ queryResult: el }).value({ selector: "div" }), "");
 });
 
+test("value of a host keeps block and <br> breaks from innerText (#326)", () => {
+  // `<p>Hello</p><p>World</p>` and `Hello<br>World`: textContent glues the
+  // words, the layout-aware innerText separates them with a newline.
+  const blocks = makeHost({ contentEditable: "true", text: "HelloWorld" });
+  blocks.innerText = "Hello\n\nWorld";
+  const br = makeHost({ contentEditable: "true", text: "HelloWorld" });
+  br.innerText = "Hello\nWorld";
+  assert.equal(loadBridge({ queryResult: blocks }).value({ selector: "#ce1" }), "Hello World");
+  assert.equal(loadBridge({ queryResult: br }).value({ selector: "#ce2" }), "Hello World");
+  const { elements } = loadBridge({ body: makeBody([blocks]) }).snapshot({ interactive: true });
+  assert.equal(elements[0].value, "Hello World");
+});
+
+test("value of an attribute-only or plaintext-only contenteditable host is its text (#326)", () => {
+  const attrOnly = makeHost({ _attrs: { contenteditable: "" }, text: "a  b" });
+  const plain = makeHost({ contentEditable: "plaintext-only", text: " c \n d " });
+  assert.equal(loadBridge({ queryResult: attrOnly }).value({ selector: "#ce1" }), "a b");
+  assert.equal(loadBridge({ queryResult: plain }).value({ selector: "#ce2" }), "c d");
+  const { elements } = loadBridge({ body: makeBody([attrOnly, plain]) }).snapshot({
+    interactive: true,
+  });
+  assert.deepEqual(
+    elements.map((e) => e.value),
+    ["a b", "c d"],
+  );
+});
+
+test("value of a child inside a contenteditable host is its text (#326)", () => {
+  // `fill '#editor p' x` is accepted (inherited editability), so `value` on
+  // the same target must read what was written.
+  const child = makeHost({ contentEditable: "inherit", text: " first  line " });
+  child.tagName = "P";
+  child.isContentEditable = true;
+  const pilot = loadBridge({ queryResult: child, body: makeBody([child]) });
+  assert.equal(pilot.value({ selector: "#editor p" }), "first line");
+  // The snapshot gives no value to an editable paragraph: the host has it.
+  assert.deepEqual(
+    pilot.snapshot().elements.map((e) => e.value),
+    [undefined],
+  );
+});
+
 test("snapshot reports a textbox host's text as its value, not its name (#326)", () => {
   const ce = makeHost({ contentEditable: "true", text: "Draft bold text" });
   const box = makeHost({ _attrs: { role: "textbox", tabindex: "0" }, text: "role text" });

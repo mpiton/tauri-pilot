@@ -1948,14 +1948,27 @@
     const tag = String(el.tagName || "").toLowerCase();
     if (tag === "select" && el.multiple) return selectedOptionValues(el).join(", ");
     if (tag === "li") return el.getAttribute("value") || undefined;
-    if (el.value === undefined && isTextboxHost(el)) {
-      return String(el.textContent || "").replace(/\s+/g, " ").trim();
-    }
+    if (el.value === undefined && isTextboxHost(el)) return editableText(el);
     return el.value;
   }
 
+  // Text of an editable element, whitespace collapsed. `innerText` is
+  // layout-aware: it puts a newline between block children (each paragraph
+  // of ProseMirror / Tiptap / Lexical) and for a `<br>`, where `textContent`
+  // glues the words together. `textContent` stays the fallback when
+  // `innerText` is not a string.
+  function editableText(el) {
+    const raw = typeof el.innerText === "string" ? el.innerText : el.textContent;
+    return String(raw || "").replace(/\s+/g, " ").trim();
+  }
+
+  // `fill` / `type` accept a child of a contenteditable host (inherited
+  // editability), so `value` on that child reads its text too. The snapshot
+  // keeps using `elementValue`, so child paragraphs never get a value there.
   function value(params) {
-    return elementValue(resolveTarget(params)) || "";
+    const el = resolveTarget(params);
+    if (el && el.value === undefined && isContentEditable(el)) return editableText(el);
+    return elementValue(el) || "";
   }
 
   function attrs(params) {

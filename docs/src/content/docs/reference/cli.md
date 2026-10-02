@@ -881,8 +881,11 @@ tauri-pilot html
 Get the current value of an input, textarea, or select element.
 
 A `contenteditable` host or a `role="textbox"` / `role="searchbox"` widget
-reports its text with whitespace collapsed (`text` returns it raw). The full
-value is returned, never cut.
+reports its text with whitespace collapsed (`text` returns the raw
+`textContent`). Its paragraphs and `<br>` line breaks become one space, so
+`<p>Hello</p><p>World</p>` reads `Hello World`. An element inside a
+contenteditable host (a paragraph `fill` accepts) reads its own text the same
+way. The full value is returned, never cut.
 
 For a `<select multiple>`, every selected option is joined with `", "`
 (the same display `forms` uses). A single-select is unchanged.

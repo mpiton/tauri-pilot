@@ -86,7 +86,7 @@ Three target formats, auto-detected:
 | `diff --ref file.snap` | Diff against a saved snapshot. Pass the same `-i`/`-s`/`-d` as the snapshot, or `diff` refuses (a file saved by 0.7.3 or earlier records no options: diffed with a warning) |
 | `text <target>` | Get text content |
 | `html [target]` | Get innerHTML (page if no target) |
-| `value <target>` | Get input/select value (multi-select: all selected, joined with `, `; contenteditable / textbox host: its text, whitespace collapsed) |
+| `value <target>` | Get input/select value (multi-select: all selected, joined with `, `; contenteditable / textbox host or a child of a contenteditable host: its text, whitespace collapsed) |
 | `attrs <target>` | Get all attributes |
 
 ### Interaction
