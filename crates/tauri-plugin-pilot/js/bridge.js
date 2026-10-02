@@ -1528,10 +1528,26 @@
   // A user cannot act on a disabled control, so the action fails before
   // touching the element or firing any event (#324). Synthetic events bypass
   // the browser's own block: a disabled button's onclick runs on
-  // `dispatchEvent`.
-  function requireEnabled(el, action) {
+  // `dispatchEvent`. `subject` names the element in the error: `drag` checks
+  // its source as well as its target (#332).
+  function requireEnabled(el, action, subject) {
     if (matchesDisabled(el) || insideDisabledControl(el) || isAriaDisabled(el)) {
-      throw new Error(action + ": target is disabled");
+      throw new Error(action + ": " + (subject || "target") + " is disabled");
+    }
+  }
+
+  // A point lands on the deepest node, often a role-less label or icon that
+  // `isAriaDisabled` skips. The control the user reaches there is the nearest
+  // ancestor whose role takes `aria-disabled`, so that widget is read too:
+  // a span inside an `aria-disabled` listbox takes no drop (#332).
+  function requireEnabledAtPoint(el, action, subject) {
+    requireEnabled(el, action, subject);
+    let widget = el;
+    while (widget && typeof widget.getAttribute === "function" && !hasRoleIn(widget, ARIA_DISABLED_ROLES)) {
+      widget = widget.parentElement;
+    }
+    if (widget && widget !== el && isAriaDisabled(widget)) {
+      throw new Error(action + ": " + (subject || "target") + " is disabled");
     }
   }
 
@@ -1892,6 +1908,9 @@
 
   async function drag(params) {
     var source = resolveTarget(params.source || params);
+    // A disabled source or drop target fails before any drag event, like
+    // `click` (#332). The pressed node is checked once it is known, below.
+    requireEnabled(source, "drag", "source");
     var sourceRect = source.getBoundingClientRect();
     var startX = sourceRect.left + sourceRect.width / 2;
     var startY = sourceRect.top + sourceRect.height / 2;
@@ -1935,6 +1954,9 @@
     } else {
       throw new Error("drag requires target or offset");
     }
+    // Offset mode drops on the node under the point, so read the zone above it.
+    if (params.target) requireEnabled(dropTarget, "drag");
+    else requireEnabledAtPoint(dropTarget, "drag");
 
     // Two families of drag implementation exist and they listen for different
     // things, so a gesture that only satisfies one silently does nothing in the
@@ -1970,6 +1992,12 @@
       // green this action exists to remove.
       if (atPoint && (atPoint === source || source.contains(atPoint))) pressTarget = atPoint;
     }
+    // The press lands on that inner node: a disabled control inside the
+    // source (a disabled button, an icon in an `aria-disabled` button) cannot
+    // be pressed by a user either. The source alone is read the same way, so
+    // a role-less card inside an `aria-disabled` list behaves alike with or
+    // without children.
+    requireEnabledAtPoint(pressTarget, "drag", "source");
 
     dispatchGesturePair(pressTarget, "pointerdown", "mousedown", startX, startY, 1);
     source.dispatchEvent(new DragEvent("dragstart", { clientX: startX, clientY: startY, dataTransfer: dt, bubbles: true }));
@@ -2017,6 +2045,7 @@
 
   function drop(params) {
     var el = resolveTarget(params);
+    requireEnabled(el, "drop");
     var rect = el.getBoundingClientRect();
     var x = rect.left + rect.width / 2;
     var y = rect.top + rect.height / 2;

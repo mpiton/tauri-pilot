@@ -5,6 +5,8 @@
 // button's onclick ran. A user can do none of that, so a test driving a
 // disabled form passed while the real app blocks it. Each action must now fail
 // naming the reason and leave the element untouched, with no event fired.
+// `drag` and `drop` follow the same rule for the drag source and the drop
+// target (#332).
 //
 // Like Playwright's actionability checks, `aria-disabled="true"` on the
 // target or an ancestor (the nearest explicit value wins) counts as disabled.
@@ -94,6 +96,10 @@ class El {
   getBoundingClientRect() {
     return { left: 0, top: 0, width: 10, height: 10 };
   }
+  contains(node) {
+    for (let n = node; n; n = n.parentElement) if (n === this) return true;
+    return false;
+  }
   focus() {
     this.focused = true;
   }
@@ -106,7 +112,9 @@ class El {
   }
 }
 
-function loadBridge(target) {
+// `bySelector` maps selectors to elements for actions that resolve two of
+// them (`drag`); any other selector, and every point, resolves to `target`.
+function loadBridge(target, bySelector = {}) {
   // Object.assign would go through the previous bridge's console setter and
   // stack this load on top of it; redefining restores a native console.
   for (const level of Object.keys(REAL_CONSOLE)) {
@@ -128,10 +136,17 @@ function loadBridge(target) {
   globalThis.KeyboardEvent = class KeyboardEvent extends FakeEvent {};
   globalThis.InputEvent = class InputEvent extends FakeEvent {};
   globalThis.Event = class Event extends FakeEvent {};
+  globalThis.DragEvent = class DragEvent extends FakeEvent {};
+  globalThis.DataTransfer = class DataTransfer {
+    constructor() {
+      this.items = { add() {} };
+    }
+  };
   globalThis.window = { fetch() {} };
   globalThis.document = {
-    querySelector() {
-      return target;
+    documentElement: { clientWidth: 800, clientHeight: 700 },
+    querySelector(selector) {
+      return bySelector[selector] || target;
     },
     elementFromPoint() {
       return target;
@@ -398,4 +413,161 @@ test("check on a disabled checkbox names the reason and does not click", () => {
   assert.throws(() => pilot.check({ selector: "#tmp-cb" }), /^Error: check: target is disabled$/);
   assertUntouched(cb);
   assert.equal(cb.checked, false);
+});
+
+// `drag` and `drop` follow the same rule (#332): the page's drag handlers must
+// not run from a disabled source or onto a disabled target.
+const FAST_DRAG = { stepDelayMs: 0, settleMs: 0, steps: 1 };
+
+function dragPair(source, zone = new El("div")) {
+  return { zone, pilot: loadBridge(source, { "#src": source, "#zone": zone }) };
+}
+
+test("drag from a disabled source fails naming the source and fires no event", async () => {
+  const src = new El("button", { disabled: true });
+  const { zone, pilot } = dragPair(src);
+  await assert.rejects(
+    pilot.drag({ source: { selector: "#src" }, target: { selector: "#zone" }, ...FAST_DRAG }),
+    /^Error: drag: source is disabled$/,
+  );
+  assertUntouched(src);
+  assertUntouched(zone);
+});
+
+test("drag from a source in a disabled fieldset or with aria-disabled fails", async () => {
+  const inFieldset = new El("button");
+  new El("fieldset", { disabled: true }, [inFieldset]);
+  const ariaItem = new El("div", { attrs: { role: "option", "aria-disabled": "true" } });
+  for (const src of [inFieldset, ariaItem]) {
+    const { zone, pilot } = dragPair(src);
+    await assert.rejects(
+      pilot.drag({ source: { selector: "#src" }, offset: { x: 5, y: 0 }, ...FAST_DRAG }),
+      /^Error: drag: source is disabled$/,
+    );
+    assertUntouched(src);
+    assertUntouched(zone);
+  }
+});
+
+test("drag onto a disabled drop target fails naming the target and fires no event", async () => {
+  // Same rule as `drop` on that element: a disabled file input, one in a
+  // disabled fieldset, or an aria-disabled listbox takes no drop.
+  const disabledInput = new El("input", { disabled: true });
+  const inFieldset = new El("input");
+  new El("fieldset", { disabled: true }, [inFieldset]);
+  const ariaList = new El("div", { attrs: { role: "listbox", "aria-disabled": "true" } });
+  for (const target of [disabledInput, inFieldset, ariaList]) {
+    const src = new El("div", { attrs: { draggable: "true" } });
+    const { zone, pilot } = dragPair(src, target);
+    await assert.rejects(
+      pilot.drag({ source: { selector: "#src" }, target: { selector: "#zone" }, ...FAST_DRAG }),
+      /^Error: drag: target is disabled$/,
+    );
+    assertUntouched(src);
+    assertUntouched(zone);
+  }
+});
+
+test("drag between enabled elements still runs the gesture", async () => {
+  const src = new El("div", { attrs: { draggable: "true" } });
+  const { zone, pilot } = dragPair(src);
+  const result = await pilot.drag({ source: { selector: "#src" }, target: { selector: "#zone" }, ...FAST_DRAG });
+  assert.equal(result.ok, true);
+  assert.ok(src.events.includes("dragstart"));
+  assert.ok(zone.events.includes("drop"));
+});
+
+test("drop on a disabled target fails and fires no event", () => {
+  const fileInput = new El("input", { attrs: { type: "file" }, disabled: true });
+  const inFieldset = new El("input", { attrs: { type: "file" } });
+  new El("fieldset", { disabled: true }, [inFieldset]);
+  const ariaZone = new El("div", { attrs: { role: "button", "aria-disabled": "true" } });
+  for (const el of [fileInput, inFieldset, ariaZone]) {
+    assert.throws(() => loadBridge(el).drop({ selector: "#dz" }), /^Error: drop: target is disabled$/);
+    assertUntouched(el);
+  }
+});
+
+test("drop on an enabled target still dispatches the drop sequence", () => {
+  const zone = new El("div");
+  assert.deepEqual(loadBridge(zone).drop({ selector: "#dz" }), { ok: true });
+  assert.deepEqual(zone.events, ["dragenter", "dragover", "drop"]);
+});
+
+test("drag --offset onto a disabled drop target fails naming the target", async () => {
+  // In offset mode the drop target is the node under the point, so the guard
+  // must run after either branch resolves it, not only in target mode.
+  const src = new El("div", { attrs: { draggable: "true" } });
+  const hit = new El("input", { disabled: true });
+  const pilot = loadBridge(hit, { "#src": src });
+  await assert.rejects(
+    pilot.drag({ source: { selector: "#src" }, offset: { x: 5, y: 0 }, ...FAST_DRAG }),
+    /^Error: drag: target is disabled$/,
+  );
+  assertUntouched(src);
+  assertUntouched(hit);
+});
+
+test("drag --offset onto a node inside an aria-disabled drop zone fails", async () => {
+  // The point lands on a role-less child (a label span); the zone the user
+  // reaches is the aria-disabled listbox above it, refused in target mode too.
+  const src = new El("div", { attrs: { draggable: "true" } });
+  const span = new El("span");
+  new El("div", { attrs: { role: "listbox", "aria-disabled": "true" } }, [
+    new El("div", { attrs: { role: "option" } }, [span]),
+  ]);
+  const pilot = loadBridge(span, { "#src": src });
+  await assert.rejects(
+    pilot.drag({ source: { selector: "#src" }, offset: { x: 5, y: 0 }, ...FAST_DRAG }),
+    /^Error: drag: target is disabled$/,
+  );
+  assertUntouched(src);
+  assertUntouched(span);
+});
+
+test("drag pressing a disabled control inside the source fails naming the source", async () => {
+  // The gesture presses the deepest node under the source's center; a user
+  // cannot press a disabled control there, native or aria-disabled.
+  const nativeBtn = new El("button", { disabled: true });
+  const ariaIcon = new El("span");
+  const ariaBtn = new El("div", { attrs: { role: "button", "aria-disabled": "true" } }, [ariaIcon]);
+  for (const [pressed, child] of [[nativeBtn, nativeBtn], [ariaIcon, ariaBtn]]) {
+    const src = new El("div", { attrs: { draggable: "true" } }, [child]);
+    const zone = new El("div");
+    const pilot = loadBridge(pressed, { "#src": src, "#zone": zone });
+    await assert.rejects(
+      pilot.drag({ source: { selector: "#src" }, target: { selector: "#zone" }, ...FAST_DRAG }),
+      /^Error: drag: source is disabled$/,
+    );
+    assertUntouched(src);
+    assertUntouched(pressed);
+    assertUntouched(zone);
+  }
+});
+
+test("drag --offset into an enabled zone and from an enabled inner handle still runs", async () => {
+  // aria-disabled="false" on the zone, or a plain handle inside the source,
+  // keeps the gesture going.
+  const span = new El("span");
+  new El("div", { attrs: { role: "listbox", "aria-disabled": "false" } }, [span]);
+  const src = new El("div", { attrs: { draggable: "true" } });
+  const offsetResult = await loadBridge(span, { "#src": src }).drag({
+    source: { selector: "#src" },
+    offset: { x: 5, y: 0 },
+    ...FAST_DRAG,
+  });
+  assert.equal(offsetResult.ok, true);
+  assert.ok(span.events.includes("drop"));
+
+  const handle = new El("span");
+  const withHandle = new El("div", { attrs: { draggable: "true" } }, [handle]);
+  const zone = new El("div");
+  const pressResult = await loadBridge(handle, { "#src": withHandle, "#zone": zone }).drag({
+    source: { selector: "#src" },
+    target: { selector: "#zone" },
+    ...FAST_DRAG,
+  });
+  assert.equal(pressResult.ok, true);
+  assert.ok(handle.events.includes("mousedown"));
+  assert.ok(zone.events.includes("drop"));
 });
