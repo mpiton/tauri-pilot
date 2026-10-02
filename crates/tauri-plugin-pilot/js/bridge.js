@@ -1536,6 +1536,21 @@
     }
   }
 
+  // A point lands on the deepest node, often a role-less label or icon that
+  // `isAriaDisabled` skips. The control the user reaches there is the nearest
+  // ancestor whose role takes `aria-disabled`, so that widget is read too:
+  // a span inside an `aria-disabled` listbox takes no drop (#332).
+  function requireEnabledAtPoint(el, action, subject) {
+    requireEnabled(el, action, subject);
+    let widget = el;
+    while (widget && typeof widget.getAttribute === "function" && !hasRoleIn(widget, ARIA_DISABLED_ROLES)) {
+      widget = widget.parentElement;
+    }
+    if (widget && widget !== el && isAriaDisabled(widget)) {
+      throw new Error(action + ": " + (subject || "target") + " is disabled");
+    }
+  }
+
   // `fill` and `type` also need a field a user could edit (#324).
   function requireWritable(el, action) {
     requireEnabled(el, action);
@@ -1893,9 +1908,8 @@
 
   async function drag(params) {
     var source = resolveTarget(params.source || params);
-    // A disabled source or drop target fails before any event, like `click`
-    // (#332). The pressed node sits inside the source, which the source check
-    // already covers through `insideDisabledControl`.
+    // A disabled source or drop target fails before any drag event, like
+    // `click` (#332). The pressed node is checked once it is known, below.
     requireEnabled(source, "drag", "source");
     var sourceRect = source.getBoundingClientRect();
     var startX = sourceRect.left + sourceRect.width / 2;
@@ -1940,7 +1954,9 @@
     } else {
       throw new Error("drag requires target or offset");
     }
-    requireEnabled(dropTarget, "drag");
+    // Offset mode drops on the node under the point, so read the zone above it.
+    if (params.target) requireEnabled(dropTarget, "drag");
+    else requireEnabledAtPoint(dropTarget, "drag");
 
     // Two families of drag implementation exist and they listen for different
     // things, so a gesture that only satisfies one silently does nothing in the
@@ -1976,6 +1992,12 @@
       // green this action exists to remove.
       if (atPoint && (atPoint === source || source.contains(atPoint))) pressTarget = atPoint;
     }
+    // The press lands on that inner node: a disabled control inside the
+    // source (a disabled button, an icon in an `aria-disabled` button) cannot
+    // be pressed by a user either. The source alone is read the same way, so
+    // a role-less card inside an `aria-disabled` list behaves alike with or
+    // without children.
+    requireEnabledAtPoint(pressTarget, "drag", "source");
 
     dispatchGesturePair(pressTarget, "pointerdown", "mousedown", startX, startY, 1);
     source.dispatchEvent(new DragEvent("dragstart", { clientX: startX, clientY: startY, dataTransfer: dt, bubbles: true }));

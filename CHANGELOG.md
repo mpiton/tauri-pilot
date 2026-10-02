@@ -76,9 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `drag` and `drop` follow the same rule: a disabled drag source fails with
   `drag: source is disabled`, and a disabled drop target (of `drag` or
   `drop`, such as a disabled `<input type="file">`) with
-  `<action>: target is disabled`, before any event fires. A plain `<div>`
-  drop zone counts as disabled only inside a disabled control, or with a
-  widget role and `aria-disabled="true"`. Migration: a script that drags from or
+  `<action>: target is disabled`, before any drag or drop event is
+  dispatched. A plain `<div>` drop zone counts as disabled only inside a
+  disabled control, or with a widget role and `aria-disabled="true"`. With
+  `--offset`, the node under the drop point also fails inside such an
+  `aria-disabled` widget, and the node `drag` presses inside its source is
+  checked like the source. Migration: a script that drags from or
   drops onto a disabled element on purpose must enable it first, for
   example with `eval`. [#332]
 

@@ -493,3 +493,81 @@ test("drop on an enabled target still dispatches the drop sequence", () => {
   assert.deepEqual(loadBridge(zone).drop({ selector: "#dz" }), { ok: true });
   assert.deepEqual(zone.events, ["dragenter", "dragover", "drop"]);
 });
+
+test("drag --offset onto a disabled drop target fails naming the target", async () => {
+  // In offset mode the drop target is the node under the point, so the guard
+  // must run after either branch resolves it, not only in target mode.
+  const src = new El("div", { attrs: { draggable: "true" } });
+  const hit = new El("input", { disabled: true });
+  const pilot = loadBridge(hit, { "#src": src });
+  await assert.rejects(
+    pilot.drag({ source: { selector: "#src" }, offset: { x: 5, y: 0 }, ...FAST_DRAG }),
+    /^Error: drag: target is disabled$/,
+  );
+  assertUntouched(src);
+  assertUntouched(hit);
+});
+
+test("drag --offset onto a node inside an aria-disabled drop zone fails", async () => {
+  // The point lands on a role-less child (a label span); the zone the user
+  // reaches is the aria-disabled listbox above it, refused in target mode too.
+  const src = new El("div", { attrs: { draggable: "true" } });
+  const span = new El("span");
+  new El("div", { attrs: { role: "listbox", "aria-disabled": "true" } }, [
+    new El("div", { attrs: { role: "option" } }, [span]),
+  ]);
+  const pilot = loadBridge(span, { "#src": src });
+  await assert.rejects(
+    pilot.drag({ source: { selector: "#src" }, offset: { x: 5, y: 0 }, ...FAST_DRAG }),
+    /^Error: drag: target is disabled$/,
+  );
+  assertUntouched(src);
+  assertUntouched(span);
+});
+
+test("drag pressing a disabled control inside the source fails naming the source", async () => {
+  // The gesture presses the deepest node under the source's center; a user
+  // cannot press a disabled control there, native or aria-disabled.
+  const nativeBtn = new El("button", { disabled: true });
+  const ariaIcon = new El("span");
+  const ariaBtn = new El("div", { attrs: { role: "button", "aria-disabled": "true" } }, [ariaIcon]);
+  for (const [pressed, child] of [[nativeBtn, nativeBtn], [ariaIcon, ariaBtn]]) {
+    const src = new El("div", { attrs: { draggable: "true" } }, [child]);
+    const zone = new El("div");
+    const pilot = loadBridge(pressed, { "#src": src, "#zone": zone });
+    await assert.rejects(
+      pilot.drag({ source: { selector: "#src" }, target: { selector: "#zone" }, ...FAST_DRAG }),
+      /^Error: drag: source is disabled$/,
+    );
+    assertUntouched(src);
+    assertUntouched(pressed);
+    assertUntouched(zone);
+  }
+});
+
+test("drag --offset into an enabled zone and from an enabled inner handle still runs", async () => {
+  // aria-disabled="false" on the zone, or a plain handle inside the source,
+  // keeps the gesture going.
+  const span = new El("span");
+  new El("div", { attrs: { role: "listbox", "aria-disabled": "false" } }, [span]);
+  const src = new El("div", { attrs: { draggable: "true" } });
+  const offsetResult = await loadBridge(span, { "#src": src }).drag({
+    source: { selector: "#src" },
+    offset: { x: 5, y: 0 },
+    ...FAST_DRAG,
+  });
+  assert.equal(offsetResult.ok, true);
+  assert.ok(span.events.includes("drop"));
+
+  const handle = new El("span");
+  const withHandle = new El("div", { attrs: { draggable: "true" } }, [handle]);
+  const zone = new El("div");
+  const pressResult = await loadBridge(handle, { "#src": withHandle, "#zone": zone }).drag({
+    source: { selector: "#src" },
+    target: { selector: "#zone" },
+    ...FAST_DRAG,
+  });
+  assert.equal(pressResult.ok, true);
+  assert.ok(handle.events.includes("mousedown"));
+  assert.ok(zone.events.includes("drop"));
+});

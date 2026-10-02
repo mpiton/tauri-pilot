@@ -761,8 +761,12 @@ the expected effect afterwards. The one signal the bridge can observe is
 
 A disabled source fails with `drag: source is disabled` and a disabled drop
 target with `drag: target is disabled` (same rules as `click`), before any
-event fires. A plain `<div>` drop zone counts as disabled only inside a
-disabled control, or with a widget role and `aria-disabled="true"`.
+drag event is dispatched (`--offset` may still scroll the source into view
+first). A plain `<div>` drop zone counts as disabled only inside a disabled
+control, or with a widget role and `aria-disabled="true"`. With `--offset`,
+the node under the drop point is refused inside such an `aria-disabled`
+widget too, and the node pressed inside the source (a disabled button in a
+card) fails as the source.
 
 **Examples:**
 
