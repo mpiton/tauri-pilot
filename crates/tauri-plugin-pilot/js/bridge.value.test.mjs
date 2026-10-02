@@ -145,10 +145,11 @@ test("value reports every selected option of a multi-select (#158)", () => {
 test("snapshot reports every selected option of a multi-select (#158)", () => {
   const el = skillsSelect(["rust", "js"]);
   const { elements } = loadBridge({ body: makeBody([el]) }).snapshot();
-  const combobox = elements.find((e) => e.role === "combobox");
-  assert.ok(combobox, "the <select> must appear in the snapshot");
-  assert.equal(typeof combobox.value, "string");
-  assert.equal(combobox.value, "rust, js");
+  // A multi-select is a listbox (#307).
+  const listbox = elements.find((e) => e.role === "listbox");
+  assert.ok(listbox, "the <select> must appear in the snapshot");
+  assert.equal(typeof listbox.value, "string");
+  assert.equal(listbox.value, "rust, js");
 });
 
 test("value and snapshot match the forms dump of a multi-select (#158)", () => {
@@ -162,7 +163,7 @@ test("value and snapshot match the forms dump of a multi-select (#158)", () => {
   assert.deepEqual(field.value, ["rust", "js"]);
   const joined = field.value.join(", ");
   assert.equal(pilot.value({ selector: "select[name=skills]" }), joined);
-  const snap = pilot.snapshot().elements.find((e) => e.role === "combobox");
+  const snap = pilot.snapshot().elements.find((e) => e.role === "listbox");
   assert.equal(snap.value, joined);
 });
 

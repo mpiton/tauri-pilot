@@ -133,6 +133,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check before it: `assert count <selector> N` (exact count) in the CLI, the
   MCP tool `assert_count` (`selector`, `expected: N`), or an `assert-exists`
   step in a scenario. [#281]
+- `snapshot` gives a `<select>` with `multiple`, or with a `size` above 1,
+  the `listbox` role instead of `combobox`, as HTML-AAM does. A single-choice
+  `<select>` stays `combobox`, and an explicit `role` attribute still wins.
+  Migration: scripts that find such a select by `role == "combobox"` must
+  match `listbox`, and a `diff --ref` against a snapshot saved before this
+  change reports the select as removed and re-added. [#307]
 
 ### Fixed
 
@@ -1495,3 +1501,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#309]: https://github.com/mpiton/tauri-pilot/issues/309
 [#311]: https://github.com/mpiton/tauri-pilot/issues/311
 [#303]: https://github.com/mpiton/tauri-pilot/issues/303
+[#307]: https://github.com/mpiton/tauri-pilot/issues/307

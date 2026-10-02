@@ -702,3 +702,42 @@ test("snapshot leaves an unlabelled contenteditable or role=textbox/searchbox ho
   assert.equal(pilot.resolve(searchBoxEl.ref), searchBox);
   assert.equal("name" in searchBoxEl, false, "a searchbox is a textbox: its text is its value");
 });
+
+// #307: getRole mapped every <select> to `combobox`. HTML-AAM makes a select
+// with `multiple` or a display `size` above 1 a `listbox`; an explicit `role`
+// attribute still wins.
+
+test("snapshot gives a multiple or sized select the listbox role (#307)", () => {
+  const multi = makeSelect(["rust", "js", "go"], { attrs: { name: "skills", multiple: "" } });
+  multi.multiple = true;
+  multi.size = 0; // the IDL reads 0 when the size attribute is absent
+  const sized = makeSelect(["a", "b"], { attrs: { name: "sized", size: "2" } });
+  sized.multiple = false;
+  sized.size = 2;
+  const sizeOne = makeSelect(["a", "b"], { attrs: { name: "one", size: "1" } });
+  sizeOne.multiple = false;
+  sizeOne.size = 1;
+  const single = makeSelect(["a", "b"], { attrs: { name: "single" } });
+  single.multiple = false;
+  single.size = 0;
+  const explicit = makeSelect(["a", "b"], {
+    attrs: { name: "explicit", multiple: "", role: "combobox" },
+  });
+  explicit.multiple = true;
+  explicit.size = 4;
+  for (const s of [multi, sized, sizeOne, single, explicit]) s.labels = [];
+  const body = makeEl("body", { children: [multi, sized, sizeOne, single, explicit] });
+  const pilot = loadBridge(body);
+
+  const roles = pilot
+    .snapshot({ interactive: true })
+    .elements.map((e) => [pilot.resolve(e.ref).getAttribute("name"), e.role]);
+
+  assert.deepEqual(roles, [
+    ["skills", "listbox"],
+    ["sized", "listbox"],
+    ["one", "combobox"],
+    ["single", "combobox"],
+    ["explicit", "combobox"],
+  ]);
+});
