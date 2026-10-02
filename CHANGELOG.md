@@ -142,6 +142,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `watch` reports text replaced with `textContent` or `innerText` as a text
+  change on the element (`{"tag": "div", "text": "..."}`, the shape an
+  in-place text edit already had), once per element per mutation batch.
+  Whitespace-only text nodes around added or removed elements do not count.
+  It kept only elements from added and removed nodes, so
+  `watch --require-mutation` ended on the change and then printed
+  "No DOM changes detected." `--require-mutation` now also keeps waiting
+  through mutations that add nothing to the summary (whitespace-only text,
+  comment nodes), until a reported change or the timeout. [#304]
+
 - `snapshot` names form controls after their `<label>`, wrapping or `for=`,
   without the text of the controls inside it. Labelled inputs and checkboxes
   came out unnamed, and a `<select>` was named after the text of all its
@@ -1512,3 +1522,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#303]: https://github.com/mpiton/tauri-pilot/issues/303
 [#307]: https://github.com/mpiton/tauri-pilot/issues/307
 [#302]: https://github.com/mpiton/tauri-pilot/issues/302
+[#304]: https://github.com/mpiton/tauri-pilot/issues/304

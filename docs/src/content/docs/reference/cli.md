@@ -781,7 +781,7 @@ tauri-pilot watch [OPTIONS]
 | `--selector <sel>` | Scope observation to a subtree matching this CSS selector |
 | `--timeout <ms>` | Maximum wait time in milliseconds (default: 10000) |
 | `--stable <ms>` | Wait until DOM is stable (no new mutations) for N ms (default: 300) |
-| `--require-mutation` | Defer the stability timer until at least one mutation occurs. Rejects on timeout if nothing changed. |
+| `--require-mutation` | Defer the stability timer until at least one mutation shows up in the summary (whitespace-only text and comment nodes don't count). Rejects on timeout if nothing changed. |
 
 **Examples:**
 

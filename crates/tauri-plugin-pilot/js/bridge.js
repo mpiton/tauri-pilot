@@ -2232,17 +2232,32 @@
 
   var MAX_WATCH_ENTRIES = 200;
 
-  function summarizeNode(node) {
-    var entry = { tag: node.tagName.toLowerCase() };
-    if (node.id) entry.id = node.id;
-    if (node.className && typeof node.className === 'string' && node.className.trim()) entry.class = node.className.trim();
-    var text = Array.from(node.childNodes)
+  // Text of the node's own text children, whitespace-collapsed, max 80 chars.
+  function directText(node) {
+    return Array.from(node.childNodes)
       .filter(function(n) { return n.nodeType === Node.TEXT_NODE; })
       .map(function(n) { return n.textContent || ''; })
       .join(' ')
       .replace(/\s+/g, ' ')
-      .trim();
-    if (text) entry.text = text.substring(0, 80);
+      .trim()
+      .substring(0, 80);
+  }
+
+  // True when `nodes` holds a text node with non-whitespace text. Formatting
+  // whitespace around added or removed elements is not a text change.
+  function hasNonBlankText(nodes) {
+    for (var n = 0; n < nodes.length; n++) {
+      if (nodes[n].nodeType === Node.TEXT_NODE && /\S/.test(nodes[n].textContent || '')) return true;
+    }
+    return false;
+  }
+
+  function summarizeNode(node) {
+    var entry = { tag: node.tagName.toLowerCase() };
+    if (node.id) entry.id = node.id;
+    if (node.className && typeof node.className === 'string' && node.className.trim()) entry.class = node.className.trim();
+    var text = directText(node);
+    if (text) entry.text = text;
     return entry;
   }
 
@@ -2272,6 +2287,11 @@
         clearTimeout(timeoutTimer);
         observer.disconnect();
         res(changes);
+      }
+
+      function hasChanges() {
+        return changes.added.length > 0 || changes.removed.length > 0 ||
+          changes.modified.length > 0;
       }
 
       function resetStableTimer() {
@@ -2307,6 +2327,9 @@
       }
 
       var observer = new MutationObserver(function (mutations) {
+        // `textContent = ...` swaps text nodes through a childList mutation;
+        // report it as a text change on the parent, once per batch (#304).
+        var textTargets = [];
         for (var i = 0; i < mutations.length; i++) {
           var mutation = mutations[i];
           if (mutation.type === 'childList') {
@@ -2321,6 +2344,12 @@
               if (removedNode.nodeType === Node.ELEMENT_NODE) {
                 pushCapped(changes.removed, summarizeNode(removedNode));
               }
+            }
+            if (
+              textTargets.indexOf(mutation.target) === -1 &&
+              (hasNonBlankText(mutation.addedNodes) || hasNonBlankText(mutation.removedNodes))
+            ) {
+              textTargets.push(mutation.target);
             }
           } else if (mutation.type === 'attributes') {
             var target = mutation.target;
@@ -2337,14 +2366,31 @@
             pushCapped(changes.modified, entry);
           } else if (mutation.type === 'characterData') {
             var parent = mutation.target.parentElement;
-            if (parent) {
+            var data = mutation.target.textContent || '';
+            // Comment data and whitespace-to-whitespace edits are not text
+            // changes.
+            if (
+              parent && mutation.target.nodeType === Node.TEXT_NODE &&
+              (/\S/.test(data) || /\S/.test(mutation.oldValue || ''))
+            ) {
               pushCapped(changes.modified, {
                 tag: parent.tagName.toLowerCase(),
-                text: (mutation.target.textContent || '').replace(/\s+/g, ' ').trim().substring(0, 80),
+                text: data.replace(/\s+/g, ' ').trim().substring(0, 80),
               });
             }
           }
         }
+        for (var t = 0; t < textTargets.length; t++) {
+          var textTarget = textTargets[t];
+          pushCapped(changes.modified, {
+            tag: textTarget.tagName.toLowerCase(),
+            text: directText(textTarget),
+          });
+        }
+        // With requireMutation, mutations that add no entry (blank text,
+        // comments, detached characterData) must not end the wait: the
+        // summary would be empty (#304).
+        if (requireMutation && !hasChanges()) return;
         resetStableTimer();
       });
 
@@ -2353,6 +2399,7 @@
         subtree: true,
         attributes: true,
         characterData: true,
+        characterDataOldValue: true,
       });
     });
   }
