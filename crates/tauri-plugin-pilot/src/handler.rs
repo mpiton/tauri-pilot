@@ -1038,7 +1038,9 @@ async fn await_departure(engine: &EvalEngine, id: u64, rx: ReplyReceiver) -> Res
 ///
 /// Fails when no hello arrives in time. If the window never left its
 /// document (see [`never_left`]), the error says the navigation did not
-/// load in time (a refused connection keeps the old document, #278).
+/// load in time (a refused connection keeps the old document, #278) or,
+/// for a local destination (see [`is_local_scheme`]), that it was
+/// cancelled or blocked (#310).
 /// Otherwise it says no bridge answered on the page the window shows,
 /// naming it when it is not `dest`.
 async fn wait_dest_bridge(
@@ -1101,11 +1103,11 @@ fn never_left(engine: &EvalEngine, page: Option<&tauri::Url>, now: &tauri::Url) 
 /// Error for a cross-origin navigate whose window never left `page`.
 ///
 /// The destination did not load in time (#278), so the "allow this origin
-/// in `remote.urls`" hint of [`no_bridge_error`] does not apply. A `data:`
-/// or `about:` destination does not load over the network, so a timeout
-/// cannot explain it: the error says the navigation was cancelled or
-/// blocked (#310). When `page` has no bridge, the error still names the
-/// origins that work.
+/// in `remote.urls`" hint of [`no_bridge_error`] does not apply. A local
+/// destination (see [`is_local_scheme`]) does not load over the network,
+/// so a timeout cannot explain it: the error says the navigation was
+/// cancelled or blocked (#310). When `page` has no bridge, the error still
+/// names the origins that work.
 fn dest_not_loaded_error(
     engine: &EvalEngine,
     page: &tauri::Url,
@@ -1118,7 +1120,7 @@ fn dest_not_loaded_error(
         let origins = engine.bridge_origins().join(", ");
         format!(". Bridge commands only work on {origins}: navigate back there")
     };
-    let message = if matches!(dest.scheme(), "data" | "about") {
+    let message = if is_local_scheme(dest) {
         format!(
             "navigate to {dest} did not happen: the window still shows {page} after \
              {limit:?}, so the navigation was cancelled or blocked{way_back}"
@@ -1386,10 +1388,10 @@ fn eval_rpc_error(e: &EvalError) -> RpcError {
 /// origins where it can.
 ///
 /// `remote.urls` only takes remote URL patterns, so its hint is left out
-/// for a local page (`about:`, `data:`, `blob:`, `file:`).
+/// for a local page (see [`is_local_scheme`]).
 fn no_bridge_error(engine: &EvalEngine, page: &tauri::Url, what: &str) -> RpcError {
     let origins = engine.bridge_origins().join(", ");
-    let hint = if matches!(page.scheme(), "about" | "data" | "blob" | "file") {
+    let hint = if is_local_scheme(page) {
         ""
     } else {
         ", or allow this origin in a capability's remote.urls"
@@ -1401,6 +1403,15 @@ fn no_bridge_error(engine: &EvalEngine, page: &tauri::Url, what: &str) -> RpcErr
         ),
         data: None,
     }
+}
+
+/// Whether `url` is a local page that does not load over the network.
+///
+/// `about:`, `data:`, `blob:` and `file:` pages are built or read by the
+/// webview itself: `remote.urls` cannot allow them, and a navigation to one
+/// that never happened was cancelled or blocked rather than slow (#310).
+fn is_local_scheme(url: &tauri::Url) -> bool {
+    matches!(url.scheme(), "about" | "data" | "blob" | "file")
 }
 
 /// Build a `window.__PILOT__.<method>(params)` JS call string.
@@ -3687,6 +3698,124 @@ mod tests {
             err.message,
             "navigate to about:blank did not happen: the window still shows \
              tauri://localhost/ after 3s, so the navigation was cancelled or blocked"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_file_and_blob_urls_never_left_report_blocked() {
+        // #310: `file:` and `blob:` do not load over the network either, so
+        // a window still on the page was refused, not slow.
+        for dest in ["file:///tmp/a.html", "blob:tauri://localhost/0"] {
+            let engine = engine_with_app_bridge();
+            let engine_clone = engine.clone();
+            let webviews = FakeWebviews::window("main", Some(APP_PAGE))
+                .on_eval(move || engine_clone.resolve(1, Ok(json!({"ok": true}))));
+
+            let err = dispatch(
+                "navigate",
+                Some(&json!({ "url": dest })),
+                &engine,
+                &webviews,
+                &Recorder::new(),
+            )
+            .await
+            .expect_err("a blocked local navigation must not report ok");
+
+            assert_eq!(
+                err.message,
+                format!(
+                    "navigate to {dest} did not happen: the window still shows \
+                     tauri://localhost/ after 3s, so the navigation was cancelled or blocked"
+                )
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_redirected_to_about_blank_omits_remote_urls_hint() {
+        // #310: the hint is judged on the page the window shows, not on
+        // `dest`. An https destination that lands on `about:blank` cannot be
+        // fixed through `remote.urls`.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || {
+            engine_clone.resolve(1, Ok(json!({"ok": true})));
+            webviews_clone.set_url("main", Some("about:blank"));
+        });
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": FOREIGN_PAGE})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("about:blank has no bridge");
+
+        assert_eq!(
+            err.message,
+            "navigate to https://example.com/: the window shows about:blank, but no pilot \
+             bridge answered there within 3s. Bridge commands only work on \
+             tauri://localhost: navigate back there"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_dispatch_navigate_to_about_blank_landing_on_remote_page_keeps_hint() {
+        // #310: a local `dest` does not drop the hint when the window shows
+        // a remote page, which `remote.urls` can allow.
+        let engine = engine_with_app_bridge();
+        let engine_clone = engine.clone();
+        let webviews = FakeWebviews::window("main", Some(APP_PAGE));
+        let webviews_clone = webviews.clone();
+        let webviews = webviews.on_eval(move || {
+            engine_clone.resolve(1, Ok(json!({"ok": true})));
+            webviews_clone.set_url("main", Some(FOREIGN_PAGE));
+        });
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "about:blank"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("a silent remote page must not report ok");
+
+        assert_eq!(
+            err.message,
+            "navigate to about:blank: the window shows https://example.com/, but no pilot \
+             bridge answered there within 3s. Bridge commands only work on \
+             tauri://localhost: navigate back there, or allow this origin in a \
+             capability's remote.urls"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_navigate_from_about_blank_omits_remote_urls_hint() {
+        // #310: a navigate from a local start page fails before waiting
+        // (`fail_no_bridge`); the hint does not apply there either.
+        let engine = engine_with_app_bridge();
+        let webviews = FakeWebviews::window("main", Some("about:blank"));
+
+        let err = dispatch(
+            "navigate",
+            Some(&json!({"url": "about:blank"})),
+            &engine,
+            &webviews,
+            &Recorder::new(),
+        )
+        .await
+        .expect_err("about:blank has no bridge");
+
+        assert_eq!(
+            err.message,
+            "no pilot bridge on the current page (about:blank). Bridge commands only work \
+             on tauri://localhost: navigate back there"
         );
     }
 

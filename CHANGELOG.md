@@ -320,11 +320,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it; a page-level global named `await` is now awaited, not called. [#302]
 - `navigate` errors on `about:`, `data:`, `blob:` and `file:` pages no longer
   tell the user to allow the origin in a capability's `remote.urls`, which
-  only takes remote URL patterns: they only point back to the app origins.
-  The hint stays for other pages. A `navigate` to a `data:` or
-  `about:` URL that leaves the window on its page says the navigation was
-  cancelled or blocked, not that it did not load in time. Other commands run
-  on such a page drop the hint the same way. [#310]
+  only takes remote URL patterns: they only point back to the origins whose
+  bridge said hello. The hint stays for other pages. A `navigate` to an
+  `about:`, `data:`, `blob:` or `file:` URL that leaves the window on its page
+  says the navigation was cancelled or blocked, not that it did not load in
+  time. Other commands run on such a page drop the hint the same way. [#310]
 
 ### Security
 
