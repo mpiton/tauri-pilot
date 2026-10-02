@@ -1558,6 +1558,10 @@
     el.focus();
     let wroteViaExec = false;
     if (elementTag(el) === "select") {
+      // `select` owns the list form (#306); `fill` keeps its one-value contract.
+      if (Array.isArray(params.value)) {
+        throw new Error("fill takes one value; use select for several options");
+      }
       applySelectOption(el, params.value, "fill");
     } else if (isValueElement(el)) {
       const setter = nativeValueSetter(el);

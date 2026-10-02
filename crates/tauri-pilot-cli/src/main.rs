@@ -1575,15 +1575,14 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
         }
         "select" => {
             // A multi-select step records its whole list (#306).
-            let values = match entry.get("value") {
-                Some(Value::Array(items)) => items
-                    .iter()
-                    .map(|v| shell_escape(v.as_str().unwrap_or("")))
-                    .collect::<Vec<_>>()
-                    .join(" "),
-                other => shell_escape(other.and_then(Value::as_str).unwrap_or("")),
+            let values: Vec<&str> = match entry.get("value") {
+                Some(Value::Array(items)) => {
+                    items.iter().map(|v| v.as_str().unwrap_or("")).collect()
+                }
+                other => vec![other.and_then(Value::as_str).unwrap_or("")],
             };
-            format!("tauri-pilot select {target} {values}")
+            let quoted: Vec<String> = values.into_iter().map(shell_escape).collect();
+            format!("tauri-pilot select {target} {}", quoted.join(" "))
         }
         "check" => format!("tauri-pilot check {target}"),
         "scroll" => {

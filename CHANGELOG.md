@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error. Values match an option's `value`, then its visible label, and an
   unknown value fails naming every value that matched nothing, with the
   selection left as it was. `select` now fires `input` then `change`, once
-  each. The `select` JSON-RPC method and MCP tool take `value` as a string
+  each, like a user's pick (it fired only `change` before). `fill` still
+  takes one value and rejects a list. The `select` JSON-RPC method and MCP tool take `value` as a string
   or a list of strings, the TOML `select` step takes `value = ["a", "b"]`,
   and recordings and `replay --export sh` keep the whole list. [#306]
 

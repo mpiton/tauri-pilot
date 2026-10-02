@@ -182,6 +182,21 @@ test("fill on select uses option matching and throws when nothing matches", () =
   assert.equal(unmatched.selectedIndex, -1);
 });
 
+test("fill takes one value, even on a multi-select", () => {
+  const el = makeSelect([
+    { value: "rust", text: "Rust" },
+    { value: "go", text: "Go" },
+  ]);
+  el.multiple = true;
+  const pilot = loadBridge({ queryResult: el });
+
+  assert.throws(
+    () => pilot.fill({ selector: "select[name=skills]", value: ["rust", "go"] }),
+    /^Error: fill takes one value; use select for several options$/,
+  );
+  assert.equal(el.selectedIndex, -1);
+});
+
 test("type rejects a select target", () => {
   const el = makeSelect([
     { value: "user", text: "User" },

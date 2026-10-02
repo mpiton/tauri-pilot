@@ -3251,8 +3251,7 @@ path = "/tmp/out.png"
         let _ = std::fs::remove_file(&socket);
     }
 
-    /// `assert_unchecked` passes on `checked: false` and fails with
-    /// `element is checked` on `checked: true` (#286).
+    /// `select` forwards a string or a list `value` unchanged (#306).
     #[tokio::test]
     #[cfg(unix)]
     async fn select_tool_forwards_a_string_or_a_list_value() {
