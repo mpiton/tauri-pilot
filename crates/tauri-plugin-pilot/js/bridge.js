@@ -1461,11 +1461,18 @@
     "tree", "treegrid", "treeitem",
   ]);
 
+  // Whether one of the target's role tokens is in `roles`. A `role` attribute
+  // is a whitespace-separated fallback list, matched without case.
+  function hasRoleIn(el, roles) {
+    const tokens = String(getRole(el) || "").toLowerCase().split(/\s+/);
+    return tokens.some((token) => roles.has(token));
+  }
+
   // Like Playwright: a target whose role supports `aria-disabled` reads it on
   // itself, then on its ancestors, the nearest explicit value winning. A
   // control disabled this way blocks a user as much as a native `disabled`.
   function isAriaDisabled(el) {
-    if (typeof el.getAttribute !== "function" || !ARIA_DISABLED_ROLES.has(getRole(el))) return false;
+    if (typeof el.getAttribute !== "function" || !hasRoleIn(el, ARIA_DISABLED_ROLES)) return false;
     for (let node = el; node && typeof node.getAttribute === "function"; node = node.parentElement) {
       const value = node.getAttribute("aria-disabled");
       if (value === null) continue;
@@ -1482,15 +1489,40 @@
     "button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit",
   ]);
 
-  // Whether HTML makes the field readonly: a <textarea>, or an <input> whose
-  // type honours the attribute.
+  // Roles whose own `aria-readonly` counts, as in Playwright's editable check.
+  const ARIA_READONLY_ROLES = new Set([
+    "checkbox", "combobox", "grid", "gridcell", "listbox", "radiogroup", "searchbox",
+    "slider", "spinbutton", "textbox",
+  ]);
+
+  // Whether the field is readonly. A native <input> or <textarea> follows
+  // HTML: its `readonly`, on an input type that honours it. Any other element
+  // whose role supports it reads its own `aria-readonly="true"`, as a
+  // rich-text editor in read mode sets on its contenteditable host.
   function isReadOnly(el) {
-    if (el.readOnly !== true) return false;
     const tag = elementTag(el);
-    if (tag === "textarea") return true;
-    if (tag !== "input") return false;
-    const type = String(el.getAttribute("type") || "text").toLowerCase();
-    return !READONLY_IGNORED_TYPES.has(type);
+    if (tag === "textarea") return el.readOnly === true;
+    if (tag === "input") {
+      if (el.readOnly !== true) return false;
+      const type = String(el.getAttribute("type") || "text").toLowerCase();
+      return !READONLY_IGNORED_TYPES.has(type);
+    }
+    if (tag === "select" || typeof el.getAttribute !== "function") return false;
+    const value = el.getAttribute("aria-readonly");
+    return value !== null && String(value).toLowerCase() === "true" && hasRoleIn(el, ARIA_READONLY_ROLES);
+  }
+
+  const DISABLEABLE_TAGS = new Set(["button", "input", "select", "textarea"]);
+
+  // Whether the target sits inside a disabled form control, such as an icon
+  // <span> in a disabled <button>. A synthetic click on the child bubbles to
+  // the control and runs its handler; a user's click there does nothing. A
+  // disabled <fieldset> blocks only its controls, which `:disabled` covers.
+  function insideDisabledControl(el) {
+    for (let node = el.parentElement; node; node = node.parentElement) {
+      if (DISABLEABLE_TAGS.has(elementTag(node)) && matchesDisabled(node)) return true;
+    }
+    return false;
   }
 
   // A user cannot act on a disabled control, so the action fails before
@@ -1498,7 +1530,9 @@
   // the browser's own block: a disabled button's onclick runs on
   // `dispatchEvent`.
   function requireEnabled(el, action) {
-    if (matchesDisabled(el) || isAriaDisabled(el)) throw new Error(action + ": target is disabled");
+    if (matchesDisabled(el) || insideDisabledControl(el) || isAriaDisabled(el)) {
+      throw new Error(action + ": target is disabled");
+    }
   }
 
   // `fill` and `type` also need a field a user could edit (#324).
@@ -1585,7 +1619,7 @@
     );
   }
 
-  function applySelectOption(el, wantedRaw, command) {
+  function resolveSelectOptions(el, wantedRaw, command) {
     // Resolve the target option before mutating anything. Setting
     // `HTMLSelectElement.value` to a string that matches no option `value`
     // silently yields `value=""` / `selectedIndex=-1` per the DOM spec, so
@@ -1614,11 +1648,16 @@
       throw new Error(command + ": no option matches " + missing.map((w) => JSON.stringify(w)).join(", "));
     }
     rejectDisabledOptions(wanted, matches, command);
+    return matches;
+  }
+
+  function applySelectOption(el, wantedRaw, command) {
+    const matches = resolveSelectOptions(el, wantedRaw, command);
     if (el.multiple) {
       // Assigning `.value` on a multi-select keeps only the first match, so
       // set each option's own flag: exactly the listed options end up chosen.
       const chosen = new Set(matches);
-      for (const o of options) o.selected = chosen.has(o);
+      for (const o of Array.from(el.options || [])) o.selected = chosen.has(o);
       return;
     }
     const matched = matches[0];
@@ -1643,9 +1682,12 @@
       }
       throw new Error("fill takes one value, not a list");
     }
+    const isSelect = elementTag(el) === "select";
+    // Check the options before focusing, so a refused pick fires no event.
+    if (isSelect) resolveSelectOptions(el, params.value, "fill");
     el.focus();
     let wroteViaExec = false;
-    if (elementTag(el) === "select") {
+    if (isSelect) {
       applySelectOption(el, params.value, "fill");
     } else if (isValueElement(el)) {
       const setter = nativeValueSetter(el);

@@ -29,9 +29,9 @@ const REAL_CONSOLE = {
 const FORM_CONTROLS = new Set(["BUTTON", "INPUT", "SELECT", "TEXTAREA"]);
 
 // Element mock. `matches(":disabled")` follows the HTML rules the guard relies
-// on: a form control with its own `disabled`, or inside a disabled
-// <fieldset>; an <option> with its own `disabled`, or inside a disabled
-// <optgroup>. Only `:disabled` is supported.
+// on: a form control or <fieldset> with its own `disabled`, or inside a
+// disabled <fieldset>; an <option> with its own `disabled`, or inside a
+// disabled <optgroup>. Only `:disabled` is supported.
 class El {
   constructor(tag, props = {}, children = []) {
     this.tagName = tag.toUpperCase();
@@ -84,7 +84,7 @@ class El {
     if (this.tagName === "OPTION") {
       return this.disabled || (this.parentElement?.tagName === "OPTGROUP" && this.parentElement.disabled);
     }
-    if (!FORM_CONTROLS.has(this.tagName)) return false;
+    if (!FORM_CONTROLS.has(this.tagName) && this.tagName !== "FIELDSET") return false;
     if (this.disabled) return true;
     for (let node = this.parentElement; node; node = node.parentElement) {
       if (node.tagName === "FIELDSET" && node.disabled) return true;
@@ -133,6 +133,9 @@ function loadBridge(target) {
     querySelector() {
       return target;
     },
+    elementFromPoint() {
+      return target;
+    },
   };
   function XMLHttpRequestStub() {}
   XMLHttpRequestStub.prototype.open = function () {};
@@ -164,6 +167,31 @@ test("click on a button inside a disabled fieldset fails", () => {
   assertUntouched(btn);
 });
 
+test("click on a child of a disabled button fails, by selector and by point", () => {
+  // The synthetic click would bubble from the child to the button and run its
+  // onclick; a user's click there does nothing.
+  for (const params of [{ selector: "#submit span" }, { x: 5, y: 5 }]) {
+    const span = new El("span");
+    const btn = new El("button", { disabled: true }, [new El("svg", {}, [span])]);
+    assert.throws(() => loadBridge(span).click(params), /^Error: click: target is disabled$/);
+    assertUntouched(span);
+    assertUntouched(btn);
+  }
+});
+
+test("click on a child of an enabled button or of a disabled fieldset still clicks", () => {
+  // A disabled <fieldset> blocks its controls, not a plain child element.
+  const inButton = new El("span");
+  new El("button", {}, [inButton]);
+  assert.deepEqual(loadBridge(inButton).click({ selector: "span" }), { ok: true });
+  assert.ok(inButton.events.includes("click"));
+
+  const inFieldset = new El("span");
+  new El("fieldset", { disabled: true }, [inFieldset]);
+  assert.deepEqual(loadBridge(inFieldset).click({ selector: "span" }), { ok: true });
+  assert.ok(inFieldset.events.includes("click"));
+});
+
 test("click on an enabled button still dispatches the click", () => {
   const btn = new El("button");
   const pilot = loadBridge(btn);
@@ -190,6 +218,15 @@ test("click fails inside an aria-disabled ancestor unless a nearer one says fals
   assert.ok(reopened.events.includes("click"));
 });
 
+test("click reads aria-disabled through a role list or a capitalised role", () => {
+  // WAI-ARIA role attributes are token lists; the role is matched without case.
+  for (const role of ["button link", "Button", " button "]) {
+    const div = new El("div", { attrs: { role, "aria-disabled": "true" } });
+    assert.throws(() => loadBridge(div).click({ selector: "x" }), /^Error: click: target is disabled$/, role);
+    assertUntouched(div);
+  }
+});
+
 test("click ignores aria-disabled on a target whose role does not support it", () => {
   // Playwright reads aria-disabled only for roles that support it.
   const plain = new El("div");
@@ -207,12 +244,47 @@ test("fill on a disabled input or textarea fails and leaves the value", () => {
   }
 });
 
-test("fill and type on a readonly input fail and leave the value", () => {
-  const el = new El("input", { readOnly: true, value: "ro" });
-  const pilot = loadBridge(el);
-  assert.throws(() => pilot.fill({ selector: "#tmp-ro", value: "changed" }), /^Error: fill: target is readonly$/);
-  assert.throws(() => pilot.type({ selector: "#tmp-ro", text: "X" }), /^Error: type: target is readonly$/);
-  assertUntouched(el, "ro");
+test("fill and type on a readonly input or textarea fail and leave the value", () => {
+  for (const tag of ["input", "textarea"]) {
+    const el = new El(tag, { readOnly: true, value: "ro" });
+    const pilot = loadBridge(el);
+    assert.throws(() => pilot.fill({ selector: "#tmp-ro", value: "changed" }), /^Error: fill: target is readonly$/);
+    assert.throws(() => pilot.type({ selector: "#tmp-ro", text: "X" }), /^Error: type: target is readonly$/);
+    assertUntouched(el, "ro");
+  }
+});
+
+test("fill and type on an aria-readonly textbox host fail", () => {
+  // A rich-text editor in read mode keeps its contenteditable host and sets
+  // aria-readonly, as Playwright's editable check reads it.
+  const host = new El("div", { attrs: { role: "textbox", "aria-readonly": "true" } });
+  host.isContentEditable = true;
+  host.contentEditable = "true";
+  host.textContent = "orig";
+  const pilot = loadBridge(host);
+  assert.throws(() => pilot.fill({ selector: "x", value: "new" }), /^Error: fill: target is readonly$/);
+  assert.throws(() => pilot.type({ selector: "x", text: "new" }), /^Error: type: target is readonly$/);
+  assert.equal(host.textContent, "orig");
+  assertUntouched(host);
+});
+
+test("fill on a <select> ignores aria-readonly, as a native control", () => {
+  // Like Playwright: a native control reads only its native readonly state.
+  const sel = makeSelect({ attrs: { "aria-readonly": "true" } }, [
+    new El("option", { value: "a", text: "a" }),
+    new El("option", { value: "b", text: "b" }),
+  ]);
+  assert.deepEqual(loadBridge(sel).fill({ selector: "select", value: "b" }), { ok: true });
+  assert.equal(sel.value, "b");
+});
+
+test("fill still writes a textbox host with aria-readonly false", () => {
+  const host = new El("div", { attrs: { role: "textbox", "aria-readonly": "false" } });
+  host.isContentEditable = true;
+  host.contentEditable = "true";
+  host.textContent = "orig";
+  assert.deepEqual(loadBridge(host).fill({ selector: "x", value: "new" }), { ok: true });
+  assert.equal(host.textContent, "new");
 });
 
 test("type on a disabled textarea fails and leaves the value", () => {
@@ -289,8 +361,7 @@ test("select and fill reject a disabled option and keep the selection", () => {
     () => pilot.fill({ selector: "select[name=role]", value: "Locked" }),
     /^Error: fill: option "Locked" is disabled$/,
   );
-  assert.equal(sel.value, "user");
-  assert.equal(sel.events.includes("change"), false);
+  assertUntouched(sel, "user");
 });
 
 test("select rejects an option inside a disabled optgroup", () => {

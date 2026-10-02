@@ -15,7 +15,7 @@ pub struct SnapshotElement {
     pub checked: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
-    /// Set by the bridge on readonly `<input>` and `<textarea>` elements.
+    /// Set by the bridge on readonly fields, native or `aria-readonly`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub readonly: Option<bool>,
     /// Set by the bridge on password inputs so text output can mask `value`.

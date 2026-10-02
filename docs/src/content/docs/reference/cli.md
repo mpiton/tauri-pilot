@@ -259,7 +259,7 @@ An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt`
 
 A textbox that is not a form control (a `contenteditable` host, `role="textbox"` or `role="searchbox"`) reports its text, whitespace collapsed, as its `value`, so a rich-text editor's content shows up in the snapshot and in `diff`. The human-readable tree cuts a value after 50 characters, like a name, and ends it with `…`; `--json`, `--save` files, MCP results, `diff`, `value` and `assert value` keep the full value.
 
-Form controls with their own `disabled` attribute carry `disabled`, and readonly `<input>` and `<textarea>` elements carry `readonly` (`"disabled": true` and `"readonly": true` in `--json`). A control disabled only by a parent `<fieldset>` or by `aria-disabled` carries no flag, though actions refuse it. An input type on which HTML ignores `readonly` (checkbox, radio, range, color, file, and the button types) carries no `readonly` flag. `diff` reports either flag changing.
+Form controls with their own `disabled` attribute carry `disabled`, and readonly fields carry `readonly` (`"disabled": true` and `"readonly": true` in `--json`): a readonly `<input>` or `<textarea>`, or an element whose role supports `aria-readonly` (textbox, searchbox, combobox and the like) with `aria-readonly="true"`. A control disabled only by a parent `<fieldset>` or by `aria-disabled` carries no flag, though actions refuse it. An input type on which HTML ignores `readonly` (checkbox, radio, range, color, file, and the button types) carries no `readonly` flag. `diff` reports either flag changing.
 
 Password inputs display `value=[redacted]` in human-readable output, like `forms`. The raw value stays in `--json` mode, in `--save` files and in MCP results, where the element carries `"sensitive": true`. `value @ref` still reads it.
 
@@ -452,10 +452,13 @@ For `contains` and `url`, `expected` is the substring that was searched for.
 Simulate a realistic click on an element (dispatches focus → mousedown → mouseup → click events).
 
 Fails with `click: target is disabled`, firing no event, when the target is
-disabled: a control with `disabled`, one inside a disabled `<fieldset>`, or
-an element whose role supports `aria-disabled` (button, link, checkbox,
-menuitem, tab, textbox and the like) with `aria-disabled="true"` on itself
-or an ancestor, the nearest explicit value winning, as in Playwright. The
+disabled: a control with `disabled`, one inside a disabled `<fieldset>`, an
+element inside a disabled `<button>` or other form control (such as an icon
+in a disabled button, whether reached by selector or by `--x`/`--y`), or an
+element whose role supports `aria-disabled` (button, link, checkbox,
+menuitem, tab, textbox and the like; any token of a `role` list counts) with
+`aria-disabled="true"` on itself or an ancestor, the nearest explicit value
+winning, as in Playwright. The
 browser drops a user's click on a disabled control, but not a synthetic one,
 so without this check a disabled button's `onclick` would run.
 
@@ -493,9 +496,12 @@ reported `ok` means the value was written.
 Fails with `fill: target is disabled` on a disabled target (same rules as
 `click`) and `fill: target is readonly` on a readonly `<input>` or
 `<textarea>` (not on input types where HTML ignores `readonly`, such as
-`range`). On a `<select>`, a disabled option (or one inside a disabled
-`<optgroup>`) fails with `fill: option "<value>" is disabled`. The target
-keeps its value and no event fires.
+`range`), or on an element whose role supports `aria-readonly` (textbox,
+searchbox, combobox and the like) with `aria-readonly="true"`, such as a
+rich-text editor in read mode. On a `<select>`, a disabled option (or one
+inside a disabled `<optgroup>`) fails with
+`fill: option "<value>" is disabled`. The target keeps its value and no
+event fires: the options are checked before `fill` focuses it.
 
 ```bash
 tauri-pilot fill <target> <value>

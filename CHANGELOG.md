@@ -46,19 +46,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `click`, `fill`, `type` and `select` refuse a disabled target with
   `<action>: target is disabled`, and `fill` and `type` refuse a readonly
-  `<input>` or `<textarea>` with `<action>: target is readonly` (not on
-  input types where HTML ignores `readonly`, such as `range`). Disabled
-  means `disabled` on the control or a parent `<fieldset>`, or
-  `aria-disabled="true"` on an element whose role supports it (button,
-  link, checkbox, menuitem, tab, textbox and the like) or its nearest
+  field with `<action>: target is readonly`: a readonly `<input>` (not on
+  input types where HTML ignores `readonly`, such as `range`) or
+  `<textarea>`, or an element whose role supports `aria-readonly` (textbox,
+  searchbox, combobox and the like) with `aria-readonly="true"`, such as a
+  rich-text editor in read mode. Disabled means `disabled` on the control or
+  a parent `<fieldset>`, a target inside a disabled `<button>` or other
+  form control (an icon in a disabled button), or `aria-disabled="true"` on
+  an element whose role supports it (button, link, checkbox, menuitem, tab,
+  textbox and the like; any token of a `role` list counts) or its nearest
   ancestor that sets it, as Playwright does. `select`, and `fill` on a
   `<select>`, refuse a disabled option or one inside a disabled `<optgroup>`
-  with `select: option "<value>" is disabled`. The element keeps its value
-  and no event fires. `check` on a disabled input now fails with
-  `check: target is disabled` instead of `check did not change the target`.
-  Migration: a script that drives a disabled or readonly control on purpose
-  (to set up state) must enable it first, for example with `eval`, or set
-  the value through `eval`. [#324]
+  with `<command>: option "<value>" is disabled` (`select:` or `fill:`).
+  The element keeps its value and no event fires. `check` on a disabled
+  input now fails with `check: target is disabled` instead of
+  `check did not change the target`. Migration: a script that drives a
+  disabled or readonly control on purpose (to set up state) must enable it
+  first, for example with `eval`, or set the value through `eval`. Rust
+  code that builds `tauri_plugin_pilot::diff::SnapshotElement` by hand adds
+  `readonly: None`. [#324]
 
 - `select` now fires `input` then `change`, once each, like a user's pick;
   it fired only `change` before. Migration: an app that listens to `input`
