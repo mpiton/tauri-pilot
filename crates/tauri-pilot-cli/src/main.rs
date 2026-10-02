@@ -50,23 +50,8 @@ async fn main() -> Result<()> {
         return mcp::run_mcp_server(args.socket, args.window).await;
     }
 
-    if let Command::Run {
-        ref scenario,
-        ref junit,
-        no_fail_fast,
-        ref screenshots_dir,
-    } = args.command
-    {
-        return run_scenario_command(
-            scenario,
-            junit.as_deref(),
-            no_fail_fast,
-            screenshots_dir,
-            args.socket,
-            args.window.as_deref(),
-            args.json,
-        )
-        .await;
+    if let Some(outcome) = run_without_socket(&args).await {
+        return outcome;
     }
 
     let socket = resolve_socket(args.socket)?;
@@ -151,6 +136,41 @@ async fn main() -> Result<()> {
     }
 
     print_result(output_kind, &result, args.json)
+}
+
+/// Runs the commands that resolve their own socket or need none.
+///
+/// `run` connects per scenario step, and `replay --export` only converts the
+/// recording file, so it works with no app running (#312). Returns `None`
+/// for every other command, which needs a connected client.
+async fn run_without_socket(args: &Cli) -> Option<Result<()>> {
+    match args.command {
+        Command::Run {
+            ref scenario,
+            ref junit,
+            no_fail_fast,
+            ref screenshots_dir,
+        } => Some(
+            run_scenario_command(
+                scenario,
+                junit.as_deref(),
+                no_fail_fast,
+                screenshots_dir,
+                args.socket.clone(),
+                args.window.as_deref(),
+                args.json,
+            )
+            .await,
+        ),
+        Command::Replay {
+            ref path,
+            export: Some(ref export),
+        } => Some(
+            export_replay_file(path, export, args.window.as_deref())
+                .and_then(|result| print_result(OutputKind::Replay, &result, args.json)),
+        ),
+        _ => None,
+    }
 }
 
 /// Prints `result`; a missing `storage get` key, failed `replay` or failed
@@ -513,9 +533,10 @@ async fn run_command(
         Command::Forms(args) => run_forms_command(client, args, window).await,
         Command::Drop { target, file } => run_drop_command(client, &target, file, window).await,
         Command::Record { action } => run_record_command(client, action, window).await,
-        Command::Replay { path, export } => {
-            run_replay_command(client, &path, export.as_deref(), window).await
-        }
+        Command::Replay {
+            export: Some(_), ..
+        } => anyhow::bail!("replay --export must be handled before run_command"),
+        Command::Replay { path, export: None } => run_replay_command(client, &path, window).await,
         cmd => run_dom_command(client, cmd, window).await,
     }
 }
@@ -1226,18 +1247,20 @@ async fn run_record_command(
     }
 }
 
+/// Replays the recording at `path` over `client`, one step at a time.
+///
+/// `replay --export` never gets here: [`export_replay_file`] converts the
+/// file without a client.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read or is not a recording.
 pub(crate) async fn run_replay_command(
     client: &mut Client,
     path: &std::path::Path,
-    export: Option<&str>,
     window: Option<&str>,
 ) -> Result<Value> {
     let entries = read_replay_entries(path)?;
-
-    if let Some(fmt) = export {
-        return export_replay_command(&entries, fmt, window);
-    }
-
     let total = entries.len();
     let mut prev_ts: u64 = 0;
     let mut passed = 0;

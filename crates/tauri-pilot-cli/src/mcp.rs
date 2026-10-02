@@ -485,7 +485,7 @@ impl PilotMcpServer {
             Err(err) => return Ok(tool_error(&err)),
         };
         Ok(
-            match run_replay_command(&mut client, &path, None, window.as_deref()).await {
+            match run_replay_command(&mut client, &path, window.as_deref()).await {
                 Ok(result) => tool_success(result),
                 Err(err) => tool_error(&err),
             },

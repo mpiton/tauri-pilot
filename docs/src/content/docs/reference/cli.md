@@ -1631,7 +1631,8 @@ Replay a previously recorded session.
 tauri-pilot replay test.json
 ```
 
-Export as a shell script instead of replaying:
+Export as a shell script instead of replaying. The export only reads the
+file, so it works with no app running:
 
 ```bash
 tauri-pilot replay test.json --export sh
