@@ -1515,16 +1515,35 @@
     // "set then trust" reports success on a no-op (#113). Match the option
     // first — by `value`, then by visible label — and error if none matches so
     // a reported `ok` always means an option was actually selected.
-    const wanted = String(wantedRaw);
-    const options = Array.from(el.options || []);
-    const matched =
-      options.find((o) => o.value === wanted) ||
-      options.find((o) => (o.text || "").trim() === wanted.trim());
-    if (!matched) {
-      // `fill` delegates here too, so the prefix names the command the user
-      // actually ran rather than always "select".
-      throw new Error(command + ": no option matches " + JSON.stringify(wantedRaw));
+    // `wantedRaw` is one value or a list (#306). `fill` delegates here too, so
+    // error prefixes name the command the user actually ran.
+    const wanted = (Array.isArray(wantedRaw) ? wantedRaw : [wantedRaw]).map(String);
+    if (wanted.length === 0) {
+      throw new Error(command + ": no value given");
     }
+    if (wanted.length > 1 && !el.multiple) {
+      throw new Error(
+        command + ": " + wanted.length + " values given, but the <select> is not multiple",
+      );
+    }
+    const options = Array.from(el.options || []);
+    const matches = wanted.map(
+      (w) =>
+        options.find((o) => o.value === w) ||
+        options.find((o) => (o.text || "").trim() === w.trim()),
+    );
+    const missing = wanted.filter((_, i) => !matches[i]);
+    if (missing.length > 0) {
+      throw new Error(command + ": no option matches " + missing.map((w) => JSON.stringify(w)).join(", "));
+    }
+    if (el.multiple) {
+      // Assigning `.value` on a multi-select keeps only the first match, so
+      // set each option's own flag: exactly the listed options end up chosen.
+      const chosen = new Set(matches);
+      for (const o of options) o.selected = chosen.has(o);
+      return;
+    }
+    const matched = matches[0];
     const setter = nativeValueSetter(el);
     if (setter) {
       setter.call(el, matched.value);
@@ -1536,6 +1555,15 @@
   function fill(params) {
     const el = resolveTarget(params);
     requireEditable(el, "fill");
+    // `select` owns the list form (#306); `fill` keeps its one-value contract
+    // on every target, before any setter can stringify the list. Only a
+    // `<select>` can take the list through `select`, so only it gets the hint.
+    if (Array.isArray(params.value)) {
+      if (elementTag(el) === "select") {
+        throw new Error("fill takes one value; use select for several options");
+      }
+      throw new Error("fill takes one value, not a list");
+    }
     el.focus();
     let wroteViaExec = false;
     if (elementTag(el) === "select") {
@@ -1603,6 +1631,8 @@
       throw new Error("select requires a <select> element, got: " + reported);
     }
     applySelectOption(el, params.value, "select");
+    // A user's pick fires `input` then `change`, once for the whole selection.
+    el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     return { ok: true };
   }

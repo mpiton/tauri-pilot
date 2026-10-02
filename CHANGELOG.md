@@ -30,8 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assert` command's checks and failure messages, so `assert-text`,
   `assert-value`, `assert-url`, `assert-visible` and `assert-hidden` fail on
   a response without the field they read instead of defaulting it. [#305]
+- `select <target> <value>...` takes one or more values. On a
+  `<select multiple>`, exactly the listed options end up selected (the
+  others are deselected); on a single select, more than one value is an
+  error. Values match an option's `value`, then its visible label, and an
+  unknown value fails naming every value that matched nothing, with the
+  selection left as it was. `fill` still takes one value and rejects a
+  list. The `select` JSON-RPC method and MCP tool take `value` as a string
+  or a list of strings, the TOML `select` step takes `value = ["a", "b"]`,
+  and recordings and `replay --export sh` keep the whole list. A value
+  starting with `-` goes after `--` (`select "#size" -- -1`), which the
+  exported script always writes. [#306]
 
 ### Changed
+
+- `select` now fires `input` then `change`, once each, like a user's pick;
+  it fired only `change` before. Migration: an app that listens to `input`
+  on a `<select>` now sees one `input` per `select` call, before `change`.
+  [#306]
 
 - Recording format: `record` no longer saves only the snapshot ref of a step.
   Before the action runs, the bridge resolves the ref to a stable `selector`
@@ -1554,3 +1570,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#308]: https://github.com/mpiton/tauri-pilot/issues/308
 [#310]: https://github.com/mpiton/tauri-pilot/issues/310
 [#312]: https://github.com/mpiton/tauri-pilot/issues/312
+[#306]: https://github.com/mpiton/tauri-pilot/issues/306

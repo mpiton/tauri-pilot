@@ -93,8 +93,14 @@ pub(crate) enum Command {
     Type { target: String, text: String },
     /// Press a keyboard key.
     Press { key: String },
-    /// Select an option in a <select>.
-    Select { target: String, value: String },
+    /// Select options in a <select>: one value, or several for a <select multiple>.
+    Select {
+        target: String,
+        /// Option values or visible labels. A multi-select ends up with
+        /// exactly these selected; a single select takes one.
+        #[arg(num_args = 1.., required = true)]
+        values: Vec<String>,
+    },
     /// Toggle a checkbox, or select a radio input.
     Check { target: String },
     /// Scroll the page or an element.
@@ -858,6 +864,36 @@ mod tests {
     fn test_parse_drop_requires_file() {
         let result = Cli::try_parse_from(["tauri-pilot", "--socket", "/tmp/t.sock", "drop", "@e3"]);
         assert!(result.is_err());
+    }
+
+    /// A flag after the values stays a flag; a value starting with `-`
+    /// needs `--` before the values (#306).
+    #[test]
+    fn test_parse_select_trailing_flags_and_dash_values() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "select",
+            "#s",
+            "a",
+            "--window",
+            "w",
+            "--json",
+        ]);
+        assert_eq!(cli.window.as_deref(), Some("w"));
+        assert!(cli.json);
+        let Command::Select { values, .. } = cli.command else {
+            panic!("expected Select command");
+        };
+        assert_eq!(values, ["a"]);
+
+        let cli = Cli::parse_from(["tauri-pilot", "select", "#s", "--", "-1", "--none--"]);
+        let Command::Select { values, .. } = cli.command else {
+            panic!("expected Select command");
+        };
+        assert_eq!(values, ["-1", "--none--"]);
+
+        // Without `--`, a dash-prefixed value is rejected, never read as a value.
+        assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s", "-1"]).is_err());
     }
 
     #[test]

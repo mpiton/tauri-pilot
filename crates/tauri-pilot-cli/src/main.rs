@@ -706,9 +706,9 @@ async fn run_dom_command(
                 .call("press", with_window(Some(json!({"key": key})), window))
                 .await
         }
-        Command::Select { target, value } => {
+        Command::Select { target, values } => {
             let mut p = target_params(&target);
-            p["value"] = json!(value);
+            p["value"] = select_value_param(&values);
             client.call("select", with_window(Some(p), window)).await
         }
         Command::Check { target } => {
@@ -1114,6 +1114,18 @@ pub(crate) fn target_params(raw: &str) -> serde_json::Value {
         Target::Ref(r) => json!({"ref": r}),
         Target::Selector(s) => json!({"selector": s}),
         Target::Coords(x, y) => json!({"x": x, "y": y}),
+    }
+}
+
+/// Build the `value` param of a `select` call from the requested options.
+///
+/// One value stays a string, as every plugin version reads it; several go
+/// out as a list, which a `<select multiple>` applies as its whole
+/// selection (#306).
+pub(crate) fn select_value_param(values: &[String]) -> Value {
+    match values {
+        [one] => json!(one),
+        many => json!(many),
     }
 }
 
@@ -1562,8 +1574,16 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
             format!("tauri-pilot press {}", shell_escape(key))
         }
         "select" => {
-            let value = entry.get("value").and_then(|v| v.as_str()).unwrap_or("");
-            format!("tauri-pilot select {target} {}", shell_escape(value))
+            // A multi-select step records its whole list (#306).
+            let values: Vec<&str> = match entry.get("value") {
+                Some(Value::Array(items)) => {
+                    items.iter().map(|v| v.as_str().unwrap_or("")).collect()
+                }
+                other => vec![other.and_then(Value::as_str).unwrap_or("")],
+            };
+            let quoted: Vec<String> = values.into_iter().map(shell_escape).collect();
+            // `--` keeps a value like `-1` from being read as a flag.
+            format!("tauri-pilot select {target} -- {}", quoted.join(" "))
         }
         "check" => format!("tauri-pilot check {target}"),
         "scroll" => {
@@ -2555,6 +2575,31 @@ mod tests {
         assert_eq!(
             entry_to_cli_command("scroll", &json!({"direction": "down", "x": -10, "y": 20})),
             "tauri-pilot scroll 'down' --target=-10,20"
+        );
+    }
+
+    /// #306: a recorded multi-select step exports every value, each quoted,
+    /// and a single value still exports as before.
+    #[test]
+    fn test_entry_to_cli_command_select_exports_every_value() {
+        assert_eq!(
+            entry_to_cli_command(
+                "select",
+                &json!({"selector": "select[name=skills]", "value": ["rust", "it's go"]})
+            ),
+            "tauri-pilot select 'select[name=skills]' -- 'rust' 'it'\\''s go'"
+        );
+        assert_eq!(
+            entry_to_cli_command("select", &json!({"ref": "e5", "value": "admin"})),
+            "tauri-pilot select '@e5' -- 'admin'"
+        );
+        // Quoting does not stop clap reading `-1` as a flag; `--` does.
+        assert_eq!(
+            entry_to_cli_command(
+                "select",
+                &json!({"selector": "#size", "value": ["-1", "--none--"]})
+            ),
+            "tauri-pilot select '#size' -- '-1' '--none--'"
         );
     }
 
