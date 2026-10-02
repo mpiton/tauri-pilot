@@ -182,7 +182,7 @@ impl PilotMcpServer {
             }
             "select" => {
                 let mut params = target_params(&required_string(&args, "target")?);
-                params["value"] = json!(required_string(&args, "value")?);
+                params["value"] = required_select_value(&args)?;
                 self.call_app_tool("select", Some(params), window).await
             }
             "check" => self.target_call("check", &args, window).await,
@@ -1043,8 +1043,8 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "select",
-            description: "Select an option in a select element.",
-            schema: fill_schema,
+            description: "Select options in a select element: one value, or a list for a <select multiple>, which ends up with exactly those options selected. Matches option values, then visible labels. Errors on an unknown value, or on a list for a single select.",
+            schema: select_schema,
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1493,6 +1493,21 @@ fn required_string_array(args: &JsonObject, name: &str) -> Result<Vec<String>, M
         .collect()
 }
 
+/// Read the `select` tool's `value`: a string, or a non-empty list of strings.
+///
+/// One value goes out as a string and a list as a list, as `select` on the
+/// CLI sends them (#306).
+fn required_select_value(args: &JsonObject) -> Result<Value, McpError> {
+    const SHAPE: &str = "'value' is required and must be a string or a non-empty array of strings";
+    match args.get("value") {
+        Some(Value::String(value)) => Ok(json!(value)),
+        Some(Value::Array(items)) if !items.is_empty() && items.iter().all(Value::is_string) => {
+            Ok(Value::Array(items.clone()))
+        }
+        _ => Err(invalid_params(SHAPE)),
+    }
+}
+
 fn insert_optional_string(
     params: &mut Map<String, Value>,
     args: &JsonObject,
@@ -1611,6 +1626,25 @@ fn fill_schema() -> Arc<JsonObject> {
         props([
             ("target", target_prop("Element to act on")),
             ("value", string_prop("Value to set.")),
+        ]),
+        &["target", "value"],
+    )
+}
+
+fn select_schema() -> Arc<JsonObject> {
+    object_schema(
+        props([
+            ("target", target_prop("Element to act on")),
+            (
+                "value",
+                json!({
+                    "description": "Option value or visible label, or a list of them for a <select multiple>.",
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                    ],
+                }),
+            ),
         ]),
         &["target", "value"],
     )
@@ -3215,6 +3249,90 @@ path = "/tmp/out.png"
 
         server.await.expect("mock server task");
         let _ = std::fs::remove_file(&socket);
+    }
+
+    /// `assert_unchecked` passes on `checked: false` and fails with
+    /// `element is checked` on `checked: true` (#286).
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn select_tool_forwards_a_string_or_a_list_value() {
+        for (value, sent) in [
+            (json!("admin"), json!("admin")),
+            (json!(["rust", "go"]), json!(["rust", "go"])),
+        ] {
+            let socket = std::env::temp_dir().join(format!(
+                "tauri-pilot-mcp-select-{}-{}.sock",
+                sent.is_array(),
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&socket);
+            let listener = UnixListener::bind(&socket).expect("bind mock socket");
+            let expected = json!({"selector": "#skills", "value": sent});
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let (reader, mut writer) = stream.into_split();
+                let mut reader = BufReader::new(reader);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.expect("read request");
+                let request: Request = serde_json::from_str(line.trim()).expect("parse request");
+                assert_eq!(request.method, "select");
+                assert_eq!(request.params, Some(expected));
+                let mut response =
+                    serde_json::to_vec(&Response::success(request.id, json!({"ok": true})))
+                        .expect("serialize response");
+                response.push(b'\n');
+                writer.write_all(&response).await.expect("write response");
+            });
+
+            let pilot = PilotMcpServer::new(Some(socket.clone()), None);
+            let mut args = Map::new();
+            args.insert("target".to_owned(), json!("#skills"));
+            args.insert("value".to_owned(), value);
+            let result = pilot
+                .call_tool_by_name("select", args)
+                .await
+                .expect("tool call succeeds");
+            assert_eq!(result.is_error, Some(false));
+            server.await.expect("mock server task");
+            let _ = std::fs::remove_file(&socket);
+        }
+    }
+
+    /// A list that is empty or holds a non-string is rejected before any
+    /// request (#306).
+    #[tokio::test]
+    async fn select_tool_rejects_an_empty_or_non_string_list() {
+        let pilot = PilotMcpServer::new(Some(PathBuf::from("/nonexistent.sock")), None);
+        for value in [json!([]), json!(["rust", 3]), json!(3)] {
+            let mut args = Map::new();
+            args.insert("target".to_owned(), json!("#skills"));
+            args.insert("value".to_owned(), value.clone());
+            let err = pilot
+                .call_tool_by_name("select", args)
+                .await
+                .expect_err("select must reject the value");
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "value: {value}");
+            assert!(err.message.contains("'value'"), "{}", err.message);
+        }
+    }
+
+    /// The advertised schema lets `value` be a string or a list of strings.
+    #[test]
+    fn select_tool_schema_accepts_a_string_or_a_list() {
+        let schema = (tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "select")
+            .expect("select tool")
+            .schema)();
+        let value = &schema["properties"]["value"];
+        assert_eq!(
+            value["anyOf"],
+            json!([
+                {"type": "string"},
+                {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            ]),
+            "{value}"
+        );
     }
 
     /// `assert_unchecked` passes on `checked: false` and fails with

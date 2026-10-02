@@ -146,7 +146,7 @@ the JavaScript do not need escaping.
 | `fill` | Clear + type in an input, textarea, select, or contenteditable |
 | `type` | Type without clearing |
 | `press` | Send a keystroke |
-| `select` | Select a dropdown option |
+| `select` | Select a dropdown option, or several options of a `<select multiple>` |
 | `check` | Toggle a checkbox, or select a radio |
 | `scroll` | Scroll page or element |
 | `drag` | Drag element to element or by offset (drives HTML5 *and* dnd-kit-style libraries) |

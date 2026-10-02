@@ -93,8 +93,14 @@ pub(crate) enum Command {
     Type { target: String, text: String },
     /// Press a keyboard key.
     Press { key: String },
-    /// Select an option in a <select>.
-    Select { target: String, value: String },
+    /// Select options in a <select>: one value, or several for a <select multiple>.
+    Select {
+        target: String,
+        /// Option values or visible labels. A multi-select ends up with
+        /// exactly these selected; a single select takes one.
+        #[arg(num_args = 1.., required = true)]
+        values: Vec<String>,
+    },
     /// Toggle a checkbox, or select a radio input.
     Check { target: String },
     /// Scroll the page or an element.

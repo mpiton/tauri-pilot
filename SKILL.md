@@ -97,7 +97,7 @@ Three target formats, auto-detected:
 | `fill <target> <value>` | `fill @e2 "hello"` |
 | `type <target> <text>` | `type @e2 "abc"` |
 | `press <key>` | `press Enter` |
-| `select <target> <value>` | `select @e5 "opt1"` |
+| `select <target> <value>...` | `select @e5 "opt1"`; several values set a `<select multiple>` to exactly those options |
 | `check <target>` | `check @e6` |
 | `scroll <dir> [amount] [--target <target>]` | `scroll down 50 --target "#log"` |
 | `drag <source> [target] [--offset X,Y]` | `drag @e5 @e8` |

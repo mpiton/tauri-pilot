@@ -568,17 +568,26 @@ call `click` first if you need to focus a specific input.
 
 ### `select`
 
-Select an option in a `<select>` dropdown by value.
+Select options in a `<select>`. Each value matches an option's `value`,
+then its visible label.
 
 ```bash
-tauri-pilot select <target> <value>
+tauri-pilot select <target> <value>...
 ```
+
+On a `<select multiple>`, exactly the listed options end up selected and
+every other option is deselected, so one value leaves only that option. A
+single select takes one value; several are an error. An unknown value fails
+the command, naming every value that matched no option, and leaves the
+selection as it was. On success, `select` fires `input` then `change`, once
+each.
 
 **Example:**
 
 ```bash
 tauri-pilot select "#status-filter" "open"
 tauri-pilot select @e5 "closed"
+tauri-pilot select 'select[name=skills]' rust go
 ```
 
 ---
@@ -1777,7 +1786,8 @@ other keys depend on the action:
 | Action | Required | Optional |
 |--------|----------|----------|
 | `click`, `check` | `target` | |
-| `fill`, `select` | `target` | `value` |
+| `fill` | `target` | `value` |
+| `select` | `target` | `value` (a string, or a list such as `["rust", "go"]` for a `<select multiple>`) |
 | `type` | `target` | `text` |
 | `press` | `key` | |
 | `scroll` | | `target`, `direction`, `amount` |

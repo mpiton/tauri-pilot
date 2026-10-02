@@ -195,3 +195,80 @@ test("type rejects a select target", () => {
   );
   assert.equal(el.selectedIndex, -1);
 });
+
+// #306: a <select multiple> takes a list and ends up with exactly those
+// options selected, whatever was selected before.
+function makeSkills() {
+  const el = makeSelect([
+    { value: "rust", text: "Rust" },
+    { value: "js", text: "JavaScript" },
+    { value: "python", text: "Python" },
+    { value: "go", text: "Go" },
+  ]);
+  el.multiple = true;
+  el._options[0].selected = true;
+  el._options[1].selected = true;
+  return el;
+}
+
+function selectedValues(el) {
+  return el._options.filter((o) => o.selected).map((o) => o.value);
+}
+
+test("select with a list selects exactly those options of a multi-select", () => {
+  const el = makeSkills();
+  const pilot = loadBridge({ queryResult: el });
+
+  const result = pilot.select({ selector: "select[name=skills]", value: ["rust", "Go"] });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(selectedValues(el), ["rust", "go"]);
+  assert.deepEqual(el.events, ["input", "change"], "input and change fire once each");
+});
+
+test("select with one value on a multi-select keeps only that option", () => {
+  const el = makeSkills();
+  const pilot = loadBridge({ queryResult: el });
+
+  pilot.select({ selector: "select[name=skills]", value: "go" });
+
+  assert.deepEqual(selectedValues(el), ["go"]);
+});
+
+test("select rejects several values on a single select", () => {
+  const el = makeSelect([
+    { value: "user", text: "User" },
+    { value: "admin", text: "Admin" },
+  ]);
+  const pilot = loadBridge({ queryResult: el });
+
+  assert.throws(
+    () => pilot.select({ selector: "select[name=role]", value: ["user", "admin"] }),
+    /^Error: select: 2 values given, but the <select> is not multiple$/,
+  );
+  assert.equal(el.selectedIndex, -1);
+  assert.deepEqual(el.events, []);
+});
+
+test("select names every unknown value and leaves the selection alone", () => {
+  const el = makeSkills();
+  const pilot = loadBridge({ queryResult: el });
+
+  assert.throws(
+    () => pilot.select({ selector: "select[name=skills]", value: ["rust", "zig", "c"] }),
+    /^Error: select: no option matches "zig", "c"$/,
+  );
+  assert.deepEqual(selectedValues(el), ["rust", "js"]);
+  assert.deepEqual(el.events, []);
+});
+
+test("select rejects an empty list", () => {
+  const el = makeSkills();
+  const pilot = loadBridge({ queryResult: el });
+
+  assert.throws(
+    () => pilot.select({ selector: "select[name=skills]", value: [] }),
+    /^Error: select: no value given$/,
+  );
+  assert.deepEqual(selectedValues(el), ["rust", "js"]);
+});

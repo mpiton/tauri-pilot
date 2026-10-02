@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use crate::cli::AssertKind;
 use crate::client::Client;
 use crate::{
-    build_scroll_params, build_wait_params, run_assert_command, target_params, with_window,
+    build_scroll_params, build_wait_params, hidden_target_params, run_assert_command,
+    select_value_param, target_params, with_window,
 };
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
@@ -56,6 +57,15 @@ fn default_true() -> bool {
     true
 }
 
+/// A step `value`: one string, or a list for a `select` on a
+/// `<select multiple>` (#306).
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum StepValue {
+    One(String),
+    Many(Vec<String>),
+}
+
 #[allow(clippy::struct_field_names)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,7 +74,7 @@ pub(crate) struct Step {
     pub(crate) action: String,
     pub(crate) timeout_ms: Option<u64>,
     pub(crate) target: Option<String>,
-    pub(crate) value: Option<String>,
+    pub(crate) value: Option<StepValue>,
     pub(crate) text: Option<String>,
     pub(crate) key: Option<String>,
     pub(crate) url: Option<String>,
@@ -200,6 +210,15 @@ impl Step {
                 _ => "",
             };
             return Err(format!("step '{action}' does not accept '{key}'{hint}"));
+        }
+        match (&self.value, action) {
+            (Some(StepValue::Many(_)), "fill") => {
+                return Err("step 'fill' takes one 'value', not a list".into());
+            }
+            (Some(StepValue::Many(values)), _) if values.is_empty() => {
+                return Err(format!("step '{action}' requires at least one 'value'"));
+            }
+            _ => {}
         }
         if action == "wait" {
             match (self.target.is_some(), self.selector.is_some()) {
@@ -474,7 +493,11 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
         }
         "fill" => {
             let t = require_target(step)?;
-            let value = step.value.as_deref().unwrap_or("");
+            // `check_keys` rejects a list here when the file loads.
+            let value = match &step.value {
+                Some(StepValue::One(value)) => value.as_str(),
+                Some(StepValue::Many(_)) | None => "",
+            };
             let mut p = target_params(t);
             p["value"] = json!(value);
             client.call("fill", with_window(Some(p), window)).await
@@ -497,9 +520,12 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
         }
         "select" => {
             let t = require_target(step)?;
-            let value = step.value.as_deref().unwrap_or("");
             let mut p = target_params(t);
-            p["value"] = json!(value);
+            p["value"] = match &step.value {
+                Some(StepValue::One(value)) => json!(value),
+                Some(StepValue::Many(values)) => select_value_param(values),
+                None => json!(""),
+            };
             client.call("select", with_window(Some(p), window)).await
         }
         "check" => {
@@ -1272,6 +1298,27 @@ target = "#btn"
             msg.contains("Failed to parse scenario TOML"),
             "unexpected error: {msg}"
         );
+    }
+
+    /// A list `value` is for `select` only, and never empty (#306).
+    #[test]
+    fn parse_scenario_checks_list_values() {
+        let select = "[[step]]\naction = \"select\"\ntarget = \"#s\"\nvalue = [\"a\", \"b\"]\n";
+        assert!(parse_scenario(select).is_ok());
+        for (toml_str, want) in [
+            (
+                "[[step]]\naction = \"fill\"\ntarget = \"#s\"\nvalue = [\"a\", \"b\"]\n",
+                "step 1: step 'fill' takes one 'value', not a list",
+            ),
+            (
+                "[[step]]\naction = \"select\"\ntarget = \"#s\"\nvalue = []\n",
+                "step 1: step 'select' requires at least one 'value'",
+            ),
+        ] {
+            let err = parse_scenario(toml_str).expect_err("invalid value");
+            let msg = format!("{err:#}");
+            assert!(msg.contains(want), "unexpected error: {msg}");
+        }
     }
 
     #[test]
