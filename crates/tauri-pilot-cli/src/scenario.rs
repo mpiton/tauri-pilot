@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use crate::cli::AssertKind;
 use crate::client::Client;
 use crate::{
-    build_scroll_params, build_wait_params, hidden_target_params, run_assert_command,
-    select_value_param, target_params, with_window,
+    build_scroll_params, build_wait_params, run_assert_command, select_value_param, target_params,
+    with_window,
 };
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
@@ -212,8 +212,8 @@ impl Step {
             return Err(format!("step '{action}' does not accept '{key}'{hint}"));
         }
         match (&self.value, action) {
-            (Some(StepValue::Many(_)), "fill") => {
-                return Err("step 'fill' takes one 'value', not a list".into());
+            (Some(StepValue::Many(_)), _) if action != "select" => {
+                return Err(format!("step '{action}' takes one 'value', not a list"));
             }
             (Some(StepValue::Many(values)), _) if values.is_empty() => {
                 return Err(format!("step '{action}' requires at least one 'value'"));
@@ -762,10 +762,11 @@ async fn storage_set_step(client: &mut Client, step: &Step, window: Option<&str>
         .key
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("storage-set step requires 'key'"))?;
-    let value = step
-        .value
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("storage-set step requires 'value'"))?;
+    let value = match &step.value {
+        Some(StepValue::One(value)) => value.as_str(),
+        Some(StepValue::Many(_)) => anyhow::bail!("storage-set step takes one 'value', not a list"),
+        None => anyhow::bail!("storage-set step requires 'value'"),
+    };
     let params = json!({"key": key, "value": value, "session": step.session.unwrap_or(false)});
     let result = client
         .call("storage.set", with_window(Some(params), window))
@@ -1309,6 +1310,10 @@ target = "#btn"
             (
                 "[[step]]\naction = \"fill\"\ntarget = \"#s\"\nvalue = [\"a\", \"b\"]\n",
                 "step 1: step 'fill' takes one 'value', not a list",
+            ),
+            (
+                "[[step]]\naction = \"storage-set\"\nkey = \"k\"\nvalue = [\"a\"]\n",
+                "step 1: step 'storage-set' takes one 'value', not a list",
             ),
             (
                 "[[step]]\naction = \"select\"\ntarget = \"#s\"\nvalue = []\n",
