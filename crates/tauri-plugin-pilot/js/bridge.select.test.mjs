@@ -197,6 +197,27 @@ test("fill takes one value, even on a multi-select", () => {
   assert.equal(el.selectedIndex, -1);
 });
 
+test("fill rejects a list on an input before writing it", () => {
+  const input = {
+    tagName: "INPUT",
+    value: "old",
+    events: [],
+    dispatchEvent(event) {
+      this.events.push(event.type);
+      return true;
+    },
+    focus() {},
+  };
+  const pilot = loadBridge({ queryResult: input });
+
+  assert.throws(
+    () => pilot.fill({ selector: "input[name=tags]", value: ["a", "b"] }),
+    /^Error: fill takes one value; use select for several options$/,
+  );
+  assert.equal(input.value, "old");
+  assert.deepEqual(input.events, []);
+});
+
 test("type rejects a select target", () => {
   const el = makeSelect([
     { value: "user", text: "User" },

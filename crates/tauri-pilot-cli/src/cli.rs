@@ -891,6 +891,9 @@ mod tests {
             panic!("expected Select command");
         };
         assert_eq!(values, ["-1", "--none--"]);
+
+        // Without `--`, a dash-prefixed value is rejected, never read as a value.
+        assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s", "-1"]).is_err());
     }
 
     #[test]

@@ -1555,13 +1555,14 @@
   function fill(params) {
     const el = resolveTarget(params);
     requireEditable(el, "fill");
+    // `select` owns the list form (#306); `fill` keeps its one-value contract
+    // on every target, before any setter can stringify the list.
+    if (Array.isArray(params.value)) {
+      throw new Error("fill takes one value; use select for several options");
+    }
     el.focus();
     let wroteViaExec = false;
     if (elementTag(el) === "select") {
-      // `select` owns the list form (#306); `fill` keeps its one-value contract.
-      if (Array.isArray(params.value)) {
-        throw new Error("fill takes one value; use select for several options");
-      }
       applySelectOption(el, params.value, "fill");
     } else if (isValueElement(el)) {
       const setter = nativeValueSetter(el);
