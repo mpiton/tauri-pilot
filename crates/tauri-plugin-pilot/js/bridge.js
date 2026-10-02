@@ -1091,6 +1091,8 @@
           if (inputType === "password") entry.sensitive = true;
         }
         if (node.disabled) entry.disabled = true;
+        // fill and type refuse a readonly field, so the snapshot says so (#324).
+        if (isReadOnly(node)) entry.readonly = true;
         elements.push(entry);
       }
 
@@ -1349,6 +1351,7 @@
 
   function click(params) {
     const el = resolveTarget(params);
+    requireEnabled(el, "click");
     const rect = el.getBoundingClientRect();
     const x = params.x != null ? params.x : rect.left + rect.width / 2;
     const y = params.y != null ? params.y : rect.top + rect.height / 2;
@@ -1441,6 +1444,69 @@
     throw new Error(action + " requires an <input>, <textarea>, or contenteditable element, got: " + reported);
   }
 
+  // `:disabled` covers a control inside a disabled <fieldset> and an option
+  // inside a disabled <optgroup>, which the `disabled` property misses.
+  function matchesDisabled(node) {
+    return typeof node.matches === "function" && node.matches(":disabled");
+  }
+
+  // Roles whose own `aria-disabled` counts, as in Playwright's actionability
+  // check (WAI-ARIA lists the roles that support the attribute).
+  const ARIA_DISABLED_ROLES = new Set([
+    "application", "button", "checkbox", "columnheader", "combobox", "composite",
+    "grid", "gridcell", "group", "input", "link", "listbox", "menu", "menubar",
+    "menuitem", "menuitemcheckbox", "menuitemradio", "option", "radio",
+    "radiogroup", "row", "rowheader", "scrollbar", "searchbox", "select",
+    "separator", "slider", "spinbutton", "switch", "tab", "tablist", "textbox", "toolbar",
+    "tree", "treegrid", "treeitem",
+  ]);
+
+  // Like Playwright: a target whose role supports `aria-disabled` reads it on
+  // itself, then on its ancestors, the nearest explicit value winning. A
+  // control disabled this way blocks a user as much as a native `disabled`.
+  function isAriaDisabled(el) {
+    if (typeof el.getAttribute !== "function" || !ARIA_DISABLED_ROLES.has(getRole(el))) return false;
+    for (let node = el; node && typeof node.getAttribute === "function"; node = node.parentElement) {
+      const value = node.getAttribute("aria-disabled");
+      if (value === null) continue;
+      const lowered = String(value).toLowerCase();
+      if (lowered === "true") return true;
+      if (lowered === "false") return false;
+    }
+    return false;
+  }
+
+  // HTML ignores `readonly` on these input types, though the `readOnly`
+  // property still reflects the attribute.
+  const READONLY_IGNORED_TYPES = new Set([
+    "button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit",
+  ]);
+
+  // Whether HTML makes the field readonly: a <textarea>, or an <input> whose
+  // type honours the attribute.
+  function isReadOnly(el) {
+    if (el.readOnly !== true) return false;
+    const tag = elementTag(el);
+    if (tag === "textarea") return true;
+    if (tag !== "input") return false;
+    const type = String(el.getAttribute("type") || "text").toLowerCase();
+    return !READONLY_IGNORED_TYPES.has(type);
+  }
+
+  // A user cannot act on a disabled control, so the action fails before
+  // touching the element or firing any event (#324). Synthetic events bypass
+  // the browser's own block: a disabled button's onclick runs on
+  // `dispatchEvent`.
+  function requireEnabled(el, action) {
+    if (matchesDisabled(el) || isAriaDisabled(el)) throw new Error(action + ": target is disabled");
+  }
+
+  // `fill` and `type` also need a field a user could edit (#324).
+  function requireWritable(el, action) {
+    requireEnabled(el, action);
+    if (isReadOnly(el)) throw new Error(action + ": target is readonly");
+  }
+
   // Without an action the error stays neutral: `checked` backs both
   // `assert checked` and `assert unchecked`, so naming it misleads (#311).
   function requireCheckable(el, action) {
@@ -1508,6 +1574,17 @@
     }
   }
 
+  // A user cannot pick a disabled option, nor one in a disabled <optgroup>
+  // (#324). `wanted[i]` is the value given for the option `matches[i]`.
+  function rejectDisabledOptions(wanted, matches, command) {
+    const locked = wanted.filter((_, i) => matchesDisabled(matches[i]));
+    if (locked.length === 0) return;
+    const quoted = locked.map((w) => JSON.stringify(w)).join(", ");
+    throw new Error(
+      command + (locked.length === 1 ? ": option " + quoted + " is disabled" : ": options " + quoted + " are disabled"),
+    );
+  }
+
   function applySelectOption(el, wantedRaw, command) {
     // Resolve the target option before mutating anything. Setting
     // `HTMLSelectElement.value` to a string that matches no option `value`
@@ -1536,6 +1613,7 @@
     if (missing.length > 0) {
       throw new Error(command + ": no option matches " + missing.map((w) => JSON.stringify(w)).join(", "));
     }
+    rejectDisabledOptions(wanted, matches, command);
     if (el.multiple) {
       // Assigning `.value` on a multi-select keeps only the first match, so
       // set each option's own flag: exactly the listed options end up chosen.
@@ -1555,6 +1633,7 @@
   function fill(params) {
     const el = resolveTarget(params);
     requireEditable(el, "fill");
+    requireWritable(el, "fill");
     // `select` owns the list form (#306); `fill` keeps its one-value contract
     // on every target, before any setter can stringify the list. Only a
     // `<select>` can take the list through `select`, so only it gets the hint.
@@ -1593,6 +1672,7 @@
       throw new Error("type cannot target a <select>; use fill or select");
     }
     requireEditable(el, "type");
+    requireWritable(el, "type");
     el.focus();
     if (!isValueElement(el)) {
       typeContentEditable(el, params.text);
@@ -1630,6 +1710,7 @@
       const reported = (tag || String(el)).slice(0, 64);
       throw new Error("select requires a <select> element, got: " + reported);
     }
+    requireEnabled(el, "select");
     applySelectOption(el, params.value, "select");
     // A user's pick fires `input` then `change`, once for the whole selection.
     el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1640,6 +1721,7 @@
   function check(params) {
     const el = resolveTarget(params);
     requireCheckable(el, "check");
+    requireEnabled(el, "check");
     const type = el && el.type != null ? String(el.type).toLowerCase() : "";
     // Radios have no click-to-uncheck; a selected one stays as it is.
     if (type === "radio" && el.checked) return { ok: true };
@@ -1649,7 +1731,7 @@
     const before = el.checked;
     el.click();
     if (el.checked === before) {
-      throw new Error("check did not change the target; it may be disabled or the page cancelled the click");
+      throw new Error("check did not change the target; the page may have cancelled the click");
     }
     return { ok: true };
   }

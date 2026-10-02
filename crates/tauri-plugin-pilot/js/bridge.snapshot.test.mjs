@@ -60,6 +60,7 @@ function makeEl(tag, props = {}) {
   };
   if ("value" in props) el.value = props.value;
   if ("disabled" in props) el.disabled = props.disabled;
+  if ("readOnly" in props) el.readOnly = props.readOnly;
   if ("isContentEditable" in props) el.isContentEditable = props.isContentEditable;
   if ("contentEditable" in props) el.contentEditable = props.contentEditable;
   if ("onclick" in props) el.onclick = props.onclick;
@@ -200,6 +201,25 @@ test("snapshot flags a password input as sensitive and keeps its raw value (#279
   assert.equal(secret.sensitive, true);
   assert.ok(plain, "the email input should be captured");
   assert.equal(plain.sensitive, undefined, "only password inputs are flagged");
+});
+
+test("snapshot flags a readonly input and textarea next to disabled (#324)", () => {
+  const ro = makeEl("input", { value: "ro", readOnly: true });
+  const ta = makeEl("textarea", { value: "t", readOnly: true, disabled: true });
+  const plain = makeEl("input", { value: "plain", readOnly: false });
+  const range = makeEl("input", { value: "7", readOnly: true, attrs: { type: "range" } });
+  const body = makeEl("body", { children: [ro, ta, plain, range] });
+  const pilot = loadBridge(body);
+
+  const { elements } = pilot.snapshot();
+  const byValue = (v) => elements.find((e) => e.value === v);
+
+  assert.equal(byValue("ro").readonly, true);
+  assert.equal(byValue("ro").disabled, undefined);
+  assert.equal(byValue("t").readonly, true);
+  assert.equal(byValue("t").disabled, true);
+  assert.equal(byValue("plain").readonly, undefined, "an editable input carries no flag");
+  assert.equal(byValue("7").readonly, undefined, "HTML ignores readonly on a range input");
 });
 
 test("snapshot includes a draggable card and assigns a usable ref (#155)", () => {

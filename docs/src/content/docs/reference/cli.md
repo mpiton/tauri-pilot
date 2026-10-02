@@ -259,6 +259,8 @@ An element's `name` comes from, in order: `aria-label`, `aria-labelledby`, `alt`
 
 A textbox that is not a form control (a `contenteditable` host, `role="textbox"` or `role="searchbox"`) reports its text, whitespace collapsed, as its `value`, so a rich-text editor's content shows up in the snapshot and in `diff`. The human-readable tree cuts a value after 50 characters, like a name, and ends it with `…`; `--json`, `--save` files, MCP results, `diff`, `value` and `assert value` keep the full value.
 
+Form controls with their own `disabled` attribute carry `disabled`, and readonly `<input>` and `<textarea>` elements carry `readonly` (`"disabled": true` and `"readonly": true` in `--json`). A control disabled only by a parent `<fieldset>` or by `aria-disabled` carries no flag, though actions refuse it. An input type on which HTML ignores `readonly` (checkbox, radio, range, color, file, and the button types) carries no `readonly` flag. `diff` reports either flag changing.
+
 Password inputs display `value=[redacted]` in human-readable output, like `forms`. The raw value stays in `--json` mode, in `--save` files and in MCP results, where the element carries `"sensitive": true`. `value @ref` still reads it.
 
 The `sensitive` flag is set by the app's bridge, so masking needs both the CLI and the app's `tauri-plugin-pilot` at this version or later; they need not match each other. Against an app built with an older plugin, `snapshot` prints the password in clear.
@@ -449,6 +451,14 @@ For `contains` and `url`, `expected` is the substring that was searched for.
 
 Simulate a realistic click on an element (dispatches focus → mousedown → mouseup → click events).
 
+Fails with `click: target is disabled`, firing no event, when the target is
+disabled: a control with `disabled`, one inside a disabled `<fieldset>`, or
+an element whose role supports `aria-disabled` (button, link, checkbox,
+menuitem, tab, textbox and the like) with `aria-disabled="true"` on itself
+or an ancestor, the nearest explicit value winning, as in Playwright. The
+browser drops a user's click on a disabled control, but not a synthetic one,
+so without this check a disabled button's `onclick` would run.
+
 ```bash
 tauri-pilot click <target>
 ```
@@ -480,6 +490,13 @@ with whitespace collapsed.
 Throws if the target cannot take a value (for example a plain `<div>`). A
 reported `ok` means the value was written.
 
+Fails with `fill: target is disabled` on a disabled target (same rules as
+`click`) and `fill: target is readonly` on a readonly `<input>` or
+`<textarea>` (not on input types where HTML ignores `readonly`, such as
+`range`). On a `<select>`, a disabled option (or one inside a disabled
+`<optgroup>`) fails with `fill: option "<value>" is disabled`. The target
+keeps its value and no event fires.
+
 ```bash
 tauri-pilot fill <target> <value>
 ```
@@ -505,7 +522,8 @@ clearing existing content first. Same target rules as `fill`, except
 `<select>` is rejected — use `fill` or `select`. Contenteditable typing also
 tries `insertText` first and falls back to `textContent`; read the result
 with `text` / `assert text`, or `value` / `assert value` (text with whitespace
-collapsed).
+collapsed). Fails with `type: target is disabled` or
+`type: target is readonly`, like `fill`.
 
 ```bash
 tauri-pilot type <target> <text>
@@ -594,6 +612,11 @@ the command, naming every value that matched no option, and leaves the
 selection as it was. On success, `select` fires `input` then `change`, once
 each.
 
+A disabled `<select>` (same rules as `click`) fails with
+`select: target is disabled`. A disabled option, or one inside a disabled
+`<optgroup>`, fails with `select: option "<value>" is disabled` (several:
+`select: options "b", "c" are disabled`), and the selection stays as it was.
+
 A value that starts with `-` (such as `-1`) reads as a flag; put `--` before
 the values to pass it: `tauri-pilot select "#size" -- -1`. Scripts written by
 `replay --export sh` always do this.
@@ -613,7 +636,8 @@ tauri-pilot select 'select[name=skills]' rust go
 Toggle an `<input type="checkbox">` (check if unchecked, uncheck if
 checked). For `<input type="radio">`, select it and leave it selected —
 an already-selected radio stays selected, matching a real click.
-Throws on any other element.
+Throws on any other element. A disabled checkbox or radio (same rules as
+`click`) fails with `check: target is disabled` before clicking.
 
 ```bash
 tauri-pilot check <target>
