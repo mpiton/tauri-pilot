@@ -1787,12 +1787,26 @@ other keys depend on the action:
 | `eval` | `script` | |
 | `screenshot` | | `path`, `selector` |
 | `assert-exists`, `assert-visible`, `assert-hidden` | `target` | |
-| `assert-text`, `assert-value` | `target`, `expected` | |
+| `assert-checked`, `assert-unchecked` | `target` | |
+| `assert-text`, `assert-value`, `assert-contains` | `target`, `expected` | |
+| `assert-count` | `selector`, `expected` | |
 | `assert-url` | `expected` | |
-| `storage-get` | `key` | |
+| `storage-get` | `key` | `session`, `expected` |
+| `storage-set` | `key`, `value` | `session` |
 | `storage-delete` | `key` | `session` |
 
 `assert-hidden` passes when a selector matches nothing, like `assert hidden`.
+Every assert step but `assert-exists` runs the same check as the matching
+`assert` command (`assert-text` as `assert text`, `assert-count` as
+`assert count`, and so on) and fails the step with the same message. A
+response without the field the check reads fails the step too.
+`assert-count` takes an integer: `expected = 3`, not `expected = "3"`; every
+other `expected` is a string.
+
+The storage steps read and write localStorage, or sessionStorage with
+`session = true`. `storage-get` fails when the key is missing; with
+`expected`, it also fails when the value differs, naming both.
+`storage-set` fails unless the app answers `{"ok": true}`.
 
 `run` checks every step against this table before it connects. An unknown
 action, a missing required key, or a key the action does not read fails the

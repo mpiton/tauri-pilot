@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `assert unchecked <target>` passes when a checkbox or radio is not checked
   and fails with `element is checked` (exit 1) when it is. MCP gets the
   matching `pilot.assert_unchecked` tool. [#286]
+- Scenario steps for the storage and assertion checks the CLI has:
+  `storage-set` (`key`, `value`, optional `session`), `assert-checked` and
+  `assert-unchecked` (`target`), `assert-count` (`selector` and an integer
+  `expected`) and `assert-contains` (`target`, `expected`). `storage-get`
+  now takes `session = true` to read sessionStorage, and an optional
+  `expected` that fails the step with the expected and actual values when
+  the stored value differs. `storage-set` fails unless the app answers
+  `{"ok": true}`. Every assert step but `assert-exists` now shares the
+  `assert` command's checks and failure messages, so `assert-text`,
+  `assert-value`, `assert-url`, `assert-visible` and `assert-hidden` fail on
+  a response without the field they read instead of defaulting it. [#305]
 
 ### Changed
 
@@ -1531,6 +1542,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#283]: https://github.com/mpiton/tauri-pilot/issues/283
 [#284]: https://github.com/mpiton/tauri-pilot/issues/284
 [#286]: https://github.com/mpiton/tauri-pilot/issues/286
+[#305]: https://github.com/mpiton/tauri-pilot/issues/305
 [#285]: https://github.com/mpiton/tauri-pilot/issues/285
 [#276]: https://github.com/mpiton/tauri-pilot/issues/276
 [#309]: https://github.com/mpiton/tauri-pilot/issues/309

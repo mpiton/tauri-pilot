@@ -837,7 +837,17 @@ async fn assert_checked_state(
     })
 }
 
-async fn run_assert_command(
+/// Runs one `assert` check and returns its verdict.
+///
+/// A miss is `Ok` with `{"ok": false, "message": ...}` (plus `expected` and
+/// `actual` for comparisons), not an error, so `print_result` can print it.
+/// Shared with the scenario `assert-*` steps.
+///
+/// # Errors
+///
+/// Returns an error when the call fails or its response lacks the field the
+/// check reads.
+pub(crate) async fn run_assert_command(
     client: &mut Client,
     kind: AssertKind,
     window: Option<&str>,

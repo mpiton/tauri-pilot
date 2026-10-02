@@ -6,9 +6,10 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::cli::AssertKind;
 use crate::client::Client;
 use crate::{
-    build_scroll_params, build_wait_params, hidden_target_params, target_params, with_window,
+    build_scroll_params, build_wait_params, run_assert_command, target_params, with_window,
 };
 
 // ── TOML schema ──────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ pub(crate) struct Step {
     pub(crate) key: Option<String>,
     pub(crate) url: Option<String>,
     pub(crate) script: Option<String>,
-    pub(crate) expected: Option<String>,
+    pub(crate) expected: Option<Expected>,
     pub(crate) selector: Option<String>,
     pub(crate) direction: Option<String>,
     pub(crate) amount: Option<i32>,
@@ -77,6 +78,20 @@ pub(crate) struct Step {
     pub(crate) require_mutation: Option<bool>,
     pub(crate) path: Option<PathBuf>,
     pub(crate) session: Option<bool>,
+}
+
+/// The `expected` key of a step: a count on `assert-count`, text elsewhere.
+///
+/// TOML tells the two apart (`expected = 3` against `expected = "3"`), and
+/// [`Step::check_keys`] rejects the wrong one for the action when the file
+/// loads. `Other` holds any other TOML value (`-1`, `3.0`, `true`), so that
+/// check names the step instead of serde reporting an unmatched variant.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum Expected {
+    Text(String),
+    Count(u64),
+    Other(serde::de::IgnoredAny),
 }
 
 /// Keys each action reads, as `(action, required, optional)`.
@@ -104,7 +119,12 @@ const STEP_KEYS: &[(&str, &[&str], &[&str])] = &[
     ("assert-hidden", &["target"], &[]),
     ("assert-value", &["target", "expected"], &[]),
     ("assert-url", &["expected"], &[]),
-    ("storage-get", &["key"], &[]),
+    ("assert-checked", &["target"], &[]),
+    ("assert-unchecked", &["target"], &[]),
+    ("assert-count", &["selector", "expected"], &[]),
+    ("assert-contains", &["target", "expected"], &[]),
+    ("storage-get", &["key"], &["session", "expected"]),
+    ("storage-set", &["key", "value"], &["session"]),
     ("storage-delete", &["key"], &["session"]),
 ];
 
@@ -190,9 +210,33 @@ impl Step {
                 _ => {}
             }
         }
-        match required.iter().find(|&&key| !set.contains(&key)) {
-            Some(key) => Err(format!("step '{action}' requires '{key}'")),
-            None => Ok(()),
+        if let Some(key) = required.iter().find(|&&key| !set.contains(&key)) {
+            return Err(format!("step '{action}' requires '{key}'"));
+        }
+        match (action == "assert-count", &self.expected) {
+            (true, Some(Expected::Text(_) | Expected::Other(_))) => {
+                Err("step 'assert-count' needs an integer 'expected'".into())
+            }
+            (false, Some(Expected::Count(_) | Expected::Other(_))) => {
+                Err(format!("step '{action}' needs a string 'expected'"))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The `expected` text; `None` when unset or a count.
+    fn expected_text(&self) -> Option<&str> {
+        match &self.expected {
+            Some(Expected::Text(text)) => Some(text),
+            Some(Expected::Count(_) | Expected::Other(_)) | None => None,
+        }
+    }
+
+    /// The `expected` count; `None` when unset or text.
+    fn expected_count(&self) -> Option<u64> {
+        match self.expected {
+            Some(Expected::Count(count)) => Some(count),
+            Some(Expected::Text(_) | Expected::Other(_)) | None => None,
         }
     }
 }
@@ -541,20 +585,9 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
             Ok(result)
         }
         "assert-text" => {
-            let t = require_target(step)?;
-            let expected = step
-                .expected
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("assert-text requires 'expected'"))?;
-            let result = client
-                .call("text", with_window(Some(target_params(t)), window))
-                .await?;
-            let actual = result.as_str().unwrap_or_default();
-            anyhow::ensure!(
-                actual == expected,
-                "expected text {expected:?}, got {actual:?}"
-            );
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            let expected = require_expected_text(step)?;
+            assert_step(client, AssertKind::Text { target, expected }, window).await
         }
         "assert-exists" => {
             let t = require_target(step)?;
@@ -565,65 +598,71 @@ async fn dispatch_step(client: &mut Client, step: &Step, window: Option<&str>) -
             Ok(json!({"ok": true}))
         }
         "assert-visible" => {
-            let t = require_target(step)?;
-            let result = client
-                .call("visible", with_window(Some(target_params(t)), window))
-                .await?;
-            let visible = result
-                .get("visible")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            anyhow::ensure!(visible, "element is not visible");
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            assert_step(client, AssertKind::Visible { target }, window).await
         }
         "assert-hidden" => {
-            let t = require_target(step)?;
-            let result = client
-                .call(
-                    "visible",
-                    with_window(Some(hidden_target_params(t)), window),
-                )
-                .await?;
-            let visible = result
-                .get("visible")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            anyhow::ensure!(!visible, "element is visible");
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            assert_step(client, AssertKind::Hidden { target }, window).await
         }
         "assert-value" => {
-            let t = require_target(step)?;
-            let expected = step
-                .expected
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("assert-value requires 'expected'"))?;
-            let result = client
-                .call("value", with_window(Some(target_params(t)), window))
-                .await?;
-            let actual = result.as_str().unwrap_or_default();
-            anyhow::ensure!(
-                actual == expected,
-                "expected value {expected:?}, got {actual:?}"
-            );
-            Ok(json!({"ok": true}))
+            let target = require_target(step)?.to_owned();
+            let expected = require_expected_text(step)?;
+            assert_step(client, AssertKind::Value { target, expected }, window).await
         }
         "assert-url" => {
+            let expected = require_expected_text(step)?;
+            assert_step(client, AssertKind::Url { expected }, window).await
+        }
+        "assert-checked" => {
+            let target = require_target(step)?.to_owned();
+            assert_step(client, AssertKind::Checked { target }, window).await
+        }
+        "assert-unchecked" => {
+            let target = require_target(step)?.to_owned();
+            assert_step(client, AssertKind::Unchecked { target }, window).await
+        }
+        "assert-count" => {
+            let selector = step
+                .selector
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("assert-count requires 'selector'"))?;
             let expected = step
-                .expected
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("assert-url requires 'expected'"))?;
-            let result = client.call("url", with_window(None, window)).await?;
-            let actual = result.as_str().unwrap_or_default();
-            anyhow::ensure!(
-                actual.contains(expected),
-                "URL does not contain {expected:?}, got {actual:?}"
-            );
-            Ok(json!({"ok": true}))
+                .expected_count()
+                .ok_or_else(|| anyhow::anyhow!("assert-count requires an integer 'expected'"))?;
+            assert_step(client, AssertKind::Count { selector, expected }, window).await
+        }
+        "assert-contains" => {
+            let target = require_target(step)?.to_owned();
+            let expected = require_expected_text(step)?;
+            assert_step(client, AssertKind::Contains { target, expected }, window).await
         }
         "storage-get" => storage_get_step(client, step, window).await,
+        "storage-set" => storage_set_step(client, step, window).await,
         "storage-delete" => storage_delete_step(client, step, window).await,
         other => anyhow::bail!("unknown step action: {other:?}"),
     }
+}
+
+/// Runs `kind` through the CLI's `assert` code and fails the step on a miss.
+///
+/// One code path for `tauri-pilot assert` and the scenario step, so both
+/// check the same response fields and give the same failure message.
+///
+/// # Errors
+///
+/// Returns an error when the call fails, the response lacks the field the
+/// assertion reads, or the assertion does not hold.
+async fn assert_step(client: &mut Client, kind: AssertKind, window: Option<&str>) -> Result<Value> {
+    let result = run_assert_command(client, kind, window).await?;
+    if result.get("ok").and_then(Value::as_bool) == Some(false) {
+        let message = result
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("assertion failed");
+        anyhow::bail!("{message}");
+    }
+    Ok(result)
 }
 
 fn require_target(step: &Step) -> Result<&str> {
@@ -632,13 +671,26 @@ fn require_target(step: &Step) -> Result<&str> {
         .ok_or_else(|| anyhow::anyhow!("step '{}' requires 'target'", step.action))
 }
 
+/// The step's string `expected`, owned for an [`AssertKind`].
+///
+/// # Errors
+///
+/// Returns an error when `expected` is unset or not a string.
+fn require_expected_text(step: &Step) -> Result<String> {
+    step.expected_text()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("{} requires 'expected'", step.action))
+}
+
 /// Read a storage key and fail the step when the plugin reports `found: false`.
 ///
-/// A present key whose value is the empty string still passes, matching
-/// `tauri-pilot storage get`. `found` must be a boolean; a missing or
-/// non-boolean field is an error, not a pass. `Client::call` maps a null
-/// JSON-RPC result to `Value::Null`, so `result["found"] == false` would
-/// treat that as success.
+/// Reads localStorage, or sessionStorage with `session = true`, like
+/// `tauri-pilot storage get`. A present key whose value is the empty string
+/// still passes. `found` must be a boolean; a missing or non-boolean field
+/// is an error, not a pass. `Client::call` maps a null JSON-RPC result to
+/// `Value::Null`, so `result["found"] == false` would treat that as success.
+/// With `expected`, the value must also equal it, and a response without a
+/// string `value` fails.
 async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
     let key = step
         .key
@@ -647,7 +699,10 @@ async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>
     let result = client
         .call(
             "storage.get",
-            with_window(Some(json!({"key": key, "session": false})), window),
+            with_window(
+                Some(json!({"key": key, "session": step.session.unwrap_or(false)})),
+                window,
+            ),
         )
         .await?;
     let found = result
@@ -659,6 +714,40 @@ async fn storage_get_step(client: &mut Client, step: &Step, window: Option<&str>
     if !found {
         anyhow::bail!("storage key {key:?} was not found");
     }
+    if let Some(expected) = step.expected_text() {
+        let actual = result.get("value").and_then(Value::as_str).ok_or_else(|| {
+            anyhow::anyhow!("storage.get returned invalid response: missing string 'value'")
+        })?;
+        anyhow::ensure!(
+            actual == expected,
+            "storage key {key:?}: expected {expected:?}, got {actual:?}"
+        );
+    }
+    Ok(result)
+}
+
+/// Write a storage key, like `tauri-pilot storage set`.
+///
+/// localStorage by default, sessionStorage with `session = true`. The bridge
+/// answers `{"ok": true}`; any other result fails the step, for the same
+/// reason [`storage_get_step`] checks `found`.
+async fn storage_set_step(client: &mut Client, step: &Step, window: Option<&str>) -> Result<Value> {
+    let key = step
+        .key
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("storage-set step requires 'key'"))?;
+    let value = step
+        .value
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("storage-set step requires 'value'"))?;
+    let params = json!({"key": key, "value": value, "session": step.session.unwrap_or(false)});
+    let result = client
+        .call("storage.set", with_window(Some(params), window))
+        .await?;
+    anyhow::ensure!(
+        result.get("ok").and_then(Value::as_bool) == Some(true),
+        "storage.set returned invalid response: expected {{\"ok\": true}}, got {result}"
+    );
     Ok(result)
 }
 
@@ -1315,6 +1404,10 @@ urls = "http://example.com"
     /// Written by hand, not built from `STEP_KEYS`: a row missing a key must
     /// fail here.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one TOML step per action, kept inline so a missing key shows here"
+    )]
     fn parse_scenario_accepts_every_key_each_action_reads() {
         let scenario = parse_scenario(
             r##"
@@ -1411,15 +1504,104 @@ expected = "/home"
 [[step]]
 action = "storage-get"
 key = "theme"
+session = true
+expected = "dark"
+
+[[step]]
+action = "storage-set"
+key = "theme"
+value = "dark"
+session = true
 
 [[step]]
 action = "storage-delete"
 key = "theme"
 session = true
+
+[[step]]
+action = "assert-checked"
+target = "#a"
+
+[[step]]
+action = "assert-unchecked"
+target = "#a"
+
+[[step]]
+action = "assert-count"
+selector = "li"
+expected = 3
+
+[[step]]
+action = "assert-contains"
+target = "#a"
+expected = "x"
 "##,
         )
         .expect("every documented key loads");
-        assert_eq!(scenario.step.len(), 21);
+        assert_eq!(scenario.step.len(), 26);
+    }
+
+    /// The new steps reject the keys they lack and the keys they ignore (#305).
+    #[test]
+    fn parse_scenario_checks_storage_and_assert_step_keys() {
+        assert_invalid(
+            "[[step]]\naction = \"storage-set\"\nkey = \"k\"\n",
+            &["step 'storage-set' requires 'value'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"assert-checked\"\nselector = \"#a\"\n",
+            &["step 'assert-checked' does not accept 'selector'; use 'target'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"assert-unchecked\"\n",
+            &["step 'assert-unchecked' requires 'target'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"assert-count\"\ntarget = \"li\"\nexpected = 3\n",
+            &["step 'assert-count' does not accept 'target'; use 'selector'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"assert-count\"\nselector = \"li\"\n",
+            &["step 'assert-count' requires 'expected'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"assert-contains\"\ntarget = \"#a\"\n",
+            &["step 'assert-contains' requires 'expected'"],
+        );
+    }
+
+    /// `expected` is a count on `assert-count` and text everywhere else.
+    #[test]
+    fn parse_scenario_checks_the_type_of_expected() {
+        assert_invalid(
+            "[[step]]\naction = \"assert-count\"\nselector = \"li\"\nexpected = \"3\"\n",
+            &["step 1: step 'assert-count' needs an integer 'expected'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"assert-text\"\ntarget = \"h1\"\nexpected = 3\n",
+            &["step 1: step 'assert-text' needs a string 'expected'"],
+        );
+        assert_invalid(
+            "[[step]]\naction = \"storage-get\"\nkey = \"k\"\nexpected = 3\n",
+            &["step 'storage-get' needs a string 'expected'"],
+        );
+        for bad in ["-1", "3.5", "true"] {
+            assert_invalid(
+                &format!(
+                    "[[step]]\naction = \"assert-count\"\nselector = \"li\"\nexpected = {bad}\n"
+                ),
+                &["step 1: step 'assert-count' needs an integer 'expected'"],
+            );
+            // `storage-get` would skip the comparison and pass on any value.
+            assert_invalid(
+                &format!("[[step]]\naction = \"storage-get\"\nkey = \"k\"\nexpected = {bad}\n"),
+                &["step 1: step 'storage-get' needs a string 'expected'"],
+            );
+            assert_invalid(
+                &format!("[[step]]\naction = \"assert-text\"\ntarget = \"h1\"\nexpected = {bad}\n"),
+                &["step 1: step 'assert-text' needs a string 'expected'"],
+            );
+        }
     }
 
     #[test]
@@ -1491,7 +1673,7 @@ expected = "Login"
         assert_eq!(step.name.as_deref(), Some("assert title"));
         assert_eq!(step.action, "assert-text");
         assert_eq!(step.target.as_deref(), Some("h1"));
-        assert_eq!(step.expected.as_deref(), Some("Login"));
+        assert_eq!(step.expected_text(), Some("Login"));
     }
 
     #[test]

@@ -227,16 +227,28 @@ give those elements an `id` or `data-testid` and re-record.
 | `run <file> --junit <out.xml>` | Emit JUnit XML report for CI integration |
 | `run <file> --screenshots-dir <dir>` | Where failure screenshots go (default `./tauri-pilot-failures`) |
 
-A `storage-get` step (`action = "storage-get"`) requires `key` and always
-reads localStorage. There is no `session` field, so a sessionStorage key
-is reported missing even when it exists. The step fails on `found: false`;
-a key holding an empty string still passes.
+A `storage-get` step (`action = "storage-get"`) requires `key` and reads
+localStorage, or sessionStorage with `session = true`. The step fails on
+`found: false`; a key holding an empty string still passes. With
+`expected`, the value must also match, or the step fails with the expected
+and actual values.
 
 ```toml
 [[step]]
 action = "storage-get"
 key = "theme"
+session = true
+expected = "dark"
 ```
+
+A `storage-set` step requires `key` and `value` and writes localStorage, or
+sessionStorage with `session = true`. It fails unless the app answers
+`{"ok": true}`.
+
+`assert-checked` and `assert-unchecked` take `target`, `assert-contains`
+takes `target` and `expected`, and `assert-count` takes `selector` and an
+integer `expected` (`expected = 3`). Every assert step but `assert-exists`
+fails with the same message as the matching `assert` command.
 
 A `storage-delete` step (`action = "storage-delete"`) requires `key` and
 removes it from localStorage, or from sessionStorage with `session = true`.
