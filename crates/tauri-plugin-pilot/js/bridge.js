@@ -1150,12 +1150,16 @@
 
   // `tag:nth-of-type(n)` steps up to the nearest ancestor with a unique id,
   // or to <body>. `:nth-of-type` is added only where a same-tag sibling exists.
+  // `anchor` is that unique-id ancestor, or null when the path starts at the
+  // document: the path can only ever match inside it.
   function cssPath(el) {
     const steps = [];
+    let anchor = null;
     let node = el;
     while (node && node.nodeType === Node.ELEMENT_NODE) {
       if (node !== el && hasUniqueId(node)) {
         steps.unshift("#" + cssEscape(node.id));
+        anchor = node;
         break;
       }
       const tag = node.tagName.toLowerCase();
@@ -1170,13 +1174,14 @@
       steps.unshift(sameTag.length > 1 ? tag + ":nth-of-type(" + (sameTag.indexOf(node) + 1) + ")" : tag);
       node = parent;
     }
-    return steps.join(" > ");
+    return { selector: steps.join(" > "), anchor: anchor };
   }
 
   // First candidate that matches `el` and nothing else, or null. The CSS
   // path is positional, so it only identifies `el` when its fingerprint is
-  // distinctive: with a twin (identical "Delete" buttons in a list), a shift
-  // would land on the twin and still pass the check at replay.
+  // distinctive where the path can reach: with a twin there (identical
+  // "Delete" buttons in a list), a shift would land on the twin and still
+  // pass the check at replay.
   function stableSelector(el) {
     const tag = el.tagName.toLowerCase();
     const candidates = [];
@@ -1187,9 +1192,9 @@
     if (name) candidates.push(tag + "[name=" + cssString(name) + "]");
     const found = candidates.find(function (c) { return matchesOnly(c, el); });
     if (found) return found;
-    if (hasFingerprintTwin(el)) return null;
     const path = cssPath(el);
-    return matchesOnly(path, el) ? path : null;
+    if (hasFingerprintTwin(el, path.anchor)) return null;
+    return matchesOnly(path.selector, el) ? path.selector : null;
   }
 
   function fingerprint(el) {
@@ -1200,13 +1205,22 @@
     return a.tag === b.tag && a.role === b.role && a.name === b.name;
   }
 
-  // Whether another element of the document carries `el`'s fingerprint.
-  function hasFingerprintTwin(el) {
+  // Whether another element inside `scope` (the whole document when null)
+  // carries `el`'s fingerprint.
+  function hasFingerprintTwin(el, scope) {
     const own = fingerprint(el);
     const sameTag = queryAll(own.tag) || [];
     return sameTag.some(function (other) {
-      return other !== el && sameFingerprint(fingerprint(other), own);
+      return other !== el && isInside(other, scope) && sameFingerprint(fingerprint(other), own);
     });
+  }
+
+  function isInside(node, scope) {
+    if (!scope) return true;
+    for (let n = node; n; n = n.parentElement) {
+      if (n === scope) return true;
+    }
+    return false;
   }
 
   function describeFingerprint(fp) {

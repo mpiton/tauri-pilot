@@ -1561,7 +1561,8 @@ while recording, each step that targets a ref (and the `source`/`target` of
   `tag[name="..."]`, or a short CSS path with `:nth-of-type`, anchored on the
   nearest ancestor with a unique id. A candidate counts only when it matches
   this element and no other one. The CSS path is positional, so it is used
-  only when no other element of the page has the same tag, role and name:
+  only when no other element it could reach (inside its unique-id anchor, or
+  the whole page) has the same tag, role and name:
   for repeated rows with identical buttons ("Delete" on every row), a shift
   would land on another row and still pass the fingerprint check, so such a
   step gets no selector and `record stop` reports it;

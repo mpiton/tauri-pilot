@@ -248,6 +248,17 @@ test("a CSS path is not recorded when another element shares the fingerprint", (
   });
 });
 
+test("a twin outside the path's unique-id anchor does not cost the selector", () => {
+  // `#right > button` can never reach the button in #left, so the path
+  // still identifies the element.
+  const left = new El("div", { id: "left" }, [new El("button", {}, [], "Delete")]);
+  const right = new El("div", { id: "right" }, [new El("button", {}, [], "Delete")]);
+  const html = new El("html", {}, [new El("body", {}, [left, right])]);
+  const pilot = loadBridge(html);
+  const ref = pilot.snapshot({ interactive: true }).elements.filter((e) => e.name === "Delete")[1].ref;
+  assert.equal(located(pilot, ref).selector, "#right > button");
+});
+
 test("the CSS path is anchored on the nearest ancestor with a unique id", () => {
   const p = page();
   p.fieldset.setAttribute("id", "plans");
