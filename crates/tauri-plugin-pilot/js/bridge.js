@@ -883,6 +883,9 @@
     const explicit = el.getAttribute("role");
     if (explicit) return explicit;
     if (el.tagName === "INPUT") return inputRole(el);
+    // HTML-AAM: a select shown as a list box (multiple, or size > 1) is a
+    // listbox, not a combobox (#307).
+    if (el.tagName === "SELECT" && (el.multiple || el.size > 1)) return "listbox";
     return ROLE_MAP[el.tagName] || fallbackRole(el);
   }
 
