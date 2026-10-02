@@ -1561,9 +1561,9 @@ while recording, each step that targets a ref (and the `source`/`target` of
 `drag`) is resolved, before the action runs, to:
 
 - a `selector`: the first of a unique `#id`, `[data-testid="..."]`,
-  `tag[name="..."]`, `tag[name="..."][value="..."]` (for an element with a
-  `value` attribute, such as a radio or checkbox in a group sharing one
-  name), or a short CSS path with `:nth-of-type`, anchored on the
+  `tag[name="..."]`, `tag[name="..."][value="..."]` (for a radio or
+  checkbox with a `value` attribute, in a group sharing one name), or a
+  short CSS path with `:nth-of-type`, anchored on the
   nearest ancestor with a unique id. A candidate counts only when it matches
   this element and no other one. The CSS path is positional, so it is used
   only when no other element it could reach (inside its unique-id anchor, or

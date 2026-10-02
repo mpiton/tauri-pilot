@@ -286,6 +286,49 @@ test("a name and value another element shares falls back to the CSS path", () =>
   assert.equal(located(pilot, ref).selector, "#b > input");
 });
 
+test("a text input sharing a name is not located by its value attribute", () => {
+  // The value attribute of a text input is page data (SSR, framework
+  // re-renders), not identity: only radios and checkboxes use name and value.
+  const form = new El("form", { id: "f" }, [
+    new El("input", { type: "text", name: "q", value: "a", "aria-label": "Query A" }),
+    new El("input", { type: "text", name: "q", value: "b", "aria-label": "Query B" }),
+  ]);
+  const html = new El("html", {}, [new El("body", {}, [form])]);
+  const pilot = loadBridge(html);
+  const ref = refOf(pilot, "Query B", { interactive: true });
+  assert.equal(located(pilot, ref).selector, "#f > input:nth-of-type(2)");
+});
+
+test("a radio without a value attribute falls back to the CSS path", () => {
+  const form = new El("form", { id: "f" }, [
+    new El("input", { type: "radio", name: "plan", "aria-label": "Free" }),
+    new El("input", { type: "radio", name: "plan", "aria-label": "Pro" }),
+  ]);
+  const html = new El("html", {}, [new El("body", {}, [form])]);
+  const pilot = loadBridge(html);
+  const ref = refOf(pilot, "Pro", { interactive: true });
+  assert.equal(located(pilot, ref).selector, "#f > input:nth-of-type(2)");
+});
+
+test("a radio whose type is upper case is located by its name and value", () => {
+  const p = groupPage("RADIO", "plan", ["free", "pro"]);
+  const pilot = loadBridge(p.html);
+  const ref = refOf(pilot, "PRO", { interactive: true });
+  assert.equal(located(pilot, ref).selector, 'input[name="plan"][value="pro"]');
+});
+
+test("a non-input whose type attribute says radio is not located by its value", () => {
+  // Only <input> has radio semantics; a button's value is page data.
+  const form = new El("form", { id: "f" }, [
+    new El("button", { type: "radio", name: "act", value: "a", "aria-label": "Act A" }),
+    new El("button", { type: "radio", name: "act", value: "b", "aria-label": "Act B" }),
+  ]);
+  const html = new El("html", {}, [new El("body", {}, [form])]);
+  const pilot = loadBridge(html);
+  const ref = refOf(pilot, "Act B", { interactive: true });
+  assert.equal(located(pilot, ref).selector, "#f > button:nth-of-type(2)");
+});
+
 test("a CSS path is not recorded when another element shares the fingerprint", () => {
   // Repeated rows carry identical buttons. A positional path to Beta's
   // "Delete" would pass the fingerprint check on Alpha's once a row is

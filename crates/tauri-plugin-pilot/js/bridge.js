@@ -1206,10 +1206,13 @@
     if (name) {
       const byName = tag + "[name=" + cssString(name) + "]";
       candidates.push(byName);
-      // Any element with a `value` attribute: in a radio or checkbox group
-      // sharing one name, the value is what tells the members apart.
+      // Radios and checkboxes only: in a group sharing one name, the value is
+      // what tells the members apart. On other controls the value attribute
+      // is page data (SSR, re-renders), not identity.
+      const type = (el.getAttribute("type") || "").toLowerCase();
+      const checkable = tag === "input" && (type === "radio" || type === "checkbox");
       const value = el.getAttribute("value");
-      if (value !== null) candidates.push(byName + "[value=" + cssString(value) + "]");
+      if (checkable && value !== null) candidates.push(byName + "[value=" + cssString(value) + "]");
     }
     const found = candidates.find(function (c) { return matchesOnly(c, el); });
     if (found) return found;
