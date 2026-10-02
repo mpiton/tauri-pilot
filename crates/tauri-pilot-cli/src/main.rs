@@ -2588,6 +2588,9 @@ mod tests {
         ];
         let script = export_shell_script(&entries, None);
         assert!(!script.contains("sleep 0.0"), "{script}");
+        // The first step starts at 100 ms, yet nothing waits before it: the
+        // header's blank line is followed directly by the first command.
+        assert!(script.contains("\n\ntauri-pilot click '#a'\n"), "{script}");
         assert!(
             script.contains("tauri-pilot click '#a'\ntauri-pilot click '#b'\n"),
             "{script}"
