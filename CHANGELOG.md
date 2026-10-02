@@ -152,6 +152,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through mutations that add nothing to the summary (whitespace-only text,
   comment nodes), until a reported change or the timeout. [#304]
 
+- `record` locates a radio or checkbox in a group sharing one `name` by
+  `tag[name="..."][value="..."]` (for example
+  `input[name="plan"][value="pro"]`) when that pair is unique, instead of a
+  positional CSS path that broke once a field was added or removed above it.
+  [#308]
 - `snapshot` names form controls after their `<label>`, wrapping or `for=`,
   without the text of the controls inside it. Labelled inputs and checkboxes
   came out unnamed, and a `<select>` was named after the text of all its
@@ -1523,3 +1528,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#307]: https://github.com/mpiton/tauri-pilot/issues/307
 [#302]: https://github.com/mpiton/tauri-pilot/issues/302
 [#304]: https://github.com/mpiton/tauri-pilot/issues/304
+[#308]: https://github.com/mpiton/tauri-pilot/issues/308

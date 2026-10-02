@@ -101,16 +101,19 @@ const unescapeCss = (s) =>
   );
 
 // One compound selector of the subset the locator emits.
+const ATTR = /\[([a-z-]+)="((?:\\.|[^"\\])*)"\]/gi;
 const COMPOUND =
-  /^(?:#((?:\\[0-9a-f]{1,6} ?|\\.|[^\s>[:\\])+)|([a-z][a-z0-9]*)?(?:\[([a-z-]+)="((?:\\.|[^"\\])*)"\])?(?::nth-of-type\((\d+)\))?)$/i;
+  /^(?:#((?:\\[0-9a-f]{1,6} ?|\\.|[^\s>[:\\])+)|([a-z][a-z0-9]*)?((?:\[[a-z-]+="(?:\\.|[^"\\])*"\])*)(?::nth-of-type\((\d+)\))?)$/i;
 
 function matchesCompound(el, compound) {
   const m = COMPOUND.exec(compound);
   if (!m || compound === "") throw new SyntaxError("unsupported selector: " + compound);
-  const [, id, tag, attr, value, nth] = m;
+  const [, id, tag, attrs, nth] = m;
   if (id !== undefined) return el.getAttribute("id") === unescapeCss(id);
   if (tag && el.tagName !== tag.toUpperCase()) return false;
-  if (attr && el.getAttribute(attr) !== unescapeCss(value)) return false;
+  for (const [, attr, value] of (attrs || "").matchAll(ATTR)) {
+    if (el.getAttribute(attr) !== unescapeCss(value)) return false;
+  }
   if (nth) {
     const sameTag = el.parentElement
       ? el.parentElement.children.filter((c) => c.tagName === el.tagName)
@@ -232,6 +235,55 @@ test("locate falls back to a CSS path when the name is shared", () => {
     selector: "body > fieldset > input:nth-of-type(2)",
     expect: { tag: "input", role: "radio", name: "Pro" },
   });
+});
+
+// #308: a radio or checkbox group shares one `name`, so only `value` tells
+// its members apart. A positional CSS path would break once a field moves.
+function groupPage(type, name, values) {
+  const inputs = values.map((value) =>
+    new El("input", { type, name, value, "aria-label": value.toUpperCase() }),
+  );
+  const form = new El("form", {}, [new El("div", {}, [new El("label", {}, inputs)])]);
+  const html = new El("html", {}, [new El("body", {}, [form])]);
+  return { html };
+}
+
+test("a radio in a group is located by its name and value", () => {
+  const p = groupPage("radio", "plan", ["free", "pro"]);
+  const pilot = loadBridge(p.html);
+  const ref = refOf(pilot, "PRO", { interactive: true });
+  assert.deepEqual(located(pilot, ref), {
+    selector: 'input[name="plan"][value="pro"]',
+    expect: { tag: "input", role: "radio", name: "PRO" },
+  });
+});
+
+test("a checkbox in a group sharing a name is located by its name and value", () => {
+  const p = groupPage("checkbox", "topics", ["news", "tips"]);
+  const pilot = loadBridge(p.html);
+  const ref = refOf(pilot, "TIPS", { interactive: true });
+  assert.equal(located(pilot, ref).selector, 'input[name="topics"][value="tips"]');
+});
+
+test("the value in a name and value selector is CSS-escaped", () => {
+  const p = groupPage("radio", "plan", ['say "hi"', "pro"]);
+  const pilot = loadBridge(p.html);
+  const ref = refOf(pilot, 'SAY "HI"', { interactive: true });
+  assert.equal(located(pilot, ref).selector, 'input[name="plan"][value="say \\"hi\\""]');
+});
+
+test("a name and value another element shares falls back to the CSS path", () => {
+  // Two forms each carry plan=pro, so name and value match twice.
+  const first = new El("form", { id: "a" }, [
+    new El("input", { type: "radio", name: "plan", value: "pro", "aria-label": "Pro A" }),
+  ]);
+  const second = new El("form", { id: "b" }, [
+    new El("input", { type: "radio", name: "plan", value: "pro", "aria-label": "Pro B" }),
+  ]);
+  const html = new El("html", {}, [new El("body", {}, [first, second])]);
+  const pilot = loadBridge(html);
+  const ref = refOf(pilot, "Pro B", { interactive: true });
+  assert.equal(located(pilot, ref).selector, "#b > input");
 });
 
 test("a CSS path is not recorded when another element shares the fingerprint", () => {

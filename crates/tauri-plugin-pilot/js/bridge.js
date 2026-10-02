@@ -1203,7 +1203,14 @@
     const testId = el.getAttribute("data-testid");
     if (testId) candidates.push("[data-testid=" + cssString(testId) + "]");
     const name = el.getAttribute("name");
-    if (name) candidates.push(tag + "[name=" + cssString(name) + "]");
+    if (name) {
+      const byName = tag + "[name=" + cssString(name) + "]";
+      candidates.push(byName);
+      // Any element with a `value` attribute: in a radio or checkbox group
+      // sharing one name, the value is what tells the members apart.
+      const value = el.getAttribute("value");
+      if (value !== null) candidates.push(byName + "[value=" + cssString(value) + "]");
+    }
     const found = candidates.find(function (c) { return matchesOnly(c, el); });
     if (found) return found;
     const path = cssPath(el);
