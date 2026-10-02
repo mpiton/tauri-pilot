@@ -356,6 +356,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   looked for a socket before reading the command and failed with `No
   tauri-pilot socket found`, although the export only reads the file; the MCP
   `pilot.replay` tool with `export` already worked offline. [#312]
+- `replay --export sh` writes `--` before the value of `fill` and `type`
+  steps, as it already did for `select`. A value starting with `-`, such as
+  `-5` in a quantity field, was read as a flag, so the exported script failed
+  on that line with `unexpected argument '-5' found`. `drag` steps had the
+  same flaw with a negative offset or coordinate (`--offset -50,0`,
+  `drag -10,20 '#col'`); they now export as `drag --offset=-50,0 -- '#card'`
+  and `drag -- -10,20 '#col'`. [#325]
 
 ### Security
 
@@ -1571,3 +1578,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#310]: https://github.com/mpiton/tauri-pilot/issues/310
 [#312]: https://github.com/mpiton/tauri-pilot/issues/312
 [#306]: https://github.com/mpiton/tauri-pilot/issues/306
+[#325]: https://github.com/mpiton/tauri-pilot/issues/325

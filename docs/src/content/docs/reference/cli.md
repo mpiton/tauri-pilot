@@ -481,6 +481,10 @@ reported `ok` means the value was written.
 tauri-pilot fill <target> <value>
 ```
 
+A value that starts with `-` (such as `-5`) reads as a flag; put `--` before
+it: `tauri-pilot fill "#qty" -- -5`. Scripts written by `replay --export sh`
+always do this.
+
 **Example:**
 
 ```bash
@@ -502,6 +506,10 @@ with `text` / `assert text`.
 ```bash
 tauri-pilot type <target> <text>
 ```
+
+Text that starts with `-` reads as a flag; put `--` before it:
+`tauri-pilot type @e2 -- -x`. Scripts written by `replay --export sh` always
+do this.
 
 **Example:**
 
@@ -722,6 +730,11 @@ tauri-pilot drag "#slider-thumb" --offset "150,0"
 # Drag to coordinates
 tauri-pilot drag @e5 "400,200"
 ```
+
+A coordinate or offset that starts with `-` reads as a flag: write the offset
+as `--offset=-50,0` and put `--` before coordinate arguments, as in
+`tauri-pilot drag -- -10,20 "#col"`. Scripts written by `replay --export sh`
+always do this.
 
 **JSON-RPC example:**
 
