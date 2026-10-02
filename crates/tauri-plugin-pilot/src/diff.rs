@@ -15,6 +15,9 @@ pub struct SnapshotElement {
     pub checked: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
+    /// Set by the bridge on readonly fields, native or `aria-readonly`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readonly: Option<bool>,
     /// Set by the bridge on password inputs so text output can mask `value`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sensitive: Option<bool>,
@@ -95,6 +98,9 @@ pub fn compute_diff(old: &[SnapshotElement], new: &[SnapshotElement]) -> DiffRes
                 }
                 if old_el.disabled != new_el.disabled {
                     field_changes.push("disabled".to_owned());
+                }
+                if old_el.readonly != new_el.readonly {
+                    field_changes.push("readonly".to_owned());
                 }
 
                 if !field_changes.is_empty() {
@@ -282,6 +288,7 @@ mod tests {
             value: None,
             checked: None,
             disabled: None,
+            readonly: None,
             sensitive: None,
         }
     }
@@ -295,6 +302,7 @@ mod tests {
             value: None,
             checked: None,
             disabled: None,
+            readonly: None,
             sensitive: None,
         }
     }
@@ -375,6 +383,7 @@ mod tests {
             value: Some("old".to_owned()),
             checked: None,
             disabled: None,
+            readonly: None,
             sensitive: None,
         }];
         let new = vec![SnapshotElement {
@@ -385,6 +394,7 @@ mod tests {
             value: Some("new".to_owned()),
             checked: None,
             disabled: None,
+            readonly: None,
             sensitive: None,
         }];
         let result = compute_diff(&old, &new);
@@ -404,6 +414,7 @@ mod tests {
             value: Some("on".to_owned()),
             checked: Some(false),
             disabled: Some(false),
+            readonly: None,
             sensitive: None,
         }];
         let new = vec![SnapshotElement {
@@ -414,6 +425,7 @@ mod tests {
             value: Some("off".to_owned()),
             checked: Some(true),
             disabled: Some(true),
+            readonly: None,
             sensitive: None,
         }];
         let result = compute_diff(&old, &new);
@@ -423,6 +435,26 @@ mod tests {
         assert!(result.changed[0].changes.contains(&"value".to_owned()));
         assert!(result.changed[0].changes.contains(&"checked".to_owned()));
         assert!(result.changed[0].changes.contains(&"disabled".to_owned()));
+    }
+
+    #[test]
+    fn test_diff_reports_readonly_change_and_keeps_the_flag() {
+        // #324: `readonly` survives a `--ref` file and a toggle is a change.
+        let parse = |v: serde_json::Value| -> SnapshotElement {
+            serde_json::from_value(v).expect("element should deserialize")
+        };
+        let old = vec![parse(serde_json::json!(
+            {"ref": "e1", "role": "textbox", "depth": 0, "name": "code"}
+        ))];
+        let new = vec![parse(serde_json::json!(
+            {"ref": "e1", "role": "textbox", "depth": 0, "name": "code", "readonly": true}
+        ))];
+        assert_eq!(new[0].readonly, Some(true));
+        let result = compute_diff(&old, &new);
+        assert_eq!(result.changed.len(), 1);
+        assert_eq!(result.changed[0].changes, vec!["readonly".to_owned()]);
+        let out = serde_json::to_value(&result.changed[0].new).expect("element should serialize");
+        assert_eq!(out.get("readonly"), Some(&serde_json::Value::Bool(true)));
     }
 
     #[test]
@@ -437,6 +469,7 @@ mod tests {
                 value: Some("old@example.com".to_owned()),
                 checked: None,
                 disabled: None,
+                readonly: None,
                 sensitive: None,
             },
             el_named("e3", "link", 3, "home"),
@@ -451,6 +484,7 @@ mod tests {
                 value: Some("new@example.com".to_owned()),
                 checked: None,
                 disabled: None,
+                readonly: None,
                 sensitive: None,
             },
             el_named("e5", "paragraph", 4, "info"),
@@ -486,6 +520,7 @@ mod tests {
                 value: Some("save".to_owned()),
                 checked: None,
                 disabled: None,
+                readonly: None,
                 sensitive: None,
             },
             SnapshotElement {
@@ -496,6 +531,7 @@ mod tests {
                 value: Some("cancel".to_owned()),
                 checked: None,
                 disabled: None,
+                readonly: None,
                 sensitive: None,
             },
         ];
@@ -508,6 +544,7 @@ mod tests {
                 value: Some("save".to_owned()),
                 checked: None,
                 disabled: None,
+                readonly: None,
                 sensitive: None,
             },
             SnapshotElement {
@@ -518,6 +555,7 @@ mod tests {
                 value: Some("cancel".to_owned()),
                 checked: None,
                 disabled: None,
+                readonly: None,
                 sensitive: None,
             },
         ];

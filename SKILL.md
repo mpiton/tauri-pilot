@@ -114,6 +114,16 @@ it toggles a checkbox and selects a radio (an already-selected radio stays
 selected). For fill and type, ok means the value landed; for check, confirm
 with `assert checked` or `assert unchecked`.
 
+click, fill, type, select and check fail with `<action>: target is disabled`
+on a disabled control (its own `disabled`, a disabled `<fieldset>`, or
+`aria-disabled="true"` on a widget role; also a target inside a disabled
+`<button>`), and fill and type with `<action>: target is readonly` on a
+readonly field (`readonly`, or `aria-readonly="true"` on a textbox-like
+role), leaving it untouched.
+`select` refuses a disabled option. `snapshot` flags a control with its own
+`disabled` attribute `disabled`, and a readonly field `readonly`; a control
+disabled only by its `<fieldset>` or by `aria-disabled` carries no flag.
+
 On contenteditable, fill/type try `insertText` first so Tiptap/ProseMirror
 see the write, then fall back to `textContent`. Read the result with `text`
 / `assert text`, or `value` / `assert value` (the text, whitespace collapsed).

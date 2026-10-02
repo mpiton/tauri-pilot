@@ -194,6 +194,9 @@ fn write_snapshot(out: &mut impl Write, value: &serde_json::Value) -> std::fmt::
         if el.get("disabled").and_then(serde_json::Value::as_bool) == Some(true) {
             let _ = write!(line, " {}", crate::style::dim("disabled"));
         }
+        if el.get("readonly").and_then(serde_json::Value::as_bool) == Some(true) {
+            let _ = write!(line, " {}", crate::style::dim("readonly"));
+        }
 
         writeln!(out, "{line}")?;
     }
@@ -812,6 +815,9 @@ fn format_diff_entry(
     if el.get("disabled").and_then(serde_json::Value::as_bool) == Some(true) {
         let _ = write!(line, " {}", crate::style::dim("disabled"));
     }
+    if el.get("readonly").and_then(serde_json::Value::as_bool) == Some(true) {
+        let _ = write!(line, " {}", crate::style::dim("readonly"));
+    }
 
     line
 }
@@ -1138,6 +1144,25 @@ mod tests {
     }
 
     #[test]
+    fn test_snapshot_text_flags_readonly_next_to_disabled() {
+        // #324: a readonly field must not read like an editable one.
+        let snapshot = json!({
+            "elements": [
+                {"ref": "e1", "role": "textbox", "depth": 0, "value": "ro", "readonly": true},
+                {"ref": "e2", "role": "textbox", "depth": 0, "value": "t", "readonly": true, "disabled": true},
+                {"ref": "e3", "role": "textbox", "depth": 0, "value": "plain"},
+            ]
+        });
+        let text = strip_ansi(&snapshot_text(&snapshot));
+        assert!(text.contains("[ref=e1] value=\"ro\" readonly\n"), "{text}");
+        assert!(
+            text.contains("[ref=e2] value=\"t\" disabled readonly\n"),
+            "{text}"
+        );
+        assert!(text.contains("[ref=e3] value=\"plain\"\n"), "{text}");
+    }
+
+    #[test]
     fn test_snapshot_text_redacts_sensitive_value() {
         // #279: a password field's value must not reach the text output.
         let snapshot = json!({
@@ -1456,6 +1481,18 @@ mod tests {
             }]
         });
         format_diff(&diff);
+    }
+
+    #[test]
+    fn test_diff_text_flags_readonly_on_added_entry() {
+        // #324: `+`/`-` lines carry the same flags as `snapshot`.
+        let diff = json!({
+            "added": [{"ref": "e5", "role": "textbox", "depth": 0, "value": "ro", "readonly": true}],
+            "removed": [],
+            "changed": []
+        });
+        let text = strip_ansi(&diff_text(&diff));
+        assert!(text.contains("[ref=e5] value=\"ro\" readonly"), "{text}");
     }
 
     #[test]

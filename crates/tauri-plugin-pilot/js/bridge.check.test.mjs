@@ -129,8 +129,9 @@ test("check on an already-selected radio fires no event", () => {
 });
 
 test("check throws when the click leaves the input unchanged", () => {
+  // The page cancels the click (preventDefault): the state stays, nothing fires.
   const el = makeInput("checkbox", false);
-  el.disabled = true;
+  el.click = function () {};
   const pilot = loadBridge(el);
   assert.throws(() => pilot.check({ selector: "input" }), /did not change/);
   assert.equal(el.checked, false);

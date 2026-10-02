@@ -44,6 +44,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `click`, `fill`, `type` and `select` refuse a disabled target with
+  `<action>: target is disabled`, and `fill` and `type` refuse a readonly
+  field with `<action>: target is readonly`: a readonly `<input>` (not on
+  input types where HTML ignores `readonly`, such as `range`) or
+  `<textarea>`, or an element whose role supports `aria-readonly` (textbox,
+  searchbox, combobox and the like) with `aria-readonly="true"`, such as a
+  rich-text editor in read mode. Disabled means `disabled` on the control or
+  a parent `<fieldset>`, a target inside a disabled `<button>` or other
+  form control (an icon in a disabled button), or `aria-disabled="true"` on
+  an element whose role supports it (button, link, checkbox, menuitem, tab,
+  textbox and the like; any token of a `role` list counts) or its nearest
+  ancestor that sets it, as Playwright does. `select`, and `fill` on a
+  `<select>`, refuse a disabled option or one inside a disabled `<optgroup>`
+  with `<command>: option "<value>" is disabled` (`select:` or `fill:`).
+  The element keeps its value and no event fires. `check` on a disabled
+  input now fails with `check: target is disabled` instead of
+  `check did not change the target`. Migration: a script that drives a
+  disabled or readonly control on purpose (to set up state) must enable it
+  first, for example with `eval`, or set the value through `eval`. Rust
+  code that builds `tauri_plugin_pilot::diff::SnapshotElement` by hand adds
+  `readonly: None`. [#324]
+
 - `select` now fires `input` then `change`, once each, like a user's pick;
   it fired only `change` before. Migration: an app that listens to `input`
   on a `<select>` now sees one `input` per `select` call, before `change`.
@@ -189,6 +211,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshot saved before this change reports each such element whose text is
   not empty as changed (`value: "" → "..."`). Migration: re-save the
   reference with the current version. [#326]
+
+- `click` on a disabled `<button>` no longer runs its `onclick`, and `fill`,
+  `type` and `select` no longer change a disabled or readonly control and
+  report `ok`: a test of a disabled form passed while the app blocks the
+  user. `snapshot` (text and `--json`) and `diff` now flag readonly fields
+  with `readonly` next to `disabled`. [#324]
 
 - `watch` reports text replaced with `textContent` or `innerText` as a text
   change on the element (`{"tag": "div", "text": "..."}`, the shape an
@@ -1601,3 +1629,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#306]: https://github.com/mpiton/tauri-pilot/issues/306
 [#325]: https://github.com/mpiton/tauri-pilot/issues/325
 [#326]: https://github.com/mpiton/tauri-pilot/issues/326
+[#324]: https://github.com/mpiton/tauri-pilot/issues/324
