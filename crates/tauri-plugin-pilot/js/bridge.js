@@ -1987,58 +1987,65 @@
   function __PILOT__evalScript(options) {
     var script = options && options.script;
     if (!script) throw new Error("No script provided");
-    // Stage 1 — expression compile.
+    // Top-level `await` is detected before stage 1: `await (1 + 1)` also
+    // compiles as a plain expression, a call to a function named `await`,
+    // and then fails at run time (#302). Such a script skips stage 1 and
+    // goes to the async stages.
+    var topLevelAwait = hasTopLevelAwait(script);
+    // Stage 1 — expression compile, for scripts without top-level `await`.
     // `{a:1}` keeps its object-literal semantics (not a labeled block) and
     // `class C {}` evaluates to the constructor. Keep compilation separate
     // from execution: a runtime SyntaxError from e.g. `JSON.parse('x')` must
     // propagate, not trigger a fallback — otherwise the script would run twice.
-    var expr;
-    try {
-      expr = new Function("return (\n" + script + "\n)");
-    } catch (e1) {
-      if (!(e1 instanceof SyntaxError)) throw e1;
-      // The newlines around `script` in every wrapper below isolate user
-      // tokens from generated closing punctuation. Without them, a trailing
-      // `// comment` on the last line of the user script swallows `))()` or
-      // `})()` and the wrapper fails to compile.
-      if (hasTopLevelAwait(script)) {
-        // Stage 2 — async-expression compile (#79).
-        // Handles top-level `await` in expression position, e.g.
-        // `await Promise.resolve("hi")` or `await fetch(...).then(r => r.json())`.
-        // Returns a Promise; the Rust wrapper already awaits it.
-        try {
-          var asyncExpr = new Function(
-            "return (async () => (\n" + script + "\n))()"
-          );
-          return asyncExpr();
-        } catch (e2) {
-          if (!(e2 instanceof SyntaxError)) throw e2;
-        }
-        // Stage 3 — async-statement IIFE (#79).
-        // Top-level `await` is not allowed in plain script context, so when
-        // the user script does not fit an expression but does contain
-        // `await`, we wrap it in an async statement IIFE. The user must use
-        // `return` to surface a value; otherwise the result is `null`.
-        try {
-          var asyncStmt = new Function(
-            "return (async () => {\n" + script + "\n})()"
-          );
-          return asyncStmt();
-        } catch (e3) {
-          if (!(e3 instanceof SyntaxError)) throw e3;
-          throw new SyntaxError(
-            "top-level await detected but the script could not be auto-wrapped. " +
-              "Wrap explicitly: (async () => { /* ...; */ return value; })() — " +
-              "see docs/reference/cli.md"
-          );
-        }
+    if (!topLevelAwait) {
+      var expr = null;
+      try {
+        expr = new Function("return (\n" + script + "\n)");
+      } catch (e1) {
+        if (!(e1 instanceof SyntaxError)) throw e1;
       }
-      // Stage 4 — statement fallback. Indirect eval runs in global script
-      // context and returns the completion value of the last expression (#46).
-      var indirectEval = eval;
-      return indirectEval(script);
+      if (expr) return expr();
     }
-    return expr();
+    // The newlines around `script` in every wrapper isolate user tokens
+    // from generated closing punctuation. Without them, a trailing
+    // `// comment` on the last line of the user script swallows `))()` or
+    // `})()` and the wrapper fails to compile.
+    if (topLevelAwait) {
+      // Stage 2 — async-expression compile (#79).
+      // Handles top-level `await` in expression position, e.g.
+      // `await Promise.resolve("hi")` or `await fetch(...).then(r => r.json())`.
+      // Returns a Promise; the Rust wrapper already awaits it.
+      try {
+        var asyncExpr = new Function(
+          "return (async () => (\n" + script + "\n))()"
+        );
+        return asyncExpr();
+      } catch (e2) {
+        if (!(e2 instanceof SyntaxError)) throw e2;
+      }
+      // Stage 3 — async-statement IIFE (#79).
+      // Top-level `await` is not allowed in plain script context, so when
+      // the user script does not fit an expression but does contain
+      // `await`, we wrap it in an async statement IIFE. The user must use
+      // `return` to surface a value; otherwise the result is `null`.
+      try {
+        var asyncStmt = new Function(
+          "return (async () => {\n" + script + "\n})()"
+        );
+        return asyncStmt();
+      } catch (e3) {
+        if (!(e3 instanceof SyntaxError)) throw e3;
+        throw new SyntaxError(
+          "top-level await detected but the script could not be auto-wrapped. " +
+            "Wrap explicitly: (async () => { /* ...; */ return value; })() — " +
+            "see docs/reference/cli.md"
+        );
+      }
+    }
+    // Stage 4 — statement fallback. Indirect eval runs in global script
+    // context and returns the completion value of the last expression (#46).
+    var indirectEval = eval;
+    return indirectEval(script);
   }
 
   // Top-level `await` detector (#79). The engine decides first: in a plain
@@ -2054,6 +2061,9 @@
   //   * both fail: a real syntax error. The text scan keeps the old routing,
   //     so a broken script with `await` still gets the auto-wrap hint.
   function hasTopLevelAwait(src) {
+    // Every branch below needs an `await` token, and the detector runs on
+    // each eval: skip its compile probes for a script without one.
+    if (!/\bawait\b/.test(src)) return false;
     var syncOk = compiles(Function, src);
     var asyncOk = compiles(AsyncFunction, src);
     if (!syncOk && asyncOk) return true;
