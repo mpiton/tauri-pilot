@@ -637,6 +637,27 @@ test("eval still wraps top-level await, including the await (expr) form", async 
   }
 });
 
+test("eval awaits a bare await (expr) script instead of calling a function named await", async () => {
+  // These compile as a plain expression too, where `await (1 + 1)` is a call
+  // to a variable `await`, so they failed with a ReferenceError (#302).
+  const pilot = loadBridge();
+  const cases = [
+    ["await (1 + 1)", 2],
+    ["await(1)", 1],
+    ["await (Promise.resolve(3))", 3],
+    // Control: `await` declared as a variable is still called.
+    ["var await = (n) => n * 10; await (1)", 10],
+  ];
+  try {
+    for (const [script, expected] of cases) {
+      assert.equal(await pilot.eval({ script }), expected, script);
+    }
+  } finally {
+    // The control's indirect eval declares a global `await`.
+    delete globalThis.await;
+  }
+});
+
 test("eval does not let a script close the await probe's wrapper", () => {
   // Pasted into an arrow body, this script closes it and compiles, so it was
   // taken for top-level await and returned nothing instead of failing.

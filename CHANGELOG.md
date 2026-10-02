@@ -295,6 +295,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   less than 50 ms apart. The delay is printed with one decimal, so those
   lines did nothing; longer delays still get their `sleep`. [#309]
 
+- `eval` awaits a script that starts with `await` and a parenthesized
+  expression: `await (1 + 1)` prints `2` and `await(1)` prints `1`. These
+  also compile as a call to a function named `await`, so the bridge took that
+  reading and failed with `Can't find variable: await`, although the #272
+  entry lists `await (expr)` as handled. The bridge now checks for top-level
+  `await` before it tries the script as a plain expression. A script that
+  declares `await` itself (`var await = f; await (1)`) still calls it. [#302]
+
 ### Security
 
 - Upgrade undici in the docs lockfile to 8.11.2 (from 8.10.0), clearing 11
@@ -1502,3 +1510,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#311]: https://github.com/mpiton/tauri-pilot/issues/311
 [#303]: https://github.com/mpiton/tauri-pilot/issues/303
 [#307]: https://github.com/mpiton/tauri-pilot/issues/307
+[#302]: https://github.com/mpiton/tauri-pilot/issues/302

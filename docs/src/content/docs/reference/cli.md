@@ -970,6 +970,9 @@ hello
 
 $ tauri-pilot eval 'await fetch("/api/items").then(r => r.json())'
 […]
+
+$ tauri-pilot eval 'await (1 + 1)'
+2
 ```
 
 An `await` inside a nested function (such as an async IIFE), or in the text
