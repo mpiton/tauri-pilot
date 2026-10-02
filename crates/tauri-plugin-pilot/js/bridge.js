@@ -1203,7 +1203,17 @@
     const testId = el.getAttribute("data-testid");
     if (testId) candidates.push("[data-testid=" + cssString(testId) + "]");
     const name = el.getAttribute("name");
-    if (name) candidates.push(tag + "[name=" + cssString(name) + "]");
+    if (name) {
+      const byName = tag + "[name=" + cssString(name) + "]";
+      candidates.push(byName);
+      // Radios and checkboxes only: in a group sharing one name, the value is
+      // what tells the members apart. On other controls the value attribute
+      // is page data (SSR, re-renders), not identity.
+      const type = (el.getAttribute("type") || "").toLowerCase();
+      const checkable = tag === "input" && (type === "radio" || type === "checkbox");
+      const value = el.getAttribute("value");
+      if (checkable && value !== null) candidates.push(byName + "[value=" + cssString(value) + "]");
+    }
     const found = candidates.find(function (c) { return matchesOnly(c, el); });
     if (found) return found;
     const path = cssPath(el);
