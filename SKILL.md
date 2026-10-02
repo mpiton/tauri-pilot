@@ -204,10 +204,19 @@ script before sending it, so inject minified builds, not development ones.
 | Command | Description |
 |---------|-------------|
 | `record start` | Start recording interactions |
-| `record stop --output <file>` | Save recorded interactions to JSON (exits 1 if no recording is in progress) |
+| `record stop --output <file>` | Save recorded interactions to JSON (exits 1 if no recording is in progress); lists steps with no stable locator |
 | `record status` | Check if recording is active |
-| `replay <file>` | Replay recorded session with original timing; prints each failed step's error, `--json` adds a `steps` array, exits 1 if any step fails |
-| `replay <file> --export sh` | Export recording as executable shell script |
+| `replay <file>` | Replay recorded session with original timing, each step in its recorded window (`--window` overrides); prints each failed step's error, `--json` adds a `steps` array, exits 1 if any step fails |
+| `replay <file> --export sh` | Export recording as executable shell script (uses recorded selectors; does not check fingerprints) |
+
+Steps recorded on a ref (`click @e3`) are saved with a stable `selector` and an
+`expect` fingerprint (tag, role, name). `replay` fails a step whose selector
+matches zero or several elements, or an element with another fingerprint,
+instead of acting on the wrong one. Steps that `record stop` reports as
+having no stable locator (including identical elements such as a "Delete"
+button on every row), and steps of older recordings that only hold refs,
+replay on the bare ref with a warning. For the steps `record stop` reports,
+give those elements an `id` or `data-testid` and re-record.
 
 ### Declarative Scenarios
 

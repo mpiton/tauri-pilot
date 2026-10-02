@@ -83,6 +83,14 @@ fn replay_against_mock(dir: &Path, recording: &str, failing: &'static [&str]) ->
     output
 }
 
+/// The warning a ref-only step gets since #276.
+fn ephemeral_ref_warning(r: &str) -> String {
+    format!(
+        "relies on snapshot ref {r}, which only exists in the snapshot that \
+         numbered it; re-record for a stable replay"
+    )
+}
+
 /// Four steps: two fail on an unknown ref, one passes, one is not replayable.
 const MIXED_RECORDING: &str = r##"[
   {"action": "fill", "ref": "e5", "value": "recorded", "timestamp": 0},
@@ -124,6 +132,7 @@ fn replay_with_failed_steps_exits_1_and_reports_each_error() {
                 "action": "fill",
                 "status": "failed",
                 "message": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
+                "warning": ephemeral_ref_warning("e5"),
             },
             {"action": "click", "status": "passed"},
             {"action": "assert", "status": "skipped"},
@@ -131,6 +140,7 @@ fn replay_with_failed_steps_exits_1_and_reports_each_error() {
                 "action": "type",
                 "status": "failed",
                 "message": "RPC error (-32603): Eval error: JavaScript error: Unknown ref: e5",
+                "warning": ephemeral_ref_warning("e10"),
             },
         ])
     );
@@ -152,6 +162,10 @@ fn replay_with_every_step_passing_exits_0() {
     assert_eq!(result["status"], "ok");
     assert_eq!(
         result["steps"][0],
-        serde_json::json!({"action": "fill", "status": "passed"})
+        serde_json::json!({
+            "action": "fill",
+            "status": "passed",
+            "warning": ephemeral_ref_warning("e5"),
+        })
     );
 }
