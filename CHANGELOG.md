@@ -267,6 +267,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   examples use the default path. The plugin setup guide notes that the
   socket log lines need a `tracing` subscriber and gives a check per
   platform that works without one. Docs only. [#285]
+- `replay --export sh` no longer writes `sleep 0.0` between steps recorded
+  less than 50 ms apart. The delay is printed with one decimal, so those
+  lines did nothing; longer delays still get their `sleep`. [#309]
 
 ### Security
 
@@ -1471,3 +1474,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#286]: https://github.com/mpiton/tauri-pilot/issues/286
 [#285]: https://github.com/mpiton/tauri-pilot/issues/285
 [#276]: https://github.com/mpiton/tauri-pilot/issues/276
+[#309]: https://github.com/mpiton/tauri-pilot/issues/309

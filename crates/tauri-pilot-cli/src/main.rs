@@ -1394,9 +1394,16 @@ fn export_shell_script(entries: &[Value], window: Option<&str>) -> String {
             .unwrap_or(0);
 
         let delta = timestamp.saturating_sub(prev_ts);
-        if delta > 0 && i > 0 {
-            let secs = std::time::Duration::from_millis(delta).as_secs_f64();
-            let _ = writeln!(script, "sleep {secs:.1}");
+        if i > 0 {
+            // `sleep` gets one decimal, so a delta under 50 ms prints as
+            // `0.0`: a no-op line, left out.
+            let secs = format!(
+                "{:.1}",
+                std::time::Duration::from_millis(delta).as_secs_f64()
+            );
+            if secs != "0.0" {
+                let _ = writeln!(script, "sleep {secs}");
+            }
         }
         prev_ts = timestamp;
 
@@ -2561,6 +2568,26 @@ mod tests {
         );
         // No fingerprint in the file, so no fingerprint caveat.
         assert!(!script.contains("fingerprints"), "{script}");
+    }
+
+    /// #309: a delay that prints as `0.0` is a no-op, so no `sleep` line.
+    #[test]
+    fn test_export_shell_script_skips_sleep_that_rounds_to_zero() {
+        let entries = [
+            json!({"action": "click", "timestamp": 100, "selector": "#a"}),
+            json!({"action": "click", "timestamp": 110, "selector": "#b"}),
+            json!({"action": "click", "timestamp": 510, "selector": "#c"}),
+        ];
+        let script = export_shell_script(&entries, None);
+        assert!(!script.contains("sleep 0.0"), "{script}");
+        assert!(
+            script.contains("tauri-pilot click '#a'\ntauri-pilot click '#b'\n"),
+            "{script}"
+        );
+        assert!(
+            script.contains("tauri-pilot click '#b'\nsleep 0.4\ntauri-pilot click '#c'\n"),
+            "{script}"
+        );
     }
 
     /// A recording is a shared file: a line break in a ref must not end the
