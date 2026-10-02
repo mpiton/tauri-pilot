@@ -45,7 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `assert_unchecked` tools) now fail with an error when the target is not a
   checkbox or radio input. The bridge's `checked` method used to report
   `false` for any other element, so `assert unchecked` passed on a wrong
-  selector. [#286]
+  selector. The error reads `expected an <input type="checkbox"> or
+  <input type="radio">, got: h1`; `check` keeps its `check requires ...`
+  message. [#286] [#311]
 
 - `tauri` floor raised from 2.11.3 to 2.12.0. `tauri-runtime` 2.12.0 changed
   its monitor and window traits, and `tauri` 2.11.3 accepts it through a caret
@@ -1475,3 +1477,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#285]: https://github.com/mpiton/tauri-pilot/issues/285
 [#276]: https://github.com/mpiton/tauri-pilot/issues/276
 [#309]: https://github.com/mpiton/tauri-pilot/issues/309
+[#311]: https://github.com/mpiton/tauri-pilot/issues/311

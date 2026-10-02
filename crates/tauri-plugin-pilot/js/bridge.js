@@ -1417,12 +1417,15 @@
     throw new Error(action + " requires an <input>, <textarea>, or contenteditable element, got: " + reported);
   }
 
+  // Without an action the error stays neutral: `checked` backs both
+  // `assert checked` and `assert unchecked`, so naming it misleads (#311).
   function requireCheckable(el, action) {
     const tag = elementTag(el);
     const type = el && el.type != null ? String(el.type).toLowerCase() : "";
     if (tag === "input" && (type === "checkbox" || type === "radio")) return;
     const reported = (tag === "input" ? "input type=" + type : tag || String(el)).slice(0, 64);
-    throw new Error(action + ' requires an <input type="checkbox"> or <input type="radio">, got: ' + reported);
+    const lead = action ? action + " requires" : "expected";
+    throw new Error(lead + ' an <input type="checkbox"> or <input type="radio">, got: ' + reported);
   }
 
   function ownerDoc(el) {
@@ -1937,7 +1940,7 @@
     const el = resolveTarget(params);
     // Without the guard, any other element reports `false` and
     // `assert unchecked` passes on a wrong target (#286).
-    requireCheckable(el, "checked");
+    requireCheckable(el);
     return { checked: !!el.checked };
   }
 

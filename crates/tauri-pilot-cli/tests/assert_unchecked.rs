@@ -81,8 +81,7 @@ fn assert_unchecked_fails_with_exit_1_when_checked() {
 /// surface that error instead of reporting the box as unchecked.
 #[test]
 fn assert_unchecked_errors_when_the_target_is_not_checkable() {
-    let message =
-        "checked requires an <input type=\"checkbox\"> or <input type=\"radio\">, got: div";
+    let message = "expected an <input type=\"checkbox\"> or <input type=\"radio\">, got: div";
     let output = run_assert_unchecked(
         "#remember",
         serde_json::json!({"error": {"code": -32000, "message": message}}),

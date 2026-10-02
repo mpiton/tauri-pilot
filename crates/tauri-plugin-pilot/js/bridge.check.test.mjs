@@ -142,7 +142,7 @@ test("check throws on a non-input target", () => {
   const pilot = loadBridge(el);
   assert.throws(
     () => pilot.check({ selector: "#qa-div" }),
-    /checkbox|radio/i,
+    /^Error: check requires an <input type="checkbox"> or <input type="radio">, got: div$/,
   );
   assert.equal(el.checked, false);
 });
@@ -152,7 +152,7 @@ test("check throws on a non-checkable input", () => {
   const pilot = loadBridge(el);
   assert.throws(
     () => pilot.check({ selector: "input[name=q]" }),
-    /checkbox|radio/i,
+    /^Error: check requires an <input type="checkbox"> or <input type="radio">, got: input type=text$/,
   );
   assert.equal(el.checked, false);
 });
@@ -160,7 +160,8 @@ test("check throws on a non-checkable input", () => {
 // `checked` backs `assert checked` and `assert unchecked` (#286). Reading
 // `!!el.checked` on any target reported `false` for a <div> or a text input,
 // so `assert unchecked` passed on a wrong selector. It must reject the target
-// with the same guard as `check`, and name the action in the error.
+// with the same guard as `check`. The error must not name `checked`: both
+// `assert checked` and `assert unchecked` reach it, so it stays neutral (#311).
 test("checked reports the state of a checkbox and a radio", () => {
   assert.deepEqual(loadBridge(makeInput("checkbox", true)).checked({ selector: "input" }), { checked: true });
   assert.deepEqual(loadBridge(makeInput("radio", false)).checked({ selector: "input" }), { checked: false });
@@ -170,7 +171,7 @@ test("checked throws on a non-input target", () => {
   const pilot = loadBridge({ tagName: "DIV" });
   assert.throws(
     () => pilot.checked({ selector: "#remember" }),
-    /^Error: checked requires an <input type="checkbox"> or <input type="radio">, got: div$/,
+    /^Error: expected an <input type="checkbox"> or <input type="radio">, got: div$/,
   );
 });
 
@@ -178,6 +179,6 @@ test("checked throws on a non-checkable input", () => {
   const pilot = loadBridge(makeInput("text", false));
   assert.throws(
     () => pilot.checked({ selector: "input[name=q]" }),
-    /^Error: checked requires an <input type="checkbox"> or <input type="radio">, got: input type=text$/,
+    /^Error: expected an <input type="checkbox"> or <input type="radio">, got: input type=text$/,
   );
 });
