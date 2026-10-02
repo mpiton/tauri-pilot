@@ -1123,7 +1123,15 @@ origins that work. A start page that only changed its URL during the wait
 (`history.pushState`) on its own bridged origin counts as never left. A
 page that loads without a bridge fails with a "no pilot bridge answered
 there" error that names it. The "did not load" verdict is what the window
-showed when the wait ended: a slow destination may still load after it. A
+showed when the wait ended: a slow destination may still load after it. An
+`about:`, `data:` or `blob:` destination is built from memory and cannot be
+slow, so once a bridge hello has been recorded, a window still on its page
+fails with "did not happen" (the navigation was cancelled or blocked)
+instead. A `file:` destination keeps "did not load in time": it can sit on
+a network share. On a local page (`about:`, `data:`, `blob:`, `file:`), the
+"no pilot bridge" error only says to navigate
+back to one of the listed origins whose bridge said hello: `remote.urls`
+cannot allow local pages. A
 slow page allowed by `remote.urls` can miss that window on its first visit;
 later commands succeed once the hello arrives. On an origin that cannot
 call back,
