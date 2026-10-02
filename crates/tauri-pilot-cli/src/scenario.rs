@@ -60,7 +60,7 @@ fn default_true() -> bool {
 /// A step `value`: one string, or a list for a `select` on a
 /// `<select multiple>` (#306).
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, expecting = "a string, or a list of strings for `select`")]
 pub(crate) enum StepValue {
     One(String),
     Many(Vec<String>),
@@ -1319,6 +1319,20 @@ target = "#btn"
             let msg = format!("{err:#}");
             assert!(msg.contains(want), "unexpected error: {msg}");
         }
+    }
+
+    /// A `value` of the wrong type says what it expected, not an internal
+    /// type name (#306).
+    #[test]
+    fn parse_scenario_names_the_expected_value_type() {
+        let toml_str = "[[step]]\naction = \"fill\"\ntarget = \"#s\"\nvalue = 3\n";
+        let err = parse_scenario(toml_str).expect_err("wrong value type");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("a string, or a list of strings for `select`"),
+            "unexpected error: {msg}"
+        );
+        assert!(!msg.contains("StepValue"), "unexpected error: {msg}");
     }
 
     #[test]

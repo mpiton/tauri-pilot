@@ -1582,7 +1582,8 @@ fn entry_to_cli_command(action: &str, entry: &Value) -> String {
                 other => vec![other.and_then(Value::as_str).unwrap_or("")],
             };
             let quoted: Vec<String> = values.into_iter().map(shell_escape).collect();
-            format!("tauri-pilot select {target} {}", quoted.join(" "))
+            // `--` keeps a value like `-1` from being read as a flag.
+            format!("tauri-pilot select {target} -- {}", quoted.join(" "))
         }
         "check" => format!("tauri-pilot check {target}"),
         "scroll" => {
@@ -2586,11 +2587,19 @@ mod tests {
                 "select",
                 &json!({"selector": "select[name=skills]", "value": ["rust", "it's go"]})
             ),
-            "tauri-pilot select 'select[name=skills]' 'rust' 'it'\\''s go'"
+            "tauri-pilot select 'select[name=skills]' -- 'rust' 'it'\\''s go'"
         );
         assert_eq!(
             entry_to_cli_command("select", &json!({"ref": "e5", "value": "admin"})),
-            "tauri-pilot select '@e5' 'admin'"
+            "tauri-pilot select '@e5' -- 'admin'"
+        );
+        // Quoting does not stop clap reading `-1` as a flag; `--` does.
+        assert_eq!(
+            entry_to_cli_command(
+                "select",
+                &json!({"selector": "#size", "value": ["-1", "--none--"]})
+            ),
+            "tauri-pilot select '#size' -- '-1' '--none--'"
         );
     }
 

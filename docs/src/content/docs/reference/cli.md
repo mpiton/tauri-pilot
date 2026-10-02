@@ -582,6 +582,10 @@ the command, naming every value that matched no option, and leaves the
 selection as it was. On success, `select` fires `input` then `change`, once
 each.
 
+A value that starts with `-` (such as `-1`) reads as a flag; put `--` before
+the values to pass it: `tauri-pilot select "#size" -- -1`. Scripts written by
+`replay --export sh` always do this.
+
 **Example:**
 
 ```bash

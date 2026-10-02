@@ -866,6 +866,33 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// A flag after the values stays a flag; a value starting with `-`
+    /// needs `--` before the values (#306).
+    #[test]
+    fn test_parse_select_trailing_flags_and_dash_values() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "select",
+            "#s",
+            "a",
+            "--window",
+            "w",
+            "--json",
+        ]);
+        assert_eq!(cli.window.as_deref(), Some("w"));
+        assert!(cli.json);
+        let Command::Select { values, .. } = cli.command else {
+            panic!("expected Select command");
+        };
+        assert_eq!(values, ["a"]);
+
+        let cli = Cli::parse_from(["tauri-pilot", "select", "#s", "--", "-1", "--none--"]);
+        let Command::Select { values, .. } = cli.command else {
+            panic!("expected Select command");
+        };
+        assert_eq!(values, ["-1", "--none--"]);
+    }
+
     #[test]
     fn test_parse_storage_get() {
         let cli = Cli::parse_from([
