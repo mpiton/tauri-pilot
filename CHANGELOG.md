@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Upgrade the docs lockfile to clear 12 `npm audit` advisories, 7 of them
+  high: vite 8.3.5 (from 8.2.2), undici 8.12.3 (from 8.11.2), zod 4.6.7
+  (from 4.5.4), source-map-js 1.2.2 (from 1.2.1) and smol-toml 1.9.1 (from
+  1.8.0). Docs only — the plugin and CLI crates are untouched. [#338]
+
 ## [0.8.1] - 2026-10-02
 
 ### Added
@@ -1654,3 +1661,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#326]: https://github.com/mpiton/tauri-pilot/issues/326
 [#324]: https://github.com/mpiton/tauri-pilot/issues/324
 [#332]: https://github.com/mpiton/tauri-pilot/issues/332
+[#338]: https://github.com/mpiton/tauri-pilot/pull/338
