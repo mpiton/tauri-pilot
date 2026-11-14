@@ -8,7 +8,15 @@ on:
       - '**/Cargo.toml'
       - '**/Cargo.lock'
       - 'crates/tauri-plugin-pilot/js/**'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/*.yml'
+      - 'scripts/msrv.sh'
+      - 'scripts/msrv.test.sh'
+      # The docs `scripts/msrv.sh --check` reads: a version edited there must
+      # reach the guard in the PR that edits it.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'docs/src/content/docs/contributing.md'
+      - 'docs/src/content/docs/getting-started.md'
   pull_request:
     branches: [main]
     paths:
@@ -16,7 +24,23 @@ on:
       - '**/Cargo.toml'
       - '**/Cargo.lock'
       - 'crates/tauri-plugin-pilot/js/**'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/*.yml'
+      - 'scripts/msrv.sh'
+      - 'scripts/msrv.test.sh'
+      # The docs `scripts/msrv.sh --check` reads: a version edited there must
+      # reach the guard in the PR that edits it.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'docs/src/content/docs/contributing.md'
+      - 'docs/src/content/docs/getting-started.md'
+  # `check` and the release workflow use rolling stable, and the triggers above
+  # only fire when a matching file changes. Without a timer, a new stable could
+  # first meet `-D warnings` in the release workflow, after the tag is pushed.
+  # Stable ships on Thursdays: this runs `main` the morning after, and ignores
+  # the path filters. Before tagging, `workflow_dispatch` runs it on demand.
+  schedule:
+    - cron: '17 5 * * 5'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,6 +50,37 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # The MSRV is `rust-version` in the root `Cargo.toml` and nowhere else. This
+  # job hands it to the two jobs that build on it, and fails when a copy has
+  # drifted: a doc quoting another version, or a workflow that hard-codes a
+  # toolchain number instead of reading it here.
+  rust-version:
+    name: MSRV in sync
+    runs-on: ubuntu-latest
+    outputs:
+      msrv: ${{ steps.read.outputs.msrv }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the docs and workflows against Cargo.toml
+        run: scripts/msrv.sh --check
+
+      # The guard is the only thing that keeps a second copy of the MSRV out
+      # of the workflows, so its own cases run wherever it does.
+      - name: Test the guard
+        run: scripts/msrv.test.sh
+
+      - name: Read the MSRV
+        id: read
+        run: |
+          msrv="$(scripts/msrv.sh)"
+          echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
+
+  # Lint and test on current stable, so new lints and compiler fixes reach us
+  # when they ship instead of when the MSRV moves. `stable` rolls on purpose: a
+  # pinned number is one more version to bump by hand, and it ages silently.
+  # The cost is that a new release can turn this red on untouched code; the fix
+  # is then the lint, not a pin. The `msrv` job below keeps users on the MSRV covered.
   check:
     name: Check & Test
     runs-on: ${{ matrix.os }}
@@ -42,10 +97,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - name: Install Rust 1.95.0
+      - name: Install Rust stable
+        id: toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.95.0"
           components: clippy, rustfmt
 
       - name: Cache cargo
@@ -60,10 +115,13 @@ jobs:
             ~/.cargo/git/
             target/
           # `Cargo.lock` is gitignored, so we key on the workspace `Cargo.toml`
-          # files. Bumped `v2` to invalidate the poisoned cache.
-          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.toml') }}
+          # files. Bumped `v2` to invalidate the poisoned cache. The rustc
+          # build is in the key too: `stable` rolls, and `actions/cache` never
+          # overwrites a key, so without it every run after a release would
+          # restore the previous compiler's `target/` and rebuild from scratch.
+          key: ${{ runner.os }}-cargo-v2-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-v2-
+            ${{ runner.os }}-cargo-v2-${{ steps.toolchain.outputs.cachekey }}-
 
       # Lint mobile with and without the `press` feature. The default build is
       # the one #256 fixed, and no other step compiles it for mobile.
@@ -112,6 +170,57 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  # `check` runs on stable, so nothing there proves the `rust-version` we
+  # publish. This job does: same newest dependencies as `check`, compiled with
+  # the MSRV itself. `minimal-versions` below also builds on the MSRV, but
+  # against the dependency floors, so it cannot see a new release of a
+  # dependency that needs a newer compiler than ours, which is what a fresh
+  # `cargo install` or `cargo add` resolves to. Same matrix as `check`: the
+  # platform-gated crates only compile on their own OS. When it fails on our
+  # code, an API newer than the MSRV slipped in: replace it, or raise
+  # `rust-version` deliberately.
+  msrv:
+    name: MSRV
+    needs: rust-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      MSRV: ${{ needs.rust-version.outputs.msrv }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Rust ${{ env.MSRV }} (MSRV)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+
+      # Own key, for the reason `minimal-versions` gives below. Downloads
+      # only, no `target/`: this job runs one `cargo check`, and its `target/`
+      # was a third of a gigabyte per OS in a repository cache capped at 10 GB,
+      # where an eviction costs `check` a cold build. `v2` so that a `v1`
+      # archive, which carries `target/`, is never restored.
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+          key: ${{ runner.os }}-cargo-msrv-v2-${{ env.MSRV }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-msrv-v2-${{ env.MSRV }}-
+
+      - name: Check
+        run: cargo +${{ env.MSRV }} check --workspace --all-targets
+
   # `Cargo.lock` is gitignored, so `check` always resolves the newest versions
   # and never sees the floors `Cargo.toml` declares. This job does: it resolves
   # direct dependencies to the lowest versions the manifests allow, which is
@@ -125,6 +234,7 @@ jobs:
   # `core-foundation` and `windows` are platform-gated and only compile there.
   minimal-versions:
     name: Direct minimal versions
+    needs: rust-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -134,7 +244,8 @@ jobs:
       # `-Z direct-minimal-versions` is unstable and this job gates every merge,
       # so the resolver toolchain is pinned: a rolling nightly could go red on a
       # regression that has nothing to do with our floors. Bump deliberately.
-      NIGHTLY: nightly-2026-09-01
+      NIGHTLY: nightly-2026-11-13
+      MSRV: ${{ needs.rust-version.outputs.msrv }}
     steps:
       - uses: actions/checkout@v7
 
@@ -149,10 +260,13 @@ jobs:
         with:
           toolchain: ${{ env.NIGHTLY }}
 
-      - name: Install Rust 1.95.0
-        uses: dtolnay/rust-toolchain@stable
+      # On the MSRV rather than stable: the floors are what a consumer on an
+      # old toolchain with an old lockfile builds, so this is the oldest
+      # compiler against the oldest dependencies.
+      - name: Install Rust ${{ env.MSRV }} (MSRV)
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.95.0"
+          toolchain: ${{ env.MSRV }}
 
       # Own key: `actions/cache` never overwrites an existing one, so sharing
       # `check`'s would let whichever job saves first decide what the other
@@ -173,12 +287,12 @@ jobs:
         run: cargo +${{ env.NIGHTLY }} update -Z direct-minimal-versions
 
       - name: Check
-        run: cargo +1.95.0 check --workspace --all-targets --locked
+        run: cargo +${{ env.MSRV }} check --workspace --all-targets --locked
 
   ci:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [check, minimal-versions]
+    needs: [rust-version, check, msrv, minimal-versions]
     if: always()
     steps:
       # Keyed off the whole `needs` context rather than one variable per job:

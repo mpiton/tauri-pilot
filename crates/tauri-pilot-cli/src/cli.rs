@@ -909,7 +909,7 @@ mod tests {
             panic!("expected Select command");
         };
         assert!(clear);
-        assert!(values.is_empty());
+        assert_eq!(values, Vec::<String>::new());
 
         assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s"]).is_err());
         assert!(Cli::try_parse_from(["tauri-pilot", "select", "#s", "--"]).is_err());

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI lints and tests on current stable Rust, and releases are built with it,
+  instead of 1.95.0. The MSRV does not move: `rust-version` stays 1.95.0,
+  and a new required `MSRV` job runs `cargo check --workspace --all-targets`
+  on it for Linux, macOS and Windows, next to the `Direct minimal versions`
+  job that already builds the dependency floors on it. The nightly that
+  resolves the floors moves from 2026-09-01 to 2026-11-13. [#340]
+- The workflows read the MSRV from `Cargo.toml` through `scripts/msrv.sh`
+  instead of repeating it. `scripts/msrv.sh --check` runs in CI and fails
+  when the README, `CONTRIBUTING.md` or the docs quote another version, or
+  when a workflow hard-codes a toolchain number or writes the MSRV out.
+  `scripts/msrv.test.sh` runs the guard against each spelling it must
+  refuse. [#340]
+- CI also runs on `main` every Friday and on demand (`workflow_dispatch`),
+  so a new stable Rust meets `-D warnings` there before it does in the
+  release workflow. [#340]
+- Both crates drop `homepage` from their manifest: it repeated `repository`,
+  which Cargo 1.100 warns about. [#340]
+
 ### Security
 
 - Upgrade the docs lockfile to clear 12 `npm audit` advisories, 7 of them
@@ -1662,3 +1682,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#324]: https://github.com/mpiton/tauri-pilot/issues/324
 [#332]: https://github.com/mpiton/tauri-pilot/issues/332
 [#338]: https://github.com/mpiton/tauri-pilot/pull/338
+[#340]: https://github.com/mpiton/tauri-pilot/issues/340

@@ -82,7 +82,7 @@ pub(crate) fn capture_cgwindow(window_id: u32, path: &Path) -> Result<(), Screen
             });
         }
         let row = &src[row_start..row_end];
-        for px in row.chunks_exact(4) {
+        for px in row.as_chunks::<4>().0 {
             // CoreGraphics returns premultiplied BGRA. Demultiply into
             // straight RGBA so downstream pixel-diff and image-processing
             // pipelines see a normal alpha channel; `alpha == 0` collapses to

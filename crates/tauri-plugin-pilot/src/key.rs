@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn test_parse_single_char_returns_unicode() {
         let combo = parse_combo("a").expect("parse_combo succeeds");
-        assert!(combo.modifiers.is_empty());
+        assert_eq!(combo.modifiers, []);
         assert!(key_eq(combo.key, Key::Unicode('a')));
     }
 
@@ -451,7 +451,7 @@ mod tests {
     #[test]
     fn test_parse_plus_alone_is_plus_key() {
         let combo = parse_combo("+").expect("parse_combo succeeds");
-        assert!(combo.modifiers.is_empty());
+        assert_eq!(combo.modifiers, []);
         assert!(key_eq(combo.key, Key::Unicode('+')));
     }
 
