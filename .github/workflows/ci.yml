@@ -10,6 +10,12 @@ on:
       - 'crates/tauri-plugin-pilot/js/**'
       - '.github/workflows/*.yml'
       - 'scripts/msrv.sh'
+      # The docs `scripts/msrv.sh --check` reads: a version edited there must
+      # reach the guard in the PR that edits it.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'docs/src/content/docs/contributing.md'
+      - 'docs/src/content/docs/getting-started.md'
   pull_request:
     branches: [main]
     paths:
@@ -19,6 +25,12 @@ on:
       - 'crates/tauri-plugin-pilot/js/**'
       - '.github/workflows/*.yml'
       - 'scripts/msrv.sh'
+      # The docs `scripts/msrv.sh --check` reads: a version edited there must
+      # reach the guard in the PR that edits it.
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'docs/src/content/docs/contributing.md'
+      - 'docs/src/content/docs/getting-started.md'
 
 permissions:
   contents: read

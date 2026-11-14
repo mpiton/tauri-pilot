@@ -59,7 +59,7 @@ done
 
 # A numbered toolchain in a workflow is a second copy of the MSRV, or a pin
 # that silently ages. Workflows use `stable`, or read the MSRV from here.
-PINNED="(toolchain:[[:space:]]*[\"']?|rust-toolchain@|cargo \\+|Install Rust |rustup (toolchain install|default|override set) )[0-9]+\\.[0-9]+"
+PINNED="(toolchain:[[:space:]]*[\"']?|rust-toolchain@|(cargo|rustc|rustdoc) \\+|Install Rust |rustup (run|toolchain install|default|override set) |RUSTUP_TOOLCHAIN[:=][[:space:]]*[\"']?)[0-9]+\\.[0-9]+"
 if pinned="$(grep -rnE "$PINNED" .github/workflows)"; then
   echo "Error: hard-coded Rust version in a workflow; use stable or scripts/msrv.sh:" >&2
   echo "$pinned" >&2
