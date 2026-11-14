@@ -63,7 +63,10 @@ mod tests {
             "target": {"ref": "e2"},
         });
         assert_eq!(ephemeral_refs(&entry), ["e2"]);
-        assert!(ephemeral_refs(&json!({"ref": "e9", "selector": "#pro"})).is_empty());
+        assert_eq!(
+            ephemeral_refs(&json!({"ref": "e9", "selector": "#pro"})),
+            Vec::<&str>::new()
+        );
         assert_eq!(ephemeral_refs(&json!({"ref": "e9"})), ["e9"]);
     }
 

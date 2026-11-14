@@ -148,7 +148,7 @@ fn json_pass_prints_ok_and_exits_0() {
 
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(stdout_json(&output), serde_json::json!({"ok": true}));
-    assert!(output.stderr.is_empty());
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
 }
 
 #[test]
@@ -181,5 +181,5 @@ fn plain_visible_pass_prints_ok_and_exits_0() {
 
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&output.stdout), "✓ ok\n");
-    assert!(output.stderr.is_empty());
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
 }
