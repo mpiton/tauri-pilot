@@ -25,10 +25,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - name: Install Rust 1.95.0
+      # Current stable, as in CI's `check` job. The MSRV (`rust-version` in
+      # `Cargo.toml`) is what users need; CI's `msrv` job proves it on every
+      # PR, so the release does not have to build on it.
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.95.0"
           components: clippy, rustfmt
 
       - name: Cache cargo

@@ -26,7 +26,7 @@ The injected bridge is plain JS with its own `node:test` suite. Pass the glob:
 - **No `.unwrap()`** outside of tests — use `thiserror` (plugin) or `anyhow` (CLI)
 - **Clippy strict**: `cargo clippy --workspace --all-targets -- -D warnings`, then again with the plugin's debug assertions off, as release builds compile it: `cargo clippy --workspace --all-targets --config 'profile.dev.package.tauri-plugin-pilot.debug-assertions=false' -- -D warnings`
 - **Modules < 150 lines**, functions < 50 lines
-- **Edition 2024**, rust-version 1.95.0
+- **Edition 2024**, rust-version 1.95.0. That is the MSRV: CI lints and tests on current stable, and its `MSRV` job checks that the MSRV still builds, so do not use an API stabilized after it. `scripts/msrv.sh --check` fails when a doc or a workflow disagrees with `Cargo.toml`
 
 ## Workflow
 
