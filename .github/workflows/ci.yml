@@ -10,6 +10,7 @@ on:
       - 'crates/tauri-plugin-pilot/js/**'
       - '.github/workflows/*.yml'
       - 'scripts/msrv.sh'
+      - 'scripts/msrv.test.sh'
       # The docs `scripts/msrv.sh --check` reads: a version edited there must
       # reach the guard in the PR that edits it.
       - 'README.md'
@@ -25,12 +26,21 @@ on:
       - 'crates/tauri-plugin-pilot/js/**'
       - '.github/workflows/*.yml'
       - 'scripts/msrv.sh'
+      - 'scripts/msrv.test.sh'
       # The docs `scripts/msrv.sh --check` reads: a version edited there must
       # reach the guard in the PR that edits it.
       - 'README.md'
       - 'CONTRIBUTING.md'
       - 'docs/src/content/docs/contributing.md'
       - 'docs/src/content/docs/getting-started.md'
+  # `check` and the release workflow use rolling stable, and the triggers above
+  # only fire when a matching file changes. Without a timer, a new stable could
+  # first meet `-D warnings` in the release workflow, after the tag is pushed.
+  # Stable ships on Thursdays: this runs `main` the morning after, and ignores
+  # the path filters. Before tagging, `workflow_dispatch` runs it on demand.
+  schedule:
+    - cron: '17 5 * * 5'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -54,6 +64,11 @@ jobs:
 
       - name: Check the docs and workflows against Cargo.toml
         run: scripts/msrv.sh --check
+
+      # The guard is the only thing that keeps a second copy of the MSRV out
+      # of the workflows, so its own cases run wherever it does.
+      - name: Test the guard
+        run: scripts/msrv.test.sh
 
       - name: Read the MSRV
         id: read
@@ -188,17 +203,20 @@ jobs:
         with:
           toolchain: ${{ env.MSRV }}
 
-      # Own key, for the reason `minimal-versions` gives below.
+      # Own key, for the reason `minimal-versions` gives below. Downloads
+      # only, no `target/`: this job runs one `cargo check`, and its `target/`
+      # was a third of a gigabyte per OS in a repository cache capped at 10 GB,
+      # where an eviction costs `check` a cold build. `v2` so that a `v1`
+      # archive, which carries `target/`, is never restored.
       - name: Cache cargo
         uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
-            target/
-          key: ${{ runner.os }}-cargo-msrv-v1-${{ env.MSRV }}-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-msrv-v2-${{ env.MSRV }}-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-msrv-v1-${{ env.MSRV }}-
+            ${{ runner.os }}-cargo-msrv-v2-${{ env.MSRV }}-
 
       - name: Check
         run: cargo +${{ env.MSRV }} check --workspace --all-targets

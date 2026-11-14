@@ -18,7 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The workflows read the MSRV from `Cargo.toml` through `scripts/msrv.sh`
   instead of repeating it. `scripts/msrv.sh --check` runs in CI and fails
   when the README, `CONTRIBUTING.md` or the docs quote another version, or
-  when a workflow hard-codes a toolchain number. [#340]
+  when a workflow hard-codes a toolchain number or writes the MSRV out.
+  `scripts/msrv.test.sh` runs the guard against each spelling it must
+  refuse. [#340]
+- CI also runs on `main` every Friday and on demand (`workflow_dispatch`),
+  so a new stable Rust meets `-D warnings` there before it does in the
+  release workflow. [#340]
 - Both crates drop `homepage` from their manifest: it repeated `repository`,
   which Cargo 1.100 warns about. [#340]
 

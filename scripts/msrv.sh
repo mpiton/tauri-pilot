@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Usage: ./scripts/msrv.sh          print the MSRV
 #        ./scripts/msrv.sh --check  fail when a copy of it has drifted
+# Anything else prints the usage and exits 2. Tests: ./scripts/msrv.test.sh
 #
 # The MSRV is `rust-version` in the root Cargo.toml and nowhere else. CI reads
 # it through this script, so bumping it is a one-line change there plus the
@@ -26,9 +27,15 @@ if ! [[ "$MSRV" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
   exit 1
 fi
 
-if [ "${1:-}" != "--check" ]; then
+# A misspelled `--check` must not print the MSRV and exit 0: its caller is a
+# required CI step, which would then stay green while checking nothing.
+if [ "$#" -eq 0 ]; then
   echo "$MSRV"
   exit 0
+fi
+if [ "$#" -ne 1 ] || [ "$1" != "--check" ]; then
+  echo "Usage: $0 [--check]" >&2
+  exit 2
 fi
 
 STATUS=0
@@ -57,9 +64,21 @@ for doc in "${DOCS[@]}"; do
   done <<< "$quotes"
 done
 
-# A numbered toolchain in a workflow is a second copy of the MSRV, or a pin
-# that silently ages. Workflows use `stable`, or read the MSRV from here.
-PINNED="(toolchain:[[:space:]]*[\"']?|rust-toolchain@|(cargo|rustc|rustdoc) \\+|Install Rust |rustup (run|toolchain install|default|override set) |RUSTUP_TOOLCHAIN[:=][[:space:]]*[\"']?)[0-9]+\\.[0-9]+"
+# The workflows read the MSRV from this script, so the number itself has no
+# reason to appear in one. Searching for it does not depend on how a pin is
+# spelled: a matrix list, a value on the line after its key, a comment next to
+# a commit SHA.
+if copies="$(grep -rnF -- "$MSRV" .github/workflows)"; then
+  echo "Error: the MSRV ($MSRV) is written out in a workflow; read it from scripts/msrv.sh:" >&2
+  echo "$copies" >&2
+  STATUS=1
+fi
+
+# Any other numbered toolchain is a pin that silently ages: workflows use
+# `stable`. A number has no fixed text to search for, so these are the
+# spellings known to select a toolchain. `scripts/msrv.test.sh` lists them.
+V='[0-9]+\.[0-9]+'
+PINNED="(toolchain:.*|rust-toolchain@.*|(^|[[:space:]])rust(-version)?:.*|(cargo|rustc|rustdoc) \\+|Install Rust |rustup (run|install|update|default|override set|toolchain (install|add)) |--(default-)?toolchain[= ]|[A-Z_]*(MSRV|TOOLCHAIN|RUST_VERSION)[A-Z_]*[:=][[:space:]]*[\"']?)$V"
 if pinned="$(grep -rnE "$PINNED" .github/workflows)"; then
   echo "Error: hard-coded Rust version in a workflow; use stable or scripts/msrv.sh:" >&2
   echo "$pinned" >&2
