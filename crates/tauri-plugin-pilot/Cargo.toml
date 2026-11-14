@@ -6,7 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "Tauri v2 plugin for runtime UI testing and automation via IPC JSON-RPC"
 keywords = ["tauri", "plugin", "testing", "automation", "accessibility"]
 categories = ["development-tools::testing", "gui"]

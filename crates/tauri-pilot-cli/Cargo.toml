@@ -6,7 +6,6 @@ license.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
-homepage.workspace = true
 description = "CLI for interactive testing and automation of Tauri v2 applications"
 keywords = ["tauri", "cli", "testing", "automation", "accessibility"]
 categories = ["command-line-utilities", "development-tools::testing"]
